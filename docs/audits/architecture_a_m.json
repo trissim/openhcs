@@ -356,8 +356,8 @@
         "role": "Projects live ObjectState scopes, fields, revisions, document capabilities, and mutation receipts through the UI bridge."
       },
       {
-        "path": "openhcs/agent/dto/ui_bridge.py",
-        "sha256": "acc384b248ec2c5324a8a0f96d65be6ebef1825f3de9b7db4a4ea0b20369aa4d",
+      "path": "openhcs/agent/dto/ui_bridge.py",
+      "sha256": "a2309136db28620603f0b6c2f656c0fc0be3ed06c05bc90ea5616c1ec7d467bf",
         "role": "Carries the generic endpoint application declaration through UI bridge descriptors and request/response envelopes."
       },
       {
@@ -421,8 +421,9 @@
       "On 2026-08-21, documentation validation passed for 154 files and strict Sphinx rendered all 153 active pages without warnings.",
       "On 2026-08-21, re-read the complete page and exact changed owners; 200 focused UI bridge, field-help, schema, and service tests proved declaration-derived enum values and member-name mutation.",
       "A fresh current-source MCP subprocess queried the live Configure OpenHCS window, reported site, channel, z_index, timepoint, and NONE directly from GroupBy, mutated NONE without confusing its stored null value with a missing value, and restored channel; an actual window capture confirmed the visible site selection.",
-      "On 2026-08-22, re-read the complete explanation against the descriptor, request, response, discovery, and generic compatibility owners; focused tests rejected both an old protocol and a same-protocol process with a different OpenHCS version before UI dispatch.",
-      "A fresh current-source desktop launched offscreen, published a versioned bridge descriptor, passed the four-operation MCP UI smoke with zero MCP errors, and produced a native 1024x772 main-window capture through that bridge."
+    "On 2026-08-22, re-read the complete explanation against the descriptor, request, response, discovery, and generic compatibility owners; focused tests rejected both an old protocol and a same-protocol process with a different OpenHCS version before UI dispatch.",
+    "A fresh current-source desktop launched offscreen, published a versioned bridge descriptor, passed the four-operation MCP UI smoke with zero MCP errors, and produced a native 1024x772 main-window capture through that bridge.",
+    "On 2026-08-24, re-read the complete explanation after UI request DTOs began owning their MCP argument projections; ObjectState remains the semantic authority and no code/UI claim required revision."
     ]
   },
   {
@@ -1551,8 +1552,8 @@
         "role": "Resolves authorised OpenHCS windows and projects generic snapshot results into application DTOs."
       },
       {
-        "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "ed3869e71eba8d575108cc8bd0696ea89ab9db9c5f5a5060af5bc7cdda6abb3d",
+      "path": "tests/unit/agent/test_mcp_server.py",
+      "sha256": "635ba51a4aef860fbb58471cc3d7e7d4e9281816a92d9de059e9861e0e7c1a35",
         "role": "Proves MCP and development-client snapshot inputs reject undeclared native capture."
       }
     ],
@@ -1570,8 +1571,9 @@
       "On 2026-08-23, re-reviewed the capability declaration after execution status began exposing the retained generic progress observation; the documented registry, surface, and safety ownership claims remain accurate.",
       "On 2026-08-23, re-read the complete page against the generic capture declaration and OpenHCS bridge owner; only Qt-owned widget/window rendering is exposed, while native desktop sampling is rejected.",
       "A fresh X11 desktop and fresh MCP development client rejected native capture before dispatch; a window-scope capture of Configure OpenHCS remained application-only while an unrelated X11 window completely occluded it.",
-      "On 2026-08-24, re-read the complete explanation after selected-workflow receipt and revision regressions were added to the shared MCP server test module; capability, transport, screenshot, and distribution ownership claims remain accurate.",
-      "On 2026-08-24, re-read the complete explanation after idempotent initialization polling gained a shared MCP regression; no capability, transport, screenshot, or distribution claim required revision."
+    "On 2026-08-24, re-read the complete explanation after selected-workflow receipt and revision regressions were added to the shared MCP server test module; capability, transport, screenshot, and distribution ownership claims remain accurate.",
+    "On 2026-08-24, re-read the complete explanation after idempotent initialization polling gained a shared MCP regression; no capability, transport, screenshot, or distribution claim required revision.",
+    "On 2026-08-24, re-read the complete explanation after dev-client UI arguments were projected by their request DTO authorities; capability and transport ownership remain unchanged."
     ]
   },
   {

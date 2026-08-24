@@ -26,6 +26,7 @@ from openhcs.agent.capabilities import (
     LocalCapabilitySurfaceProfile,
 )
 from openhcs.agent.dto.common import (
+    AgentCliRequest,
     AgentError,
     AgentResultEnvelope,
     JsonObject,
@@ -39,14 +40,13 @@ from openhcs.agent.dto.ui_bridge import (
     UiBridgeOperationWaitRequest,
     UiObjectStateFieldFilter,
     UiSelectedPlateWorkflowKind,
+    UiSelectedPlateWorkflowRequest,
     UiSelectedPlateWorkflowResult,
+    UiStateSurfaceRequest,
 )
 from openhcs.agent.path_policy import AgentPathPolicy
 from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
 from openhcs.agent.ui_bridge_environment import UiBridgeDescriptorEnvironment
-from openhcs.agent.ui_bridge_identities import (
-    PlateManagerStateSurfaceIdentityDeclaration,
-)
 from openhcs.constants.constants import AllComponents, OrchestratorState
 from openhcs.core.execution_state import (
     ManagerExecutionState,
@@ -1819,14 +1819,31 @@ def pipeline_source_from_args(args: argparse.Namespace) -> str:
 def selected_workflow_tool_arguments(
     args: argparse.Namespace,
 ) -> dict[str, JsonValue]:
-    return {
-        "workflow": args.workflow,
-        "require_confirmation": args.require_confirmation,
-        "connection": ui_connection_arguments(
-            args,
-            timeout_ms=args.timeout_ms,
-        ),
-    }
+    request = UiSelectedPlateWorkflowRequest.from_fields(
+        workflow=UiSelectedPlateWorkflowKind(args.workflow),
+        require_confirmation=args.require_confirmation,
+    )
+    return ui_request_tool_arguments(
+        args,
+        request,
+        timeout_ms=args.timeout_ms,
+    )
+
+
+def ui_request_tool_arguments(
+    args: argparse.Namespace,
+    request: AgentCliRequest,
+    *,
+    timeout_ms: int | None,
+) -> dict[str, JsonValue]:
+    """Add a UI connection envelope to request-owned MCP arguments."""
+
+    arguments = McpToolArgumentAuthority.from_payload(request.as_tool_arguments())
+    arguments["connection"] = ui_connection_arguments(
+        args,
+        timeout_ms=timeout_ms,
+    )
+    return arguments
 
 
 def workflow_operation_receipt_tool_arguments(
@@ -1841,27 +1858,30 @@ def workflow_operation_receipt_tool_arguments(
         timeout_seconds=min(max(args.poll_timeout_seconds, 0.0), 120.0),
         poll_interval_seconds=min(max(args.poll_interval_seconds, 0.05), 5.0),
     )
-    arguments = McpToolArgumentAuthority.from_payload(to_jsonable(receipt_request))
-    arguments["connection"] = ui_connection_arguments(
+    return ui_request_tool_arguments(
         args,
         timeout_ms=args.timeout_ms,
+        request=receipt_request,
     )
-    return arguments
 
 
-def plate_manager_state_surface_tool_arguments(
+def state_surface_tool_arguments(
     args: argparse.Namespace,
     *,
+    surface_id: str,
     selection_mode: str,
+    base_revision_token: str | None = None,
 ) -> dict[str, JsonValue]:
-    return {
-        "surface_id": PlateManagerStateSurfaceIdentityDeclaration.value,
-        "selection_mode": selection_mode,
-        "connection": ui_connection_arguments(
-            args,
-            timeout_ms=args.timeout_ms,
-        ),
-    }
+    request = UiStateSurfaceRequest.from_fields(
+        surface_id=surface_id,
+        selection_mode=selection_mode,
+        base_revision_token=base_revision_token,
+    )
+    return ui_request_tool_arguments(
+        args,
+        request,
+        timeout_ms=args.timeout_ms,
+    )
 
 
 def workflow_result_was_accepted(result: McpDevToolResult) -> bool:

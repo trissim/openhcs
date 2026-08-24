@@ -37,6 +37,7 @@ from zmqruntime.config import (
 from openhcs.agent.dto.common import (
     AGENT_PARAMETER_DESCRIPTION_METADATA_KEY,
     AGENT_PARAMETER_PRODUCER_OUTPUT_CONTRACT_METADATA_KEY,
+    AgentCliRequest,
     AgentError,
     AgentResourceRef,
     AgentResultEnvelope,
@@ -597,7 +598,11 @@ class UiPageRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class UiCodeDocumentRequest(UiCodeDocumentIdentity, SelectionModeCarrier):
+class UiCodeDocumentRequest(
+    UiCodeDocumentIdentity,
+    SelectionModeCarrier,
+    AgentCliRequest,
+):
     clean: bool = True
 
     @classmethod
@@ -614,12 +619,20 @@ class UiCodeDocumentRequest(UiCodeDocumentIdentity, SelectionModeCarrier):
             clean=clean,
         )
 
+    def as_tool_arguments(self) -> JsonObject:
+        return {
+            "document_id": self.document_id,
+            "selection_mode": self.selection_mode,
+            "clean": self.clean,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class UiStateSurfaceRequest(
     UiStateSurfaceIdentity,
     SelectionModeCarrier,
     UiCodeDocumentOptionalBaseRevision,
+    AgentCliRequest,
 ):
     @classmethod
     def from_fields(
@@ -634,6 +647,15 @@ class UiStateSurfaceRequest(
             selection_mode=selection_mode,
             base_revision_token=base_revision_token,
         )
+
+    def as_tool_arguments(self) -> JsonObject:
+        """Project the declared state-surface factory fields to MCP arguments."""
+
+        return {
+            "surface_id": self.surface_id,
+            "selection_mode": self.selection_mode,
+            "base_revision_token": self.base_revision_token,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -1090,6 +1112,7 @@ class UiActionInvokeRequest(
     SelectedScopeIdsCarrier,
     UiBridgeConfirmationRequirementCarrier,
     UiMutationRequestTokenCarrier,
+    AgentCliRequest,
 ):
     observed_selection_revision_token: str | None = field(
         default=None,
@@ -1127,6 +1150,18 @@ class UiActionInvokeRequest(
                 require_confirmation
             ),
         )
+
+    def as_tool_arguments(self) -> JsonObject:
+        return {
+            "widget_id": self.widget_id,
+            "action_id": self.action_id,
+            "target_scope_ids": list(self.selected_scope_ids),
+            "observed_selection_revision_token": (
+                self.observed_selection_revision_token
+            ),
+            "request_token": self.request_token.value,
+            "require_confirmation": self.confirmation_is_required(),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -1273,6 +1308,7 @@ class UiWindowCloseResult(AgentResultEnvelope, UiWindowIdentity):
 class UiWindowSnapshotRequest(
     WindowSnapshotCaptureSpec,
     UiWindowOperationRequest,
+    AgentCliRequest,
 ):
     @classmethod
     def from_fields(
@@ -1292,6 +1328,14 @@ class UiWindowSnapshotRequest(
             open_policy=UiWindowOpenPolicy(create_if_missing=create_if_missing),
         )
 
+    def as_tool_arguments(self) -> JsonObject:
+        return {
+            "window_id": self.window_id,
+            "output_dir_path": self.output_dir_path,
+            "capture_scope": self.capture_scope.value,
+            "create_if_missing": self.open_policy.create_if_missing,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class UiWindowSnapshotResult(
@@ -1307,7 +1351,11 @@ class UiWindowSnapshotResult(
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class UiWidgetTreeRequest(WidgetTreeProjectionControls, UiWindowOperationRequest):
+class UiWidgetTreeRequest(
+    WidgetTreeProjectionControls,
+    UiWindowOperationRequest,
+    AgentCliRequest,
+):
     actionable_only: bool = True
     include_tree: bool = False
     max_depth: int | None = 8
@@ -1363,6 +1411,19 @@ class UiWidgetTreeRequest(WidgetTreeProjectionControls, UiWindowOperationRequest
             raise ValueError("max_depth must be non-negative or None")
         if self.max_nodes is not None and self.max_nodes < 1:
             raise ValueError("max_nodes must be positive or None")
+
+    def as_tool_arguments(self) -> JsonObject:
+        return {
+            "window_id": self.window_id,
+            "create_if_missing": self.open_policy.create_if_missing,
+            "maximum_text_length": self.maximum_text_length,
+            "maximum_item_model_nodes": self.maximum_item_model_nodes,
+            "truncation_suffix": self.truncation_suffix,
+            "actionable_only": self.actionable_only,
+            "include_tree": self.include_tree,
+            "max_depth": self.max_depth,
+            "max_nodes": self.max_nodes,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -1550,6 +1611,7 @@ class UiWidgetActionSummary(UiObjectStateFieldValuePreviewCarrier, WidgetNodeIde
 class UiWidgetActionInvokeRequest(
     UiWindowOperationRequest,
     UiMutationRequestTokenCarrier,
+    AgentCliRequest,
 ):
     path_id: str
     action_kind: str = "auto"
@@ -1574,6 +1636,16 @@ class UiWidgetActionInvokeRequest(
             target_index=target_index,
             request_token=UiMutationRequestToken(value=request_token),
         )
+
+    def as_tool_arguments(self) -> JsonObject:
+        return {
+            "window_id": self.window_id,
+            "path_id": self.path_id,
+            "action_kind": self.action_kind,
+            "target_index": self.target_index,
+            "create_if_missing": self.open_policy.create_if_missing,
+            "request_token": self.request_token.value,
+        }
 
 
 class UiWidgetActionIssueCode(str, Enum):
@@ -1699,7 +1771,7 @@ class UiObjectStateFieldHelpRequest(UiSemanticAddress):
 
 
 @dataclass(frozen=True, slots=True)
-class UiObjectStateFieldHelpQuery:
+class UiObjectStateFieldHelpQuery(AgentCliRequest):
     """Public query for field help; scope may be inferred when unique."""
 
     field_path: str
@@ -1745,6 +1817,14 @@ class UiObjectStateFieldHelpQuery:
             window_id=self.window_id,
         )
 
+    def as_tool_arguments(self) -> JsonObject:
+        return {
+            "field_path": self.field_path,
+            "object_state_scope_id": self.object_state_scope_id,
+            "window_id": self.window_id,
+            "max_description_chars": self.max_description_chars,
+        }
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class UiObjectStateFieldHelpResult(AgentResultEnvelope):
@@ -1767,6 +1847,7 @@ class UiObjectStateFieldHelpResult(AgentResultEnvelope):
 class UiObjectStateFieldMutationRequest(
     UiMutationRequestTokenCarrier,
     UiSemanticAddress,
+    AgentCliRequest,
 ):
     """Request an ObjectState-owned field update or reset."""
 
@@ -1799,6 +1880,17 @@ class UiObjectStateFieldMutationRequest(
     def __post_init__(self) -> None:
         if self.reset and self.value is not None:
             raise ValueError("reset=True cannot be combined with value.")
+
+    def as_tool_arguments(self) -> JsonObject:
+        return {
+            "object_state_scope_id": self.object_state_scope_id,
+            "field_path": self.field_path,
+            "value": self.value,
+            "reset": self.reset,
+            "window_id": self.window_id,
+            "include_field_values": self.include_field_values,
+            "request_token": self.request_token.value,
+        }
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1844,7 +1936,10 @@ class UiObjectStateScopeCatalog(
 
 
 @dataclass(frozen=True, slots=True)
-class UiObjectStateScopeListRequest(UiObjectStateScopeVisibility):
+class UiObjectStateScopeListRequest(
+    UiObjectStateScopeVisibility,
+    AgentCliRequest,
+):
     scope_ids: tuple[str, ...] = ()
     include_fields: bool = False
     field_limit: int = 200
@@ -1916,6 +2011,17 @@ class UiObjectStateScopeListRequest(UiObjectStateScopeVisibility):
             ),
         )
 
+    def as_tool_arguments(self) -> JsonObject:
+        return {
+            "scope_ids": list(self.scope_ids),
+            "include_system_scopes": self.include_system_scopes,
+            "include_fields": self.include_fields,
+            "include_field_values": self.include_field_values,
+            "field_filter": self.field_filter.value,
+            "field_limit": self.field_limit,
+            "field_offset": self.field_offset,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class UiObjectStateFieldProjection:
@@ -1977,7 +2083,7 @@ class UiObjectStateFieldListResult(AgentResultEnvelope):
 
 
 @dataclass(frozen=True, slots=True)
-class UiObjectStateFieldListQuery:
+class UiObjectStateFieldListQuery(AgentCliRequest):
     """Public ObjectState field query projected from the scope-list bridge ABI."""
 
     source_query_scan_limit: ClassVar[int] = 1_000
@@ -2084,11 +2190,29 @@ class UiObjectStateFieldListQuery:
             scope_ids=self.scope_ids,
         )
 
+    def as_tool_arguments(self) -> JsonObject:
+        return {
+            "scope_ids": list(self.scope_ids),
+            "field_paths": list(self.field_paths),
+            "field_path_contains": list(self.field_path_contains),
+            "include_system_scopes": self.include_system_scopes,
+            "include_clean_fields": self.include_clean_fields,
+            "include_container_fields": self.include_container_fields,
+            "field_filter": self.field_filter.value,
+            "include_field_values": self.include_field_values,
+            "field_limit": self.field_limit,
+            "field_offset": self.field_offset,
+            "max_fields": self.max_fields,
+            "max_value_items": self.max_value_items,
+            "max_value_chars": self.max_value_chars,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class UiCodeDocumentValidationRequest(
     UiCodeDocumentIdentity,
     UiCodeDocumentOptionalBaseRevision,
+    AgentCliRequest,
 ):
     source: str
 
@@ -2105,6 +2229,13 @@ class UiCodeDocumentValidationRequest(
             source=source,
             base_revision_token=base_revision_token,
         )
+
+    def as_tool_arguments(self) -> JsonObject:
+        return {
+            "document_id": self.document_id,
+            "source": self.source,
+            "base_revision_token": self.base_revision_token,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -2135,6 +2266,7 @@ class UiCodeDocumentApplyRequest(
     SelectedScopeIdsCarrier,
     UiBridgeConfirmationPolicy,
     UiMutationRequestTokenCarrier,
+    AgentCliRequest,
 ):
     source: str
     snapshot_label: str | None = None
@@ -2168,6 +2300,19 @@ class UiCodeDocumentApplyRequest(
             apply_if_time_traveling=apply_if_time_traveling,
         )
 
+    def as_tool_arguments(self) -> JsonObject:
+        return {
+            "document_id": self.document_id,
+            "source": self.source,
+            "base_revision_token": self.base_revision_token,
+            "selection_mode": self.selection_mode,
+            "selected_scope_ids": list(self.selected_scope_ids),
+            "require_confirmation": self.confirmation_is_required(),
+            "snapshot_label": self.snapshot_label,
+            "apply_if_time_traveling": self.apply_if_time_traveling,
+            "request_token": self.request_token.value,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class UiCodeDocumentApplyResult(UiCodeDocumentIdentity):
@@ -2192,6 +2337,7 @@ class UiSelectedPlateWorkflowRequest(
     SelectedScopeIdsCarrier,
     UiBridgeConfirmationRequirementCarrier,
     UiMutationRequestTokenCarrier,
+    AgentCliRequest,
 ):
     workflow: UiSelectedPlateWorkflowKind
     observed_selection_revision_token: str | None = field(
@@ -2228,6 +2374,19 @@ class UiSelectedPlateWorkflowRequest(
                 require_confirmation
             ),
         )
+
+    def as_tool_arguments(self) -> JsonObject:
+        """Project the declared workflow factory fields to MCP arguments."""
+
+        return {
+            "workflow": self.workflow.value,
+            "target_scope_ids": list(self.selected_scope_ids),
+            "observed_selection_revision_token": (
+                self.observed_selection_revision_token
+            ),
+            "request_token": self.request_token.value,
+            "require_confirmation": self.confirmation_is_required(),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -2407,7 +2566,7 @@ class UiBridgeOperationStatusRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class UiBridgeOperationWaitRequest:
+class UiBridgeOperationWaitRequest(AgentCliRequest):
     """Bounded terminal wait for one accepted UI bridge operation."""
 
     operation_id: str
@@ -2440,6 +2599,15 @@ class UiBridgeOperationWaitRequest:
             or not 0.05 <= self.poll_interval_seconds <= 5.0
         ):
             raise ValueError("poll_interval_seconds must be between 0.05 and 5.")
+
+    def as_tool_arguments(self) -> JsonObject:
+        """Project the declared operation-wait factory fields to MCP arguments."""
+
+        return {
+            "operation_id": self.operation_id,
+            "timeout_seconds": self.timeout_seconds,
+            "poll_interval_seconds": self.poll_interval_seconds,
+        }
 
 
 @dataclass(frozen=True, slots=True)

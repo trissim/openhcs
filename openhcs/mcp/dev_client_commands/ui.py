@@ -13,9 +13,20 @@ from pyqt_reactive.services.window_snapshot import WindowSnapshotCaptureScope
 from openhcs.agent.capabilities import agent_capabilities
 from openhcs.agent.dto.common import JsonObject, JsonValue
 from openhcs.agent.dto.ui_bridge import (
+    UiActionInvokeRequest,
     UiBridgeOperationStatus,
+    UiCodeDocumentApplyRequest,
+    UiCodeDocumentRequest,
+    UiCodeDocumentValidationRequest,
     UiObjectStateFieldFilter,
+    UiObjectStateFieldHelpQuery,
+    UiObjectStateFieldListQuery,
+    UiObjectStateFieldMutationRequest,
+    UiObjectStateScopeListRequest,
     UiSelectedPlateWorkflowKind,
+    UiWidgetActionInvokeRequest,
+    UiWidgetTreeRequest,
+    UiWindowSnapshotRequest,
 )
 from openhcs.agent.services.ui_bridge_service import UiBridgeGatewayTimeoutError
 from openhcs.agent.ui_bridge_identities import (
@@ -49,10 +60,11 @@ from openhcs.mcp.dev_client_core import (
     optional_str,
     parse_cli_json_value,
     parse_json_object,
-    plate_manager_state_surface_tool_arguments,
     selected_workflow_tool_arguments,
+    state_surface_tool_arguments,
     ui_bridge_operation_result_status,
     ui_connection_arguments,
+    ui_request_tool_arguments,
     ui_tool_arguments,
     workflow_operation_receipt_tool_arguments,
     workflow_poll_skip_reason,
@@ -100,20 +112,15 @@ class StateSurfaceCommandSpec(CapabilityBackedCommandSpec):
         self,
         args: argparse.Namespace,
     ) -> tuple[McpDevToolCall, ...]:
-        tool_arguments: dict[str, JsonValue] = {
-            "surface_id": args.surface_id,
-            "selection_mode": args.selection_mode,
-            "connection": ui_connection_arguments(
-                args,
-                timeout_ms=args.timeout_ms,
-            ),
-        }
-        if args.base_revision_token is not None:
-            tool_arguments["base_revision_token"] = args.base_revision_token
         return (
             McpDevToolCall(
                 self.capability.name,
-                tool_arguments,
+                state_surface_tool_arguments(
+                    args,
+                    surface_id=args.surface_id,
+                    selection_mode=args.selection_mode,
+                    base_revision_token=args.base_revision_token,
+                ),
             ),
         )
 
@@ -243,8 +250,11 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
         timeout_seconds = self.timeout_seconds(args)
         state_call = McpDevToolCall(
             agent_capabilities.ui_get_state_surface.name,
-            plate_manager_state_surface_tool_arguments(
+            state_surface_tool_arguments(
                 args,
+                surface_id=(
+                    PlateManagerStateSurfaceIdentityDeclaration.require_value()
+                ),
                 selection_mode=args.poll_selection_mode,
             ),
         )
@@ -591,18 +601,19 @@ class CodeDocumentCommandSpec(CapabilityBackedCommandSpec):
         self,
         args: argparse.Namespace,
     ) -> tuple[McpDevToolCall, ...]:
+        request = UiCodeDocumentRequest.from_fields(
+            document_id=args.document_id,
+            selection_mode=args.selection_mode,
+            clean=args.clean,
+        )
         return (
             McpDevToolCall(
                 self.capability.name,
-                {
-                    "document_id": args.document_id,
-                    "selection_mode": args.selection_mode,
-                    "clean": args.clean,
-                    "connection": ui_connection_arguments(
-                        args,
-                        timeout_ms=args.timeout_ms,
-                    ),
-                },
+                ui_request_tool_arguments(
+                    args,
+                    request,
+                    timeout_ms=args.timeout_ms,
+                ),
             ),
         )
 
@@ -645,18 +656,19 @@ class ValidateCodeDocumentCommandSpec(CapabilityBackedCommandSpec):
         self,
         args: argparse.Namespace,
     ) -> tuple[McpDevToolCall, ...]:
+        request = UiCodeDocumentValidationRequest.from_fields(
+            document_id=args.document_id,
+            source=code_document_source_from_args(args),
+            base_revision_token=args.base_revision_token,
+        )
         return (
             McpDevToolCall(
                 self.capability.name,
-                {
-                    "document_id": args.document_id,
-                    "source": code_document_source_from_args(args),
-                    "base_revision_token": args.base_revision_token,
-                    "connection": ui_connection_arguments(
-                        args,
-                        timeout_ms=args.timeout_ms,
-                    ),
-                },
+                ui_request_tool_arguments(
+                    args,
+                    request,
+                    timeout_ms=args.timeout_ms,
+                ),
             ),
         )
 
@@ -687,22 +699,23 @@ class ApplyCodeDocumentCommandSpec(CapabilityBackedCommandSpec):
         self,
         args: argparse.Namespace,
     ) -> tuple[McpDevToolCall, ...]:
+        request = UiCodeDocumentApplyRequest.from_fields(
+            document_id=args.document_id,
+            source=code_document_source_from_args(args),
+            base_revision_token=args.base_revision_token,
+            require_confirmation=not args.no_confirmation,
+            snapshot_label=args.snapshot_label,
+            apply_if_time_traveling=args.apply_if_time_traveling,
+            request_token=args.request_token,
+        )
         return (
             McpDevToolCall(
                 self.capability.name,
-                {
-                    "document_id": args.document_id,
-                    "source": code_document_source_from_args(args),
-                    "base_revision_token": args.base_revision_token,
-                    "require_confirmation": not args.no_confirmation,
-                    "snapshot_label": args.snapshot_label,
-                    "apply_if_time_traveling": args.apply_if_time_traveling,
-                    "request_token": args.request_token,
-                    "connection": ui_connection_arguments(
-                        args,
-                        timeout_ms=args.timeout_ms,
-                    ),
-                },
+                ui_request_tool_arguments(
+                    args,
+                    request,
+                    timeout_ms=args.timeout_ms,
+                ),
             ),
         )
 
@@ -785,23 +798,22 @@ class InvokeActionCommandSpec(CapabilityBackedCommandSpec):
         self,
         args: argparse.Namespace,
     ) -> tuple[McpDevToolCall, ...]:
+        request = UiActionInvokeRequest.from_fields(
+            widget_id=args.widget_id,
+            action_id=args.action_id,
+            target_scope_ids=args.target_scope_id,
+            observed_selection_revision_token=(args.observed_selection_revision_token),
+            request_token=args.request_token,
+            require_confirmation=not args.no_confirmation,
+        )
         return (
             McpDevToolCall(
                 self.capability.name,
-                {
-                    "widget_id": args.widget_id,
-                    "action_id": args.action_id,
-                    "target_scope_ids": args.target_scope_id,
-                    "observed_selection_revision_token": (
-                        args.observed_selection_revision_token
-                    ),
-                    "request_token": args.request_token,
-                    "require_confirmation": not args.no_confirmation,
-                    "connection": ui_connection_arguments(
-                        args,
-                        timeout_ms=args.timeout_ms,
-                    ),
-                },
+                ui_request_tool_arguments(
+                    args,
+                    request,
+                    timeout_ms=args.timeout_ms,
+                ),
             ),
         )
 
@@ -846,21 +858,22 @@ class InvokeWidgetActionCommandSpec(CapabilityBackedCommandSpec):
         self,
         args: argparse.Namespace,
     ) -> tuple[McpDevToolCall, ...]:
+        request = UiWidgetActionInvokeRequest.from_fields(
+            window_id=args.window_id,
+            path_id=args.path_id,
+            action_kind=args.action_kind,
+            target_index=args.target_index,
+            create_if_missing=args.create_if_missing,
+            request_token=args.request_token,
+        )
         return (
             McpDevToolCall(
                 self.capability.name,
-                {
-                    "window_id": args.window_id,
-                    "path_id": args.path_id,
-                    "action_kind": args.action_kind,
-                    "target_index": args.target_index,
-                    "create_if_missing": args.create_if_missing,
-                    "request_token": args.request_token,
-                    "connection": ui_connection_arguments(
-                        args,
-                        timeout_ms=args.timeout_ms,
-                    ),
-                },
+                ui_request_tool_arguments(
+                    args,
+                    request,
+                    timeout_ms=args.timeout_ms,
+                ),
             ),
         )
 
@@ -935,32 +948,36 @@ class WidgetTreeCommandSpec(CapabilityBackedCommandSpec):
         self,
         args: argparse.Namespace,
     ) -> tuple[McpDevToolCall, ...]:
+        request = UiWidgetTreeRequest.from_fields(
+            window_id=args.window_id,
+            create_if_missing=args.create_if_missing,
+            maximum_text_length=args.maximum_text_length,
+            maximum_item_model_nodes=args.maximum_item_model_nodes,
+            actionable_only=(
+                True
+                if args.actionable_only
+                else (
+                    False
+                    if args.output == WidgetTreeOutputFormat.OUTLINE.value
+                    else not args.include_non_actionable
+                )
+            ),
+            include_tree=(
+                args.include_tree or args.output == WidgetTreeOutputFormat.OUTLINE.value
+            ),
+            max_depth=self._effective_max_depth(args),
+            max_nodes=self._effective_max_nodes(args),
+        )
+        arguments = ui_request_tool_arguments(
+            args,
+            request,
+            timeout_ms=args.timeout_ms,
+        )
+        arguments["compact_actions"] = not args.full_actions
         return (
             McpDevToolCall(
                 self.capability.name,
-                {
-                    "window_id": args.window_id,
-                    "create_if_missing": args.create_if_missing,
-                    "maximum_text_length": args.maximum_text_length,
-                    "maximum_item_model_nodes": args.maximum_item_model_nodes,
-                    "actionable_only": (
-                        True
-                        if args.actionable_only
-                        else (
-                            False
-                            if args.output == "outline"
-                            else not args.include_non_actionable
-                        )
-                    ),
-                    "include_tree": args.include_tree or args.output == "outline",
-                    "max_depth": self._effective_max_depth(args),
-                    "max_nodes": self._effective_max_nodes(args),
-                    "compact_actions": not args.full_actions,
-                    "connection": ui_connection_arguments(
-                        args,
-                        timeout_ms=args.timeout_ms,
-                    ),
-                },
+                arguments,
             ),
         )
 
@@ -1008,18 +1025,19 @@ class WindowSnapshotCommandSpec(CapabilityBackedCommandSpec):
         self,
         args: argparse.Namespace,
     ) -> tuple[McpDevToolCall, ...]:
+        request = UiWindowSnapshotRequest.from_fields(
+            window_id=args.window_id,
+            capture_scope=args.capture_scope,
+            create_if_missing=args.create_if_missing,
+        )
         return (
             McpDevToolCall(
                 self.capability.name,
-                {
-                    "window_id": args.window_id,
-                    "capture_scope": args.capture_scope,
-                    "create_if_missing": args.create_if_missing,
-                    "connection": ui_connection_arguments(
-                        args,
-                        timeout_ms=args.timeout_ms,
-                    ),
-                },
+                ui_request_tool_arguments(
+                    args,
+                    request,
+                    timeout_ms=args.timeout_ms,
+                ),
             ),
         )
 
@@ -1063,22 +1081,23 @@ class ObjectStateScopesCommandSpec(CapabilityBackedCommandSpec):
         args: argparse.Namespace,
     ) -> tuple[McpDevToolCall, ...]:
         scope_ids = list(dict.fromkeys([*args.scope_ids, *args.scope_id]))
+        request = UiObjectStateScopeListRequest.from_fields(
+            scope_ids=tuple(scope_ids),
+            include_system_scopes=args.include_system_scopes,
+            include_fields=args.include_fields,
+            include_field_values=args.include_field_values,
+            field_filter=args.field_filter,
+            field_limit=args.field_limit,
+            field_offset=args.field_offset,
+        )
         return (
             McpDevToolCall(
                 self.capability.name,
-                {
-                    "scope_ids": scope_ids,
-                    "include_system_scopes": args.include_system_scopes,
-                    "include_fields": args.include_fields,
-                    "field_filter": args.field_filter,
-                    "include_field_values": args.include_field_values,
-                    "field_limit": args.field_limit,
-                    "field_offset": args.field_offset,
-                    "connection": ui_connection_arguments(
-                        args,
-                        timeout_ms=args.timeout_ms,
-                    ),
-                },
+                ui_request_tool_arguments(
+                    args,
+                    request,
+                    timeout_ms=args.timeout_ms,
+                ),
             ),
         )
 
@@ -1148,30 +1167,31 @@ class ObjectStateFieldsCommandSpec(CapabilityBackedCommandSpec):
         args: argparse.Namespace,
     ) -> tuple[McpDevToolCall, ...]:
         scope_ids = list(dict.fromkeys([*args.scope_ids, *args.scope_id]))
+        request = UiObjectStateFieldListQuery.from_fields(
+            scope_ids=tuple(scope_ids),
+            field_paths=tuple(args.field_path),
+            field_path_contains=tuple(args.contains),
+            include_system_scopes=args.include_system_scopes,
+            include_clean_fields=(
+                args.field_filter == UiObjectStateFieldFilter.ALL.value
+            ),
+            include_container_fields=args.include_container_fields,
+            field_filter=args.field_filter,
+            include_field_values=args.include_field_values,
+            field_limit=args.field_limit,
+            field_offset=args.field_offset,
+            max_fields=args.max_fields,
+            max_value_items=args.max_value_items,
+            max_value_chars=args.max_value_chars,
+        )
         return (
             McpDevToolCall(
                 self.capability.name,
-                {
-                    "scope_ids": scope_ids,
-                    "field_paths": args.field_path,
-                    "field_path_contains": args.contains,
-                    "include_system_scopes": args.include_system_scopes,
-                    "include_clean_fields": (
-                        args.field_filter == UiObjectStateFieldFilter.ALL.value
-                    ),
-                    "include_container_fields": args.include_container_fields,
-                    "field_filter": args.field_filter,
-                    "include_field_values": args.include_field_values,
-                    "field_limit": args.field_limit,
-                    "field_offset": args.field_offset,
-                    "max_fields": args.max_fields,
-                    "max_value_items": args.max_value_items,
-                    "max_value_chars": args.max_value_chars,
-                    "connection": ui_connection_arguments(
-                        args,
-                        timeout_ms=args.timeout_ms,
-                    ),
-                },
+                ui_request_tool_arguments(
+                    args,
+                    request,
+                    timeout_ms=args.timeout_ms,
+                ),
             ),
         )
 
@@ -1224,21 +1244,20 @@ class ObjectStateFieldHelpCommandSpec(CapabilityBackedCommandSpec):
                 scope_id = None
         if not field_path:
             raise McpDevCliUsageError("object-state-field-help requires a field path.")
-        arguments: dict[str, JsonValue] = {
-            "field_path": field_path,
-            "window_id": args.window_id,
-            "max_description_chars": args.max_description_chars,
-            "connection": ui_connection_arguments(
-                args,
-                timeout_ms=args.timeout_ms,
-            ),
-        }
-        if scope_id:
-            arguments["object_state_scope_id"] = scope_id
+        request = UiObjectStateFieldHelpQuery.from_fields(
+            field_path=field_path,
+            object_state_scope_id=scope_id,
+            window_id=args.window_id,
+            max_description_chars=args.max_description_chars,
+        )
         return (
             McpDevToolCall(
                 self.capability.name,
-                arguments,
+                ui_request_tool_arguments(
+                    args,
+                    request,
+                    timeout_ms=args.timeout_ms,
+                ),
             ),
         )
 
@@ -1293,24 +1312,23 @@ class ObjectStateSetCommandSpec(CapabilityBackedCommandSpec):
             raise McpDevCliUsageError("--reset cannot be combined with --value.")
         if not args.reset and args.value is None:
             raise McpDevCliUsageError("object-state-set requires --value or --reset.")
+        request = UiObjectStateFieldMutationRequest.from_fields(
+            object_state_scope_id=scope_id,
+            field_path=field_path,
+            value=(None if args.value is None else parse_cli_json_value(args.value)),
+            reset=args.reset,
+            window_id=args.window_id,
+            include_field_values=args.include_field_values,
+            request_token=args.request_token,
+        )
         return (
             McpDevToolCall(
                 self.capability.name,
-                {
-                    "object_state_scope_id": scope_id,
-                    "field_path": field_path,
-                    "value": (
-                        None if args.value is None else parse_cli_json_value(args.value)
-                    ),
-                    "reset": args.reset,
-                    "window_id": args.window_id,
-                    "include_field_values": args.include_field_values,
-                    "request_token": args.request_token,
-                    "connection": ui_connection_arguments(
-                        args,
-                        timeout_ms=args.timeout_ms,
-                    ),
-                },
+                ui_request_tool_arguments(
+                    args,
+                    request,
+                    timeout_ms=args.timeout_ms,
+                ),
             ),
         )
 

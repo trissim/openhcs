@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import time
@@ -40,6 +41,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiCodeDocumentValidationRequest,
     UiCodeDocumentValidationResult,
     UiMutationReceipt,
+    UiObjectStateFieldHelpQuery,
     UiObjectStateFieldHelpRequest,
     UiObjectStateFieldHelpResult,
     UiObjectStateFieldListQuery,
@@ -1739,3 +1741,85 @@ def test_wait_for_operation_receipt_request_rejects_unbounded_controls():
         except ValueError:
             continue
         raise AssertionError(f"Unbounded wait controls were accepted: {controls}")
+
+
+def test_ui_requests_own_mcp_tool_argument_projection():
+    state_request = UiStateSurfaceRequest.from_fields(
+        surface_id=STATE_SURFACE_ID,
+        selection_mode="selected",
+        base_revision_token="rev-1",
+    )
+    workflow_request = UiSelectedPlateWorkflowRequest.from_fields(
+        workflow=UiSelectedPlateWorkflowKind.COMPILE,
+        target_scope_ids=[PLATE_SCOPE_ID],
+        observed_selection_revision_token="selection-1",
+        request_token="request-1",
+        require_confirmation=True,
+    )
+    wait_request = UiBridgeOperationWaitRequest.from_fields(
+        operation_id="operation-1",
+        timeout_seconds=12.5,
+        poll_interval_seconds=0.25,
+    )
+
+    assert state_request.as_tool_arguments() == {
+        "surface_id": STATE_SURFACE_ID,
+        "selection_mode": "selected",
+        "base_revision_token": "rev-1",
+    }
+    assert workflow_request.as_tool_arguments() == {
+        "workflow": "compile_plate",
+        "target_scope_ids": [PLATE_SCOPE_ID],
+        "observed_selection_revision_token": "selection-1",
+        "request_token": "request-1",
+        "require_confirmation": True,
+    }
+    assert wait_request.as_tool_arguments() == {
+        "operation_id": "operation-1",
+        "timeout_seconds": 12.5,
+        "poll_interval_seconds": 0.25,
+    }
+
+    request_projections = (
+        UiCodeDocumentRequest.from_fields(document_id="pipeline-editor"),
+        UiCodeDocumentValidationRequest.from_fields(
+            document_id="pipeline-editor",
+            source="pipeline = []\n",
+        ),
+        UiCodeDocumentApplyRequest.from_fields(
+            document_id="pipeline-editor",
+            source="pipeline = []\n",
+            base_revision_token="rev-1",
+        ),
+        UiActionInvokeRequest.from_fields(
+            widget_id="plate_manager",
+            action_id="compile_plate",
+        ),
+        UiWidgetActionInvokeRequest.from_fields(
+            window_id="pipeline_editor",
+            path_id="function_0.enabled",
+            action_kind="toggle",
+        ),
+        UiWidgetTreeRequest.from_fields(window_id="pipeline_editor"),
+        UiWindowSnapshotRequest.from_fields(window_id="pipeline_editor"),
+        UiObjectStateScopeListRequest.from_fields(),
+        UiObjectStateFieldListQuery.from_fields(),
+        UiObjectStateFieldHelpQuery.from_fields(
+            field_path="pipeline_config.num_workers"
+        ),
+        UiObjectStateFieldMutationRequest.from_fields(
+            object_state_scope_id=PLATE_SCOPE_ID,
+            field_path="pipeline_config.num_workers",
+            value=4,
+        ),
+    )
+
+    for request in (
+        state_request,
+        workflow_request,
+        wait_request,
+        *request_projections,
+    ):
+        assert set(request.as_tool_arguments()) == set(
+            inspect.signature(type(request).from_fields).parameters
+        )

@@ -2336,23 +2336,23 @@
     "diataxis": "how-to",
     "authority": [
       {
-        "path": "openhcs/mcp/dev_client.py",
-        "sha256": "24b09f02f533de0881808e716b645c59440705d4780671b38ef17f8352487286",
+      "path": "openhcs/mcp/dev_client.py",
+      "sha256": "f5d9094cac26f6be331c9a17df44aa97bc17d0f4ee61f7b3add806983b5d22cb",
         "role": "Current development-client parser and persistent shell entry point."
       },
       {
-        "path": "openhcs/mcp/dev_client_core.py",
-        "sha256": "8bd2579fb6a94ab1ae76181f268272389cd567ae430d308941a325f7fc634c38",
+      "path": "openhcs/mcp/dev_client_core.py",
+      "sha256": "dd4572aace45246c862a1deec3b7aeb2ec7bf3dcfaa45731c434d9593d033daa",
         "role": "MCP dev-client session, declared receipt decoding, surface, timeout, and workflow-owned terminal-state criteria, including idempotent initialization."
       },
       {
-        "path": "openhcs/mcp/dev_client_commands/ui.py",
-        "sha256": "95b73cc0835e6858fc90df68ef1e896a4ff96c99a964d952e9159e9d8a43c66b",
+      "path": "openhcs/mcp/dev_client_commands/ui.py",
+      "sha256": "fafb6a45f510bc7d5a12e36b72ef782819bca79050a72a4f20bc1a72d297ec73",
         "role": "Selected-workflow dispatch ordering: baseline, bridge receipt, criterion-governed domain-state polling, and compact result rendering."
       },
       {
-        "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "ed3869e71eba8d575108cc8bd0696ea89ab9db9c5f5a5060af5bc7cdda6abb3d",
+      "path": "tests/unit/agent/test_mcp_server.py",
+      "sha256": "635ba51a4aef860fbb58471cc3d7e7d4e9281816a92d9de059e9861e0e7c1a35",
         "role": "Regression proof that selected-workflow waiting rejects stale compile and run rows while accepting unchanged initialized state after an idempotent initialization receipt."
       },
       {
@@ -2426,8 +2426,10 @@
       "A fresh current-checkout dev-client subprocess discovered the explicitly selected live descriptor, reported 26 operations and 14 features, and completed the four-operation UI smoke with zero MCP errors.",
       "On 2026-08-22, a persistent fresh-source MCP session consumed an untruncated 1,702-node live widget tree larger than the former stream separator ceiling, then completed a health request on the same session.",
       "On 2026-08-23, re-read the complete how-to against ZMQRuntime 0.2.11 and the retained OpenHCS client boundary; focused tests and a live MCP/ZMQ rehearsal with 35 progress events passed.",
-      "On 2026-08-24, re-read the complete how-to against the declared bridge receipt and Plate Manager revision owners; 16 focused regressions passed and a live run waited through 47 current-state polls before reporting completion.",
-      "On 2026-08-24, re-read the complete how-to after a two-pass live rehearsal exposed idempotent initialization; both passes completed all nine acceptance requirements while stale compile and run rows remained rejected by focused tests."
+    "On 2026-08-24, re-read the complete how-to against the declared bridge receipt and Plate Manager revision owners; 16 focused regressions passed and a live run waited through 47 current-state polls before reporting completion.",
+    "On 2026-08-24, re-read the complete how-to after a two-pass live rehearsal exposed idempotent initialization; both passes completed all nine acceptance requirements while stale compile and run rows remained rejected by focused tests.",
+    "On 2026-08-24, re-read the complete how-to after every custom UI command began hydrating its capability request DTO and using that request-owned tool projection; command behavior and documented workflow remain unchanged.",
+    "An isolated real desktop, fresh MCP process, cold ZMQ runtime, execution, results window, and Napari viewer completed all nine rehearsal requirements in 159.76 seconds; code read, validation, apply, receipt waits, selected workflows, snapshots, ROI streaming, and bounded viewer inspection all passed without logged errors."
     ]
   },
   {

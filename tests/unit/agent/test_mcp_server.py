@@ -9395,7 +9395,7 @@ def test_mcp_dev_client_object_state_field_help_command_projects_tool_arguments(
     inferred_call = dev_client._calls_from_args(inferred_args)[0]
 
     assert inferred_call.name == "openhcs_ui_describe_object_state_field"
-    assert "object_state_scope_id" not in inferred_call.arguments
+    assert inferred_call.arguments["object_state_scope_id"] is None
     assert inferred_call.arguments["field_path"] == "napari_streaming_config.enabled"
     assert inferred_call.arguments["max_description_chars"] == 1200
 
@@ -9409,7 +9409,7 @@ def test_mcp_dev_client_object_state_field_help_command_projects_tool_arguments(
     inferred_option_call = dev_client._calls_from_args(inferred_option_args)[0]
 
     assert inferred_option_call.name == "openhcs_ui_describe_object_state_field"
-    assert "object_state_scope_id" not in inferred_option_call.arguments
+    assert inferred_option_call.arguments["object_state_scope_id"] is None
     assert inferred_option_call.arguments["field_path"] == "streaming_defaults.enabled"
 
 
@@ -10744,8 +10744,9 @@ def test_mcp_dev_client_selected_workflow_poll_arguments_are_projected():
     )
 
     workflow_call = dev_client._calls_from_args(args)[0]
-    state_arguments = dev_client.plate_manager_state_surface_tool_arguments(
+    state_arguments = dev_client.state_surface_tool_arguments(
         args,
+        surface_id="plate_manager.state",
         selection_mode=args.poll_selection_mode,
     )
 
@@ -10756,6 +10757,9 @@ def test_mcp_dev_client_selected_workflow_poll_arguments_are_projected():
     assert workflow_call.name == "openhcs_ui_selected_plate_workflow"
     assert workflow_call.arguments == {
         "workflow": "compile_plate",
+        "target_scope_ids": [],
+        "observed_selection_revision_token": None,
+        "request_token": None,
         "require_confirmation": False,
         "connection": {
             "bridge_instance_id": "ui-test",
@@ -10765,6 +10769,7 @@ def test_mcp_dev_client_selected_workflow_poll_arguments_are_projected():
     assert state_arguments == {
         "surface_id": "plate_manager.state",
         "selection_mode": "all",
+        "base_revision_token": None,
         "connection": {
             "bridge_instance_id": "ui-test",
             "timeout_ms": 1234,
@@ -11088,6 +11093,7 @@ def test_mcp_dev_client_selected_workflow_poll_composes_followup_state_calls(
     assert calls[0].arguments == {
         "surface_id": "plate_manager.state",
         "selection_mode": "all",
+        "base_revision_token": None,
         "connection": {
             "bridge_instance_id": "ui-test",
             "timeout_ms": 1234,
