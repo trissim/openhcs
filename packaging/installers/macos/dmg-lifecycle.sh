@@ -48,5 +48,11 @@ openhcs_detach_disk_image() {
     fi
     /bin/sleep 1
   done
-  /usr/bin/hdiutil detach -force "$mounted_device"
+  if /usr/bin/hdiutil detach -force "$mounted_device"; then
+    return 0
+  fi
+  if ! /usr/sbin/diskutil info "$mounted_device" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
 }
