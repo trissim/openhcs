@@ -2608,7 +2608,7 @@
       },
       {
         "path": "tests/integration/test_main.py",
-        "sha256": "63e72f69829a1c9157422356181f4326833c405ee1cf37c571e915a812e9453e",
+        "sha256": "5886ca4fb042dcefe3b6d8136247d2d5e5b007027ce5a9d7911d366698d45822",
         "role": "Direct and ZMQ compile-before-execute integration harness with explicit OMERO lifecycle cleanup and no browser side effect."
       },
       {

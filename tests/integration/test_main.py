@@ -486,7 +486,9 @@ def _initialize_orchestrator(
         # This is required because OMEROLocalBackend accesses FilenameParser.__registry__
         # which is a LazyDiscoveryDict that only populates when first accessed
         from openhcs.runtime.omero_instance_manager import OMEROInstanceManager
-        from openhcs.microscopes import omero  # noqa: F401 - Import OMERO parsers to register them
+        from openhcs.microscopes import (
+            omero,
+        )  # noqa: F401 - Import OMERO parsers to register them
         from polystore.backend_registry import register_cleanup_callback
         from polystore.omero_local import OMEROLocalBackend
         from polystore.base import storage_registry
@@ -792,13 +794,11 @@ def _execute_pipeline_with_mode(
                 well_filter=CONSTANTS.PIPELINE_STEP_WELL_FILTER_TEST
             ),
             sequential_processing_config=LazySequentialProcessingConfig(
-                sequential_components=sequential_components
-                if sequential_components
-                else []
+                sequential_components=(
+                    sequential_components if sequential_components else []
+                )
             ),
-            vfs_config=LazyVFSConfig(
-                materialization_backend=materialization_backend
-            ),
+            vfs_config=LazyVFSConfig(materialization_backend=materialization_backend),
         )
 
         return _execute_pipeline_zmq(
@@ -872,9 +872,9 @@ def test_main(
 
         # Verify the error message contains the expected substring
         expected_error = sequential_config.get("expected_error", "")
-        assert expected_error in str(exc_info.value), (
-            f"Expected error message to contain '{expected_error}', but got: {exc_info.value}"
-        )
+        assert expected_error in str(
+            exc_info.value
+        ), f"Expected error message to contain '{expected_error}', but got: {exc_info.value}"
         print(
             f"✅ Validation correctly rejected invalid configuration: {exc_info.value}"
         )
