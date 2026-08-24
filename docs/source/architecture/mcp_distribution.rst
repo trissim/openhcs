@@ -43,6 +43,12 @@ The local MCP server runs over stdio and is owned by the client process. It
 does not import or host the PyQt UI. GUI, viewer, and local runtime capabilities
 remain local-only and attach through their authenticated process bridges.
 
+The stdio transport reserves process stdout before constructing the server.
+JSON-RPC uses a dedicated duplicate of the original stdout descriptor, while
+ordinary Python output and native writes to descriptor 1 are routed to stderr
+for the lifetime of the process. This boundary belongs to the transport;
+individual capabilities and services do not carry local stdout guards.
+
 Installing the GUI with the MCP server is a packaging convenience, not a reason
 to merge their process lifetimes. MCP startup must remain usable in a headless
 environment, and GUI launch must be an explicit human-approved action.

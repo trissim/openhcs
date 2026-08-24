@@ -167,19 +167,24 @@ def build_bootstrapped_server(
 def run_bootstrapped_server(
     capability_surface_profile: "LocalCapabilitySurfaceProfile | None" = None,
 ) -> None:
-    """Run the OpenHCS MCP server, preserving stdio for early run failures."""
-    try:
-        server = (
-            build_bootstrapped_server()
-            if capability_surface_profile is None
-            else build_bootstrapped_server(capability_surface_profile)
-        )
-        server.run(transport="stdio")
-    except Exception as exc:
-        build_bootstrap_failure_server(
-            exc,
-            McpBootstrapFailurePhase.RUN_SERVER,
-        ).run(transport="stdio")
+    """Run the OpenHCS MCP server with transport-owned protocol stdout."""
+    from openhcs.mcp.stdio import McpStdioTransport
+
+    with McpStdioTransport.reserve_process_stdout() as stdio_transport:
+        try:
+            server = (
+                build_bootstrapped_server()
+                if capability_surface_profile is None
+                else build_bootstrapped_server(capability_surface_profile)
+            )
+            stdio_transport.run(server)
+        except Exception as exc:
+            stdio_transport.run(
+                build_bootstrap_failure_server(
+                    exc,
+                    McpBootstrapFailurePhase.RUN_SERVER,
+                )
+            )
 
 
 def _build_parser() -> argparse.ArgumentParser:

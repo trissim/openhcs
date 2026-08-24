@@ -1,5 +1,4 @@
 import json
-import os
 from pathlib import Path
 
 import numpy as np
@@ -24,7 +23,6 @@ from openhcs.agent.services.plate_inspection_service import (
     PlateInspectionService,
     PlateInspectionWorkflowAdvicePolicy,
 )
-from openhcs.agent.services.stdio import AgentStdoutRedirect
 from openhcs.agent.services.synthetic_plate_service import (
     SyntheticPlateGenerationService,
 )
@@ -1346,17 +1344,6 @@ def test_plate_inspection_downgrades_low_filename_parse_coverage(tmp_path: Path)
         and "wrong folder" in warning.hint
         for warning in result.warnings
     )
-
-
-def test_plate_inspection_redirects_native_stdout_to_stderr(capfd):
-    with AgentStdoutRedirect.to_stderr():
-        print("python stdout noise")
-        os.write(1, b"fd stdout noise\n")
-
-    captured = capfd.readouterr()
-    assert captured.out == ""
-    assert "python stdout noise" in captured.err
-    assert "fd stdout noise" in captured.err
 
 
 def test_plate_inspection_reports_path_policy_errors(tmp_path: Path):

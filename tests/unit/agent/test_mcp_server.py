@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import tomllib
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +19,7 @@ from zmqruntime.config import TransportMode
 import openhcs
 import openhcs.mcp.bootstrap as bootstrap
 import openhcs.mcp.server as server
+import openhcs.mcp.stdio as mcp_stdio
 from openhcs.agent.authoring_contexts import AuthoringContextDeclaration
 from openhcs.agent.capabilities import (
     AuthoringLocalCapabilitySurfaceProfile,
@@ -1449,9 +1451,7 @@ def test_mcp_stale_watchlist_includes_agent_contract_sources():
     assert any(
         path.endswith("openhcs/core/plate_image_inventory.py") for path in watched_paths
     )
-    assert any(
-        path.endswith("openhcs/agent/services/stdio.py") for path in watched_paths
-    )
+    assert any(path.endswith("openhcs/mcp/stdio.py") for path in watched_paths)
     assert any(
         path.endswith("openhcs/processing/custom_functions/manager.py")
         for path in watched_paths
@@ -14860,6 +14860,14 @@ def test_mcp_bootstrap_wraps_server_run_failure(monkeypatch):
         bootstrap,
         "build_bootstrap_failure_server",
         build_failure_server,
+    )
+    recording_transport = SimpleNamespace(
+        run=lambda server: server.run(transport="stdio")
+    )
+    monkeypatch.setattr(
+        mcp_stdio.McpStdioTransport,
+        "reserve_process_stdout",
+        classmethod(lambda cls: nullcontext(recording_transport)),
     )
 
     bootstrap.run_bootstrapped_server()

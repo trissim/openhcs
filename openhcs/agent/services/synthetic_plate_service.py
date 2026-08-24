@@ -14,7 +14,6 @@ from openhcs.agent.dto.plate import (
     SyntheticPlateGenerationResult,
 )
 from openhcs.agent.path_policy import AgentPathPolicy, AgentPathPolicyError
-from openhcs.agent.services.stdio import AgentStdoutRedirect
 from openhcs.agent.services.plate_inspection_service import PlateInspectionService
 from openhcs.core.synthetic_plate_generation import (
     SYNTHETIC_PLATE_GENERATION_PROFILE,
@@ -58,13 +57,6 @@ class SyntheticPlateGenerationService:
         self._profile = profile
 
     def generate(
-        self,
-        request: SyntheticPlateGenerationRequest,
-    ) -> SyntheticPlateGenerationResult:
-        with AgentStdoutRedirect.to_stderr():
-            return self._generate(request)
-
-    def _generate(
         self,
         request: SyntheticPlateGenerationRequest,
     ) -> SyntheticPlateGenerationResult:

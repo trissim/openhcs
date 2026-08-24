@@ -168,7 +168,12 @@ registered tool function objects and the OpenHCS agent context has already been
 constructed.
 
 Do not wrap stdio with file watchers that print status to stdout. Stdio stdout
-is the MCP JSON-RPC channel; logs and watcher messages belong on stderr.
+is the MCP JSON-RPC channel; logs and watcher messages belong on stderr. The
+OpenHCS stdio transport reserves that channel before server construction and
+routes ordinary Python and native descriptor-1 output to stderr for the whole
+process lifetime. Do not reintroduce per-service redirect guards: they cannot
+contain delayed imports or background work and would duplicate transport
+ownership.
 The installed stdio entrypoint suppresses routine INFO logging so client logs
 stay readable; set ``OPENHCS_MCP_VERBOSE=1`` while diagnosing server startup to
 restore it.

@@ -37,10 +37,9 @@ from openhcs.core.artifacts import (
     RelationshipsArtifactType,
 )
 from openhcs.core.callable_contract import CallableContract
-from openhcs.agent.services.stdio import AgentStdoutRedirect
+from openhcs.interop.cellprofiler.setting_names import setting_names
 from openhcs.processing.backends.lib_registry.registry_service import RegistryService
 from openhcs.processing.backends.lib_registry.unified_registry import FunctionMetadata
-from openhcs.interop.cellprofiler.setting_names import setting_names
 import openhcs.processing.custom_functions.manager as custom_function_manager
 
 MAX_FUNCTION_DETAIL_DOC_CHARS = 50000
@@ -773,15 +772,14 @@ class FunctionCatalogService:
         *,
         status_callback: Callable[[str], None] | None = None,
     ) -> dict[str, FunctionMetadata]:
-        with AgentStdoutRedirect.to_stderr():
-            from openhcs.processing.func_registry import (
-                synchronize_custom_function_sources,
-            )
+        from openhcs.processing.func_registry import (
+            synchronize_custom_function_sources,
+        )
 
-            synchronize_custom_function_sources()
-            return RegistryService.get_all_functions_with_metadata(
-                status_callback=status_callback,
-            )
+        synchronize_custom_function_sources()
+        return RegistryService.get_all_functions_with_metadata(
+            status_callback=status_callback,
+        )
 
     def _metadata(self, function_id: str) -> FunctionMetadata:
         try:

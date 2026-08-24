@@ -42,7 +42,6 @@ from openhcs.agent.dto.plate import (
     PlateWorkspacePreparationOperation,
 )
 from openhcs.agent.path_policy import AgentPathPolicy, AgentPathPolicyError
-from openhcs.agent.services.stdio import AgentStdoutRedirect
 from openhcs.agent.ui_bridge_actions import PlateOperation
 from openhcs.agent.ui_bridge_identities import (
     PlateManagerOrchestratorCodeDocumentIdentity,
@@ -986,35 +985,30 @@ class PlateInspectionService:
         self,
         request: PlatePathInspectionRequest,
     ) -> PlatePathInspectionResult:
-        with AgentStdoutRedirect.to_stderr():
-            return self._inspect(request)
+        return self._inspect(request)
 
     def query_files(
         self,
         request: PlateFileQueryRequest,
     ) -> PlateFileQueryResult:
-        with AgentStdoutRedirect.to_stderr():
-            return self._query_files(request)
+        return self._query_files(request)
 
     def sample_image(
         self,
         request: PlateImageSampleRequest,
     ) -> PlateImageSampleResult:
-        with AgentStdoutRedirect.to_stderr():
-            return self._sample_image(request)
+        return self._sample_image(request)
 
     def open_context(
         self,
         request: PlatePathInspectionRequest,
     ) -> tuple[PlateInspectionContext | None, tuple[AgentError, ...], tuple[AgentWarning, ...]]:
         """Resolve the plate handler/filemanager context without querying files."""
-        with AgentStdoutRedirect.to_stderr():
-            return self._open_context(request)
+        return self._open_context(request)
 
     def resolve_plate_path(self, plate_path: str) -> tuple[Path | None, tuple[AgentError, ...]]:
         """Resolve and validate a local plate path without creating a handler."""
-        with AgentStdoutRedirect.to_stderr():
-            return self._resolve_plate_path(plate_path)
+        return self._resolve_plate_path(plate_path)
 
     def _open_context(
         self,

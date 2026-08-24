@@ -20,7 +20,6 @@ from openhcs.agent.services.plate_inspection_service import (
     PlateInspectionFileQueryProjection,
     PlateInspectionService,
 )
-from openhcs.agent.services.stdio import AgentStdoutRedirect
 from openhcs.agent.services.ui_bridge_service import (
     DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     UiBridgeService,
@@ -41,7 +40,6 @@ from openhcs.core.viewer_streaming_service import (
 from openhcs.runtime.viewer_protocol import (
     DetachedViewerLaunchFailure,
     ViewerGraphicalSessionUnavailableError,
-    ViewerLaunchContext,
 )
 
 
@@ -62,20 +60,9 @@ class PlateStreamingService:
         *,
         ui_bridge_connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
     ) -> PlateFileStreamResult:
-        with AgentStdoutRedirect.to_stderr():
-            return self._stream_files(
-                request,
-                launch_context=self._ui_bridge_service.viewer_launch_context(
-                    ui_bridge_connection
-                ),
-            )
-
-    def _stream_files(
-        self,
-        request: PlateFileStreamRequest,
-        *,
-        launch_context: ViewerLaunchContext,
-    ) -> PlateFileStreamResult:
+        launch_context = self._ui_bridge_service.viewer_launch_context(
+            ui_bridge_connection
+        )
         context_plate_path = request.context_plate_path or request.plate_path
         context, errors, warnings = self._plate_inspection_service.open_context(
             PlatePathInspectionRequest(
