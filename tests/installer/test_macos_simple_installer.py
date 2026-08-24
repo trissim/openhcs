@@ -186,6 +186,9 @@ def test_macos_cancellation_polls_liveness_then_reaps_child_once() -> None:
     assert 'wait "$child_pid"' not in termination
     assert 'wait "$child_pid"' not in cancellation
     assert 'while child_is_running "$child_pid"; do' in source
+    assert "termination_grace_seconds=2" in termination
+    assert "termination_deadline" in termination
+    assert "{1..20}" not in termination
     assert source.count('wait "$child_pid"') == 1
     assert "install_cancellation_requested=true" in cancellation
 

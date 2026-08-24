@@ -182,18 +182,20 @@ child_is_running() {
 
 terminate_active_child() {
     local child_pid=$1
-    local poll_attempt
+    local termination_grace_seconds=2
+    local termination_deadline
 
     /bin/kill -TERM "$child_pid" 2>/dev/null || true
-    for poll_attempt in {1..20}; do
-        if ! child_is_running "$child_pid"; then
+    termination_deadline=$((
+        $(/bin/date -u '+%s') + termination_grace_seconds
+    ))
+    while child_is_running "$child_pid"; do
+        if (( $(/bin/date -u '+%s') >= termination_deadline )); then
+            /bin/kill -KILL "$child_pid" 2>/dev/null || true
             break
         fi
         /bin/sleep 0.1
     done
-    if child_is_running "$child_pid"; then
-        /bin/kill -KILL "$child_pid" 2>/dev/null || true
-    fi
 }
 
 cancel_install() {

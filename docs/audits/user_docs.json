@@ -807,7 +807,7 @@
       },
       {
         "path": "packaging/installers/macos/install-openhcs.sh",
-        "sha256": "d4585a0a2912b3caf01c98320c2211e21acc42c810ac2d592685c735fd345734",
+        "sha256": "453de1dc4bed742730fb7346e01f948c0fb0d93d6ed1ca29485a636fbb034cbc",
         "role": "Implements the macOS application installer, managed environment creation, package installation, and launcher setup."
       },
       {
@@ -1261,7 +1261,7 @@
       },
       {
         "path": "packaging/installers/macos/install-openhcs.sh",
-        "sha256": "d4585a0a2912b3caf01c98320c2211e21acc42c810ac2d592685c735fd345734",
+        "sha256": "453de1dc4bed742730fb7346e01f948c0fb0d93d6ed1ca29485a636fbb034cbc",
         "role": "Implements the macOS application installer, managed environment creation, package installation, and launcher setup."
       }
     ],
@@ -2157,7 +2157,7 @@
       },
       {
         "path": "packaging/installers/macos/install-openhcs.sh",
-        "sha256": "d4585a0a2912b3caf01c98320c2211e21acc42c810ac2d592685c735fd345734",
+        "sha256": "453de1dc4bed742730fb7346e01f948c0fb0d93d6ed1ca29485a636fbb034cbc",
         "role": "Implements the macOS application installer, managed environment creation, package installation, and launcher setup."
       }
     ],
