@@ -44,9 +44,12 @@ descriptor from another checkout or weaken the compatibility check.
 For ``selected-workflow --wait``, the development client captures the current
 Plate Manager revision before dispatch, waits once for the returned UI
 operation receipt, and then polls the Plate Manager state surface. The receipt
-establishes that the Qt mutation completed; compile or run completion requires
-a later state revision with the requested workflow's terminal row. This keeps a
-terminal row from an earlier workflow from satisfying the new wait.
+establishes that the Qt mutation completed. Compile and run require a later
+state revision with the requested workflow's terminal row, which prevents a
+row from an earlier operation from satisfying the new wait. Initialization is
+idempotent: after the receipt, an already-initialized terminal row is sufficient
+even when the revision does not change. Each workflow criterion owns that
+terminal-state policy.
 
 Codex Config Shape
 ------------------

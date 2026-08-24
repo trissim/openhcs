@@ -2328,7 +2328,7 @@
   },
   {
     "path": "docs/source/development/mcp_development.rst",
-    "source_sha256": "35d4a12390c6e1d64bbc83bb12670a857b02db6cbfd5e6b7e39a07174daad302",
+    "source_sha256": "8bfd5a015985abd5a546b175c0eaaadd5da43aa49bf7b0e7ad50267367cc7724",
     "audience": [
       "OpenHCS MCP developers"
     ],
@@ -2342,18 +2342,18 @@
       },
       {
         "path": "openhcs/mcp/dev_client_core.py",
-        "sha256": "5e0732fc60f3a4f4182774fbd68c364558f6f4eb8c13b398c803495e8b80dbe7",
-        "role": "MCP dev-client session, declared receipt decoding, surface, timeout, and selected-workflow contracts."
+        "sha256": "8bd2579fb6a94ab1ae76181f268272389cd567ae430d308941a325f7fc634c38",
+        "role": "MCP dev-client session, declared receipt decoding, surface, timeout, and workflow-owned terminal-state criteria, including idempotent initialization."
       },
       {
         "path": "openhcs/mcp/dev_client_commands/ui.py",
-        "sha256": "4ba108d6cde767f7815c485f1cdc048b05a6b8c9800c346de01289ab31bd1734",
-        "role": "Selected-workflow dispatch ordering: baseline, bridge receipt, revision-aware domain-state polling, and compact result rendering."
+        "sha256": "95b73cc0835e6858fc90df68ef1e896a4ff96c99a964d952e9159e9d8a43c66b",
+        "role": "Selected-workflow dispatch ordering: baseline, bridge receipt, criterion-governed domain-state polling, and compact result rendering."
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "856b5d88dc5c163bb144ee0d7225d636bd4716e435467f4b996e1b15e34e0b93",
-        "role": "Regression proof that selected-workflow waiting rejects a stale terminal row and accepts only post-dispatch state evidence."
+        "sha256": "ed3869e71eba8d575108cc8bd0696ea89ab9db9c5f5a5060af5bc7cdda6abb3d",
+        "role": "Regression proof that selected-workflow waiting rejects stale compile and run rows while accepting unchanged initialized state after an idempotent initialization receipt."
       },
       {
         "path": "openhcs/mcp/bootstrap.py",
@@ -2414,7 +2414,8 @@
     "findings": [
       "The development workflow did not explain that submit_timeout_ms spans cold startup or distinguish a known pre-dispatch timeout from an unknown post-dispatch outcome.",
       "The workflow did not explain how to recover when a client-owned MCP process and desktop bridge were launched from incompatible OpenHCS environments.",
-      "The selected-workflow waiter could accept a terminal Plate Manager row from an earlier operation without proving dispatch receipt or a state revision."
+      "The selected-workflow waiter could accept a terminal Plate Manager row from an earlier operation without proving dispatch receipt or a state revision.",
+      "Reusing a live UI exposed that idempotent initialization can complete without changing the Plate Manager revision; the workflow criterion now owns that exception while compile and run retain the stale-row guard."
     ],
     "disposition": "revise",
     "validation": [
@@ -2425,7 +2426,8 @@
       "A fresh current-checkout dev-client subprocess discovered the explicitly selected live descriptor, reported 26 operations and 14 features, and completed the four-operation UI smoke with zero MCP errors.",
       "On 2026-08-22, a persistent fresh-source MCP session consumed an untruncated 1,702-node live widget tree larger than the former stream separator ceiling, then completed a health request on the same session.",
       "On 2026-08-23, re-read the complete how-to against ZMQRuntime 0.2.11 and the retained OpenHCS client boundary; focused tests and a live MCP/ZMQ rehearsal with 35 progress events passed.",
-      "On 2026-08-24, re-read the complete how-to against the declared bridge receipt and Plate Manager revision owners; 16 focused regressions passed and a live run waited through 47 current-state polls before reporting completion."
+      "On 2026-08-24, re-read the complete how-to against the declared bridge receipt and Plate Manager revision owners; 16 focused regressions passed and a live run waited through 47 current-state polls before reporting completion.",
+      "On 2026-08-24, re-read the complete how-to after a two-pass live rehearsal exposed idempotent initialization; both passes completed all nine acceptance requirements while stale compile and run rows remained rejected by focused tests."
     ]
   },
   {

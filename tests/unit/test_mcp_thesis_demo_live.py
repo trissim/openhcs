@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
+import subprocess
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -25,6 +26,20 @@ sys.modules[SPEC.name] = demo
 SPEC.loader.exec_module(demo)
 
 
+def test_direct_script_entrypoint_activates_source_checkout_externals() -> None:
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--help"],
+        cwd=SCRIPT_PATH.parents[1],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "Run the OpenHCS MCP thesis live-demo rehearsal" in completed.stdout
+
+
 def rehearsal_context(
     tmp_path: Path,
     *,
@@ -43,6 +58,40 @@ def rehearsal_context(
         zmq_port=zmq_port,
         viewer_timeout_ms=2000,
     )
+
+
+def test_reused_ui_descriptor_comes_from_the_exact_live_owner(tmp_path: Path) -> None:
+    owner = rehearsal_context(tmp_path)
+    descriptor = tmp_path / "ui_bridge" / "owned.json"
+    descriptor.parent.mkdir()
+    descriptor.write_text("{}", encoding="utf-8")
+    owner.descriptor_path = descriptor
+
+    class LiveProcess:
+        @staticmethod
+        def poll() -> None:
+            return None
+
+    owner.ui_process = LiveProcess()
+
+    assert demo.require_owned_ui_descriptor(owner) == descriptor
+
+
+def test_reused_ui_descriptor_rejects_an_exited_owner(tmp_path: Path) -> None:
+    owner = rehearsal_context(tmp_path)
+    descriptor = tmp_path / "owned.json"
+    descriptor.write_text("{}", encoding="utf-8")
+    owner.descriptor_path = descriptor
+
+    class ExitedProcess:
+        @staticmethod
+        def poll() -> int:
+            return 1
+
+    owner.ui_process = ExitedProcess()
+
+    with pytest.raises(demo.RehearsalFailure, match="exited before reuse"):
+        demo.require_owned_ui_descriptor(owner)
 
 
 def test_run_directory_resolves_output_boundary(

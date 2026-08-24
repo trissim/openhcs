@@ -11190,6 +11190,84 @@ def test_mcp_dev_client_selected_workflow_wait_rejects_stale_terminal_state(
     assert summary.payloads[0]["poll_count"] == 1
 
 
+def test_mcp_dev_client_selected_workflow_accepts_idempotent_init_terminal_state(
+    monkeypatch,
+):
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    import openhcs.mcp.dev_client as dev_client
+    import openhcs.mcp.dev_client_commands.ui as ui_commands
+
+    calls: list[dev_client.McpDevToolCall] = []
+    initialized_state = dev_client.McpDevToolResult(
+        tool="openhcs_ui_get_state_surface",
+        mcp_error=False,
+        payloads=(
+            {
+                "current_revision_token": "already-initialized",
+                "payload": {
+                    "manager_execution_state": "idle",
+                    "object_state_token": 1,
+                    "rows": [
+                        {
+                            "plate_scope_id": "scope-a",
+                            "init_pending": False,
+                            "initialized": True,
+                        }
+                    ],
+                },
+            },
+        ),
+    )
+
+    async def fake_call_tool(session, call, timeout_seconds):
+        calls.append(call)
+        if call.name == "openhcs_ui_selected_plate_workflow":
+            return _accepted_workflow_dev_result(
+                dev_client,
+                tool=call.name,
+                workflow="init_plate",
+            )
+        if call.name == "openhcs_ui_wait_for_operation_receipt":
+            return _completed_operation_receipt_dev_result(
+                dev_client,
+                tool=call.name,
+            )
+        return initialized_state
+
+    monkeypatch.setattr(ui_commands, "call_mcp_tool", fake_call_tool)
+
+    args = dev_client._build_parser().parse_args(
+        (
+            "selected-workflow",
+            "init_plate",
+            "--wait",
+            "--wait-timeout-seconds",
+            "0",
+            "--wait-interval-seconds",
+            "0",
+        )
+    )
+    response = asyncio.run(
+        dev_client.McpDevCommandSpec.for_name("selected-workflow").run_session(
+            SimpleNamespace(server_spec=dev_client.McpDevServerSpec(sys.executable)),
+            args,
+        )
+    )
+
+    assert [call.name for call in calls] == [
+        "openhcs_ui_get_state_surface",
+        "openhcs_ui_selected_plate_workflow",
+        "openhcs_ui_wait_for_operation_receipt",
+        "openhcs_ui_get_state_surface",
+    ]
+    summary = response.results[-1]
+    assert summary.mcp_error is False
+    assert summary.payloads[0]["poll_status"] == "completed"
+    assert summary.payloads[0]["poll_count"] == 1
+
+
 def test_mcp_dev_client_selected_workflow_poll_recovers_from_transient_read_timeout(
     monkeypatch,
 ):

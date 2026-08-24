@@ -20,6 +20,12 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+# Importing the package activates the pinned source-checkout externals before
+# this direct script entrypoint imports their public modules.
+import openhcs  # noqa: F401
+
+# isort: split
+
 from pyqt_reactive.services.function_navigation import FunctionPatternField
 from pyqt_reactive.widgets.shared import DetachableActionBar, ManagedWindowAction
 from zmqruntime import (
@@ -2823,6 +2829,24 @@ def snapshot_window(ctx: RunContext, window_id: str, *, label: str) -> dict[str,
     return snapshot
 
 
+def close_window(ctx: RunContext, window_id: str, *, label: str) -> None:
+    response = command_json(
+        ctx,
+        label,
+        mcp_call_tool_cmd(
+            UiCloseWindowCapability.name,
+            {
+                "window_id": window_id,
+                "connection": ui_connection_arguments(ctx),
+            },
+        ),
+        timeout=30,
+    )
+    closed = first_payload(response, UiCloseWindowCapability.name)
+    if closed.get("closed") is not True:
+        raise RehearsalFailure(f"Window {window_id!r} did not close normally.")
+
+
 def invoke_action_created_window(
     ctx: RunContext,
     action: PlateManagerAction,
@@ -2921,21 +2945,11 @@ def snapshot_plate_viewer_consumers(
         window_id,
         label=f"{phase}_metadata_browser_snapshot",
     )
-    close_response = command_json(
+    close_window(
         ctx,
-        f"{phase}_close_selected_plate_viewer",
-        mcp_call_tool_cmd(
-            UiCloseWindowCapability.name,
-            {
-                "window_id": window_id,
-                "connection": ui_connection_arguments(ctx),
-            },
-        ),
-        timeout=30,
+        window_id,
+        label=f"{phase}_close_selected_plate_viewer",
     )
-    closed = first_payload(close_response, UiCloseWindowCapability.name)
-    if closed.get("closed") is not True:
-        raise RehearsalFailure("Selected-plate viewer did not close normally.")
     return {
         "window_id": window_id,
         "tab_path_id": tab_path_id,
@@ -3161,21 +3175,11 @@ def exercise_component_selector(
         dialog_window_id,
         label=f"{phase}_component_selector_snapshot",
     )
-    closed_response = command_json(
+    close_window(
         ctx,
-        f"{phase}_close_component_selector",
-        mcp_call_tool_cmd(
-            UiCloseWindowCapability.name,
-            {
-                "window_id": dialog_window_id,
-                "connection": ui_connection_arguments(ctx),
-            },
-        ),
-        timeout=30,
+        dialog_window_id,
+        label=f"{phase}_close_component_selector",
     )
-    closed = first_payload(closed_response, UiCloseWindowCapability.name)
-    if closed.get("closed") is not True:
-        raise RehearsalFailure("Component-selector dialog did not close normally.")
     return {
         "window_id": dialog_window_id,
         "path_id": component_button["path_id"],
@@ -3426,6 +3430,11 @@ def validate_results_window(
         ctx,
         window_id,
         label="runtime_measurements_results_snapshot",
+    )
+    close_window(
+        ctx,
+        window_id,
+        label="runtime_measurements_close_results_window",
     )
     return {
         "window_id": window_id,
@@ -4188,6 +4197,7 @@ def run_one(
     session_dir: Path,
     fresh: bool,
     owned_contexts: list[RunContext],
+    ui_owner: RunContext | None,
 ) -> dict[str, Any]:
     run_id = f"run{index}_{now_id()}"
     run_dir = resolved_run_directory(session_dir, index)
@@ -4220,6 +4230,10 @@ def run_one(
             )
         )
         if fresh:
+            if ui_owner is not None:
+                raise RehearsalFailure(
+                    "A fresh rehearsal run cannot reuse an existing UI owner."
+                )
             step_start = time.perf_counter()
             assert_no_live_process_conflicts(
                 ctx,
@@ -4240,9 +4254,7 @@ def run_one(
             )
             wait_for_ui_bridge(ctx, args.ui_start_timeout)
         else:
-            descriptor = newest_existing_descriptor()
-            if descriptor is None:
-                raise RehearsalFailure("No existing UI bridge descriptor found.")
+            descriptor = require_owned_ui_descriptor(ui_owner)
             ctx.descriptor_path = descriptor
             command_json(
                 ctx,
@@ -4471,12 +4483,19 @@ def run_one(
         mcp_client.close()
 
 
-def newest_existing_descriptor() -> Path | None:
-    descriptors = sorted(
-        (ROOT / "mcp_outputs").glob("**/ui_bridge_*.json"),
-        key=lambda p: p.stat().st_mtime,
-    )
-    return descriptors[-1] if descriptors else None
+def require_owned_ui_descriptor(ui_owner: RunContext | None) -> Path:
+    """Return the exact live descriptor owned by this rehearsal session."""
+
+    if ui_owner is None or ui_owner.ui_process is None:
+        raise RehearsalFailure("No rehearsal-owned UI is available for reuse.")
+    if ui_owner.ui_process.poll() is not None:
+        raise RehearsalFailure("The rehearsal-owned UI exited before reuse.")
+    descriptor = ui_owner.descriptor_path
+    if descriptor is None or not descriptor.is_file():
+        raise RehearsalFailure(
+            "The rehearsal-owned UI has no live bridge descriptor for reuse."
+        )
+    return descriptor
 
 
 def required_report_mapping(
@@ -4968,12 +4987,25 @@ def main() -> int:
     session_dir.mkdir(parents=True, exist_ok=True)
     reports: list[dict[str, Any]] = []
     owned_contexts: list[RunContext] = []
+    ui_owner: RunContext | None = None
     try:
         for index in range(1, args.runs + 1):
             fresh = args.fresh_each_run or (args.fresh_first_run and index == 1)
-            reports.append(run_one(args, index, session_dir, fresh, owned_contexts))
+            reports.append(
+                run_one(
+                    args,
+                    index,
+                    session_dir,
+                    fresh,
+                    owned_contexts,
+                    ui_owner,
+                )
+            )
+            if fresh:
+                ui_owner = owned_contexts[-1]
             if args.fresh_each_run:
                 stop_owned_processes(owned_contexts[-1])
+                ui_owner = None
         write_json(session_dir / "summary.json", {"reports": reports})
         write_markdown_report(session_dir, reports)
     except Exception as exc:

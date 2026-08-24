@@ -386,7 +386,7 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
                 terminal_status = WorkflowPollSummaryStatus.FAILED
                 break
             results.append(poll_result)
-            if baseline is None or baseline.changed_by(poll_result):
+            if policy.can_evaluate(poll_result, baseline):
                 terminal_status = workflow_poll_terminal_status(
                     poll_result,
                     target_scope_ids=target_scope_ids,

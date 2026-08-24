@@ -415,6 +415,7 @@ class WorkflowTerminalStateCriterion(ABC, metaclass=AutoRegisterMeta):
 
     workflow: ClassVar[UiSelectedPlateWorkflowKind]
     failed_orchestrator_states: ClassVar[tuple[OrchestratorState, ...]] = ()
+    terminal_state_is_idempotent: ClassVar[bool] = False
 
     @classmethod
     def for_workflow(
@@ -443,6 +444,7 @@ class WorkflowTerminalStateCriterion(ABC, metaclass=AutoRegisterMeta):
 class InitWorkflowTerminalStateCriterion(WorkflowTerminalStateCriterion):
     workflow = UiSelectedPlateWorkflowKind.INIT
     failed_orchestrator_states = (OrchestratorState.INIT_FAILED,)
+    terminal_state_is_idempotent = True
 
     def terminal_for_row(self, row: WorkflowPollRowState) -> bool:
         return row.init_pending is False and row.initialized is True
@@ -487,6 +489,19 @@ class WorkflowStatePollPolicy:
 
     def failed_for_row(self, row: WorkflowPollRowState) -> bool:
         return self.criterion.failed_for_row(row)
+
+    def can_evaluate(
+        self,
+        result: McpDevToolResult,
+        baseline: WorkflowPollBaseline | None,
+    ) -> bool:
+        """Return whether this observation can prove workflow terminality."""
+
+        return (
+            baseline is None
+            or baseline.changed_by(result)
+            or self.criterion.terminal_state_is_idempotent
+        )
 
 
 @dataclass(frozen=True, slots=True)
