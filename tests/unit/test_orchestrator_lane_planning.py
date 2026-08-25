@@ -929,6 +929,96 @@ def test_execution_visualizer_cleanup_rejects_active_non_persistent_viewer():
         stop_execution_visualizers([transient])
 
 
+def test_viewer_bootstrap_rolls_back_a_partially_acquired_viewer_set():
+    events = []
+
+    class AcquiredViewer:
+        port = 5563
+
+        def rollback_failed_bootstrap(self):
+            events.append("rollback")
+
+    first_config = object()
+    second_config = object()
+    required_visualizers = (
+        SimpleNamespace(
+            key=("napari", 5563),
+            config=first_config,
+            launch_message="Launching first viewer",
+        ),
+        SimpleNamespace(
+            key=("fiji", 5565),
+            config=second_config,
+            launch_message="Launching second viewer",
+        ),
+    )
+
+    def acquire(config, _visualizer_config):
+        if config is second_config:
+            raise RuntimeError("second viewer failed")
+        return AcquiredViewer()
+
+    orchestrator = SimpleNamespace(get_or_create_visualizer=acquire)
+    context = SimpleNamespace(
+        required_visualizers=required_visualizers,
+        visualizer_config=None,
+    )
+
+    with pytest.raises(RuntimeError, match="second viewer failed"):
+        compiled_plate_execution_module.bootstrap_execution_visualizers(
+            orchestrator=orchestrator,
+            compiled_contexts={"A01": context},
+            visualizer=None,
+            progress_queue=SimpleNamespace(put=lambda _event: None),
+            progress_context=PROGRESS_CONTEXT,
+        )
+
+    assert events == ["rollback"]
+
+
+def test_viewer_bootstrap_rolls_back_after_post_launch_validation_failure(
+    monkeypatch,
+):
+    events = []
+    visualizer = SimpleNamespace(
+        port=5563,
+        rollback_failed_bootstrap=lambda: events.append("rollback"),
+    )
+    required_visualizer = SimpleNamespace(
+        key=("napari", 5563),
+        config=object(),
+        launch_message="Launching viewer",
+    )
+    orchestrator = SimpleNamespace(
+        get_or_create_visualizer=lambda _config, _visualizer_config: visualizer,
+    )
+    context = SimpleNamespace(
+        required_visualizers=(required_visualizer,),
+        visualizer_config=None,
+    )
+    monkeypatch.setattr(
+        compiled_plate_execution_module,
+        "wait_until_visualizers_ready",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        compiled_plate_execution_module,
+        "clear_viewer_state",
+        lambda _visualizers: (_ for _ in ()).throw(RuntimeError("clear failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="clear failed"):
+        compiled_plate_execution_module.bootstrap_execution_visualizers(
+            orchestrator=orchestrator,
+            compiled_contexts={"A01": context},
+            visualizer=None,
+            progress_queue=SimpleNamespace(put=lambda _event: None),
+            progress_context=PROGRESS_CONTEXT,
+        )
+
+    assert events == ["rollback"]
+
+
 def test_execution_visualizer_state_clear_failure_is_fatal():
     visualizer = SimpleNamespace(port=5563, clear_viewer_state=lambda: False)
 

@@ -1044,6 +1044,10 @@ class ViewerLifecycleState:
     def is_connected_external(self) -> bool:
         return self.mode is ViewerLifecycleMode.CONNECTED_EXTERNAL
 
+    @property
+    def is_owned_process(self) -> bool:
+        return self.mode is ViewerLifecycleMode.OWNED_PROCESS
+
     def mark_connected_external(self) -> None:
         self.mode = ViewerLifecycleMode.CONNECTED_EXTERNAL
 
@@ -1335,6 +1339,36 @@ class ManagedViewerLifecycleMixin(
                     )
             self.runtime_endpoint.force_release_addresses()
             self.lifecycle_state.mark_stopped()
+
+    def rollback_failed_bootstrap(self) -> None:
+        """Discard only resources owned by an incomplete bootstrap attempt."""
+
+        lifecycle_state = self.lifecycle_state
+        if lifecycle_state.is_connected_external:
+            self.cleanup_viewer_client()
+            lifecycle_state.mark_stopped()
+            return
+
+        from zmqruntime import ViewerStateManager
+
+        manager = ViewerStateManager.get_instance()
+        managed_viewer = manager.get_viewer(
+            self.viewer_type.wire_value,
+            self.required_port,
+        )
+        if managed_viewer is self:
+            manager.release_viewer(
+                self.viewer_type.wire_value,
+                self.required_port,
+                stop=True,
+                force=True,
+            )
+            return
+
+        if lifecycle_state.is_owned_process or self.process is not None:
+            self.force_stop()
+            return
+        lifecycle_state.mark_stopped()
 
     def start(self, detached: bool = True) -> subprocess.Popen[bytes]:
         self.start_viewer(async_mode=False)

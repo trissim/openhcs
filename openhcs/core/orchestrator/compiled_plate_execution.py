@@ -6,6 +6,7 @@ import logging
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Iterator
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -856,13 +857,17 @@ def bootstrap_execution_visualizers(
     if visualizer is not None:
         return []
 
-    visualizers = create_required_visualizers(
-        orchestrator=orchestrator,
-        compiled_contexts=compiled_contexts,
-        progress_queue=progress_queue,
-        progress_context=progress_context,
-    )
-    if visualizers:
+    visualizers: list[ExecutionVisualizerABC] = []
+    try:
+        for created_visualizer in iter_required_visualizers(
+            orchestrator=orchestrator,
+            compiled_contexts=compiled_contexts,
+            progress_queue=progress_queue,
+            progress_context=progress_context,
+        ):
+            visualizers.append(created_visualizer)
+        if not visualizers:
+            return visualizers
         wait_until_visualizers_ready(
             orchestrator=orchestrator,
             visualizers=visualizers,
@@ -870,16 +875,19 @@ def bootstrap_execution_visualizers(
             progress_context=progress_context,
         )
         clear_viewer_state(visualizers)
-    return visualizers
+        return visualizers
+    except BaseException:
+        rollback_failed_visualizer_bootstrap(visualizers)
+        raise
 
 
-def create_required_visualizers(
+def iter_required_visualizers(
     *,
     orchestrator: "PipelineOrchestrator",
     compiled_contexts: Dict[str, ProcessingContext],
     progress_queue: ProgressQueue,
     progress_context: ProgressExecutionContext,
-) -> list[ExecutionVisualizerABC]:
+) -> Iterator[ExecutionVisualizerABC]:
     """Create one viewer for each distinct visualizer requirement."""
 
     unique_configs: dict[tuple[str, int], tuple[RequiredVisualizer, object]] = {}
@@ -891,20 +899,38 @@ def create_required_visualizers(
                     ctx.visualizer_config,
                 )
 
-    visualizers: list[ExecutionVisualizerABC] = []
     for required_visualizer, vis_config in unique_configs.values():
         emit_launching_viewer(
             required_visualizer=required_visualizer,
             progress_queue=progress_queue,
             progress_context=progress_context,
         )
-        visualizers.append(
-            orchestrator.get_or_create_visualizer(
-                required_visualizer.config,
-                vis_config,
-            )
+        yield orchestrator.get_or_create_visualizer(
+            required_visualizer.config,
+            vis_config,
         )
-    return visualizers
+
+
+def rollback_failed_visualizer_bootstrap(
+    visualizers: list[ExecutionVisualizerABC],
+) -> None:
+    """Release every viewer acquired by an incomplete bootstrap transaction."""
+
+    rollback_errors: list[Exception] = []
+    for visualizer in reversed(visualizers):
+        try:
+            visualizer.rollback_failed_bootstrap()
+        except Exception as error:
+            rollback_errors.append(error)
+            logger.exception(
+                "Failed to roll back viewer bootstrap on port %s",
+                visualizer.port,
+            )
+    if rollback_errors:
+        raise ExceptionGroup(
+            "Viewer bootstrap rollback failed",
+            rollback_errors,
+        )
 
 
 def emit_launching_viewer(

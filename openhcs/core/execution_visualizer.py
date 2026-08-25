@@ -44,3 +44,7 @@ class ExecutionVisualizerABC(ABC):
     @abstractmethod
     def force_stop(self, timeout: float = 5.0) -> None:
         """Stop the viewer process and release its transport endpoint."""
+
+    @abstractmethod
+    def rollback_failed_bootstrap(self) -> None:
+        """Release resources acquired by an incomplete viewer bootstrap."""

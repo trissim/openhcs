@@ -23,5 +23,9 @@ def cleanup_test_runtime_resources():
     yield
 
     from polystore import cleanup_backend_connections
+    from zmqruntime import ViewerStateManager
 
-    cleanup_backend_connections(include_process_resources=True)
+    try:
+        ViewerStateManager.get_instance().stop_all_viewers()
+    finally:
+        cleanup_backend_connections(include_process_resources=True)
