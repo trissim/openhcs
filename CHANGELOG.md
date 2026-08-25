@@ -7,8 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- First-party package requirements now declare both the exact released floor
+  used by OpenHCS and the next breaking-series ceiling. Release validation
+  derives those constraints from package metadata and exercises the installed
+  desktop against the publicly resolved dependency set on Linux, Windows, and
+  macOS.
+- The website gallery, its release record, and the maintainer capture workflow
+  now derive from typed scenario declarations and participate in the
+  source-backed documentation audit.
+- Packaged OMERO deployment, readiness checks, address templates, and cleanup
+  now share one declared stack model across the application and integration
+  harness.
+
 ### Fixed
 
+- Fresh and updated desktop installations now launch with the current nominal
+  PyQt provider contracts. The installed-GUI gate reaches the painted main
+  window instead of treating dependency resolution alone as proof of startup
+  compatibility.
+- Windows and macOS installers ignore inherited workstation package indexes,
+  preventing an unreachable optional NVIDIA index from stalling an otherwise
+  resolvable OpenHCS installation.
+- macOS installer images are created through the writable UDIF lifecycle and
+  are detached, verified, and cancelled through their exact mounted image
+  identity.
+- Cold function discovery now preserves host logging, derives child framework
+  environments from memory declarations, and keeps private decorated helpers
+  out of the public function catalogue.
 - Closing the GUI while its execution endpoint is still starting now cancels
   and reaps the exact connection attempt without leaving catalog processes or
   reporting owner-requested teardown as an asynchronous failure.
@@ -22,6 +49,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   materialize without demanding a component that the function removed.
 - Successful compilation events now terminate both plate and per-axis browser
   rows, while intermediate successful step events remain active.
+- Viewer commands now apply as one atomic operation, retain the selected image
+  component, reject stale Qt windows, and bound ROI summaries before they cross
+  the UI bridge.
+- Fiji and Bio-Formats processes now dispose their JVM-backed runtimes before
+  process exit, preventing viewer or discovery children from lingering during
+  repeated sessions.
+- Materialized text outputs retain their declared semantics across storage
+  backends, and complete component projections preserve the domains required by
+  downstream viewers and source bindings.
+- Cold OMERO startup now waits for the complete declared service stack and
+  releases only the resources owned by the current session.
+
+### Removed
+
+- Removed unreachable GUI test scaffolding, superseded component helpers, stale
+  repository setup artifacts, and unreferenced binary media from the
+  repository.
 
 ## [0.7.26] - 2026-08-24
 
@@ -438,6 +482,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 See git history for changes in versions 0.3.14 and earlier.
 
+[Unreleased]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.26...HEAD
 [0.4.0]: https://github.com/trissim/openhcs/compare/v0.3.15...v0.4.0
 [0.3.15]: https://github.com/trissim/openhcs/releases/tag/v0.3.15
 [0.7.0]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.6.17...v0.7.0
