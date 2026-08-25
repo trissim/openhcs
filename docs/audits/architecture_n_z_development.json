@@ -10,7 +10,7 @@
     "authority": [
       {
         "path": "openhcs/runtime/napari_viewer_server.py",
-        "sha256": "85619e9b7c9ed7d8bfc136db64362759d749ae50006b7c42b18c54fcf99c86ce",
+        "sha256": "b7356098c98044833af4c84691b80dd225dae993313c401d92e781b42c21951f",
         "role": "Detached Napari endpoint startup and application event-loop integration."
       },
       {
@@ -30,7 +30,8 @@
     "disposition": "redirect",
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
-      "tests/unit/test_napari_streaming_handlers.py and tests/unit/test_viewer_protocol.py exercise the named OpenHCS and transport boundaries"
+      "tests/unit/test_napari_streaming_handlers.py and tests/unit/test_viewer_protocol.py exercise the named OpenHCS and transport boundaries",
+      "On 2026-08-25, re-read the complete redirect against the changed Napari endpoint owner; bounded payload projection and atomic layer isolation do not change this legacy route's current-owner destination."
     ]
   },
   {
@@ -811,7 +812,7 @@
       },
       {
         "path": "tests/unit/agent/test_agent_services.py",
-        "sha256": "f21f773558dbfcf6e6ac961cadaedb0b3b5ebf14af304ea200c1d3b905f591f4",
+        "sha256": "3941003c30414bf8e37360f9ed01037a19c76d21573f0ba79e804f99b15ab41c",
         "role": "Proves same-client reuse, exact observation serialization, terminal caching, and one-time client release."
       }
     ],
@@ -824,7 +825,8 @@
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
       "tests/unit/progress/test_projection.py and tests/unit/progress/test_debug_projection.py passed; published owner URLs now replace checkout-local paths",
       "Sphinx linkcheck resolved both pinned zmqruntime owner-source links",
-      "On 2026-08-23, re-read the complete page against ZMQRuntime 0.2.11 and the retained OpenHCS agent client boundary; 138 generic tests, 388 focused OpenHCS tests, and a live MCP/ZMQ rehearsal with 35 progress events passed."
+      "On 2026-08-23, re-read the complete page against ZMQRuntime 0.2.11 and the retained OpenHCS agent client boundary; 138 generic tests, 388 focused OpenHCS tests, and a live MCP/ZMQ rehearsal with 35 progress events passed.",
+      "On 2026-08-25, re-read the complete progress explanation after viewer regressions changed the shared agent-service test authority; those additions exercise viewer projection only and do not alter progress ownership or lifecycle claims."
     ]
   },
   {
@@ -1284,7 +1286,7 @@
   },
   {
     "path": "docs/source/architecture/streaming_boundary_and_wrappers.rst",
-    "source_sha256": "96aa2a64bdd5a9fb16dbd70bf3d75ec151bfb95168cda0834118c0af8183604d",
+    "source_sha256": "af0cfdf1e595aa8dcb991d6de284ddde4810ac8606b485bd08fd7017f3736986",
     "audience": [
       "OpenHCS streaming, viewer, and runtime maintainers"
     ],
@@ -1303,8 +1305,23 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "01f660a155e24f524299e5182289b93d058dcdd97619b54a97bcc8ba04298e73",
+        "sha256": "fca3e3ca9b8d10ea39f8bf3481716e2d44aa4c940cf35fe44fdf3494639db01d",
         "role": "OpenHCS viewer persistence policy, exact process ownership, platform policy, readiness, and settlement contracts."
+      },
+      {
+        "path": "openhcs/runtime/viewer_controls.py",
+        "sha256": "15771270df1419048ae906daed353acdb6d882a346d5be5a72d20bd56dbd785a",
+        "role": "Declares caller payload controls, runtime projection policy, global shape budgets, and one atomic layer-isolation request."
+      },
+      {
+        "path": "openhcs/runtime/napari_viewer_server.py",
+        "sha256": "b7356098c98044833af4c84691b80dd225dae993313c401d92e781b42c21951f",
+        "role": "Applies bounded shape projection and preflighted layer isolation inside the owning Napari Qt process."
+      },
+      {
+        "path": "openhcs/agent/services/viewer_window_service.py",
+        "sha256": "3a5411c2ba2114a3af93c245fac00301863c3b33aab8f39db0d7c0a7bfb33344",
+        "role": "Projects one typed bulk viewer response into agent results without client-side state mirroring or per-layer round trips."
       },
       {
         "path": "openhcs/runtime/zmq_execution_server.py",
@@ -1335,12 +1352,24 @@
         "path": "tests/unit/test_viewer_protocol.py",
         "sha256": "6b13f772fa4301fadf724049a2d20649325d519f8e3f6f674fc869d2adec2d10",
         "role": "Proves execution cleanup stops exact non-persistent processes while persistent viewers remain available for typed lifecycle shutdown."
+      },
+      {
+        "path": "tests/unit/test_viewer_result_element_selection.py",
+        "sha256": "6cc5c6db5e214d170df7ce8ed09e691b7a7fcb6b4920f224c8cccf0058395796",
+        "role": "Proves bulk isolation validates every route and navigation before any visibility, selection, or axis mutation."
+      },
+      {
+        "path": "tests/unit/test_napari_streaming_handlers.py",
+        "sha256": "b27543f8126ca33db80b94ff425d695037a73a9550592de4b6563a38d7284acd",
+        "role": "Proves one global ROI-member budget and metadata-only shape projection across payload records."
       }
     ],
     "findings": [
       "Link checking showed that the viewer-streaming deep Read the Docs page is not deployed; the owner link now follows the maintained ZMQRuntime source instead of hard-coding a stale package release.",
       "Execution-server cleanup registered persistent viewers in its transient process group and stopped them before post-run inspection; persistence policy now limits that exact group to non-persistent viewers.",
-      "A terminated retained endpoint process previously depended on later caller polling for child reaping; ZMQRuntime now retains one terminal observer per exact process."
+      "A terminated retained endpoint process previously depended on later caller polling for child reaping; ZMQRuntime now retains one terminal observer per exact process.",
+      "ROI summaries transported full shape geometry and applied the per-record maximum independently; the runtime now composes one response-wide budget with metadata-only summary projection.",
+      "Layer isolation required state inspection followed by one navigation round trip per mounted layer; the viewer now preflights and applies the complete typed projection in one control operation."
     ],
     "disposition": "revise",
     "validation": [
@@ -1354,7 +1383,9 @@
       "The exact Official30 Fiji and Fiji-plus-Napari real-viewer smokes passed locally with post-execution macro observation after execution-server teardown.",
       "On 2026-08-23, a fresh real-GUI force-shutdown probe removed the execution child without leaving a zombie; ZMQRuntime 0.2.15 passed 148 package tests and its Python 3.10-3.13 CI matrix.",
       "On 2026-08-24, re-read the complete explanation after replacing its stale ZMQRuntime release link with the maintained owner source; the streaming ownership and lifecycle claims remain unchanged.",
-      "On 2026-08-24, re-read the explanation against the declaration-owned ViewerType refactor; the page now distinguishes typed viewer semantics from lowercase wire identifiers."
+      "On 2026-08-24, re-read the explanation against the declaration-owned ViewerType refactor; the page now distinguishes typed viewer semantics from lowercase wire identifiers.",
+      "On 2026-08-25, re-read the complete explanation against the caller-control, runtime-policy, Napari, agent-service, and regression authorities added for bounded ROI projection and atomic isolation.",
+      "Three isolated real desktop, MCP, ZMQ, execution, and Napari rehearsals completed all nine acceptance requirements; ROI summaries returned in 0.063-0.485 seconds and bulk isolation in 0.078-1.078 seconds within the 2-second command budget, with no UI-log errors."
     ]
   },
   {
@@ -1459,7 +1490,8 @@
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "Rebuilt the python-introspect owner documentation after documenting declaration projection.",
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-25, re-read the complete transition reference after viewer-only regressions changed the shared agent-service test authority; generic execution ownership and the OpenHCS adapter boundary remain unchanged."
     ]
   },
   {
@@ -1770,7 +1802,7 @@
       },
       {
         "path": "tests/unit/agent/test_agent_services.py",
-        "sha256": "f21f773558dbfcf6e6ac961cadaedb0b3b5ebf14af304ea200c1d3b905f591f4",
+        "sha256": "3941003c30414bf8e37360f9ed01037a19c76d21573f0ba79e804f99b15ab41c",
         "role": "Proves same-client status reuse, progress serialization, terminal caching, and one-time client release."
       }
     ],
@@ -2350,7 +2382,7 @@
   },
   {
     "path": "docs/source/development/mcp_development.rst",
-    "source_sha256": "ddd2066703522c911029216f52d27addc42d8a9bd3c42f16fbfde457d5bc7fdf",
+    "source_sha256": "064441840bdfee6d8e99a951ae58679283adbebb0fd2f7b1dbeba7b8e24c930a",
     "audience": [
       "OpenHCS MCP developers"
     ],
@@ -2373,8 +2405,13 @@
         "role": "Selected-workflow dispatch ordering: baseline, bridge receipt, criterion-governed domain-state polling, and compact result rendering."
       },
       {
+        "path": "openhcs/mcp/dev_client_commands/viewer.py",
+        "sha256": "93a1c1e532907677f6fdabe069af3b7f0db08cef673b6ce974056449deae9a50",
+        "role": "Declares the development-client viewer state, payload, ROI-summary, navigation, and isolation command surfaces."
+      },
+      {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "9137335fc71b59541c4457ba74c19200c766d8285505f587fa0d468b4438b20a",
+        "sha256": "d308c73e7281b72fe50328fb87c6a149fc37be2026bf9b3b7c7de0e8f8706d31",
         "role": "Regression proof for stale-row rejection, idempotent initialization, and every declared or malformed bridge-receipt continuation outcome."
       },
       {
@@ -2439,7 +2476,7 @@
       },
       {
         "path": "tests/unit/agent/test_agent_services.py",
-        "sha256": "f21f773558dbfcf6e6ac961cadaedb0b3b5ebf14af304ea200c1d3b905f591f4",
+        "sha256": "3941003c30414bf8e37360f9ed01037a19c76d21573f0ba79e804f99b15ab41c",
         "role": "Proves exact progress projection from the submitting client and one-time release at terminal status."
       }
     ],
@@ -2448,7 +2485,8 @@
       "The workflow did not explain how to recover when a client-owned MCP process and desktop bridge were launched from incompatible OpenHCS environments.",
       "The selected-workflow waiter could accept a terminal Plate Manager row from an earlier operation without proving dispatch receipt or a state revision.",
       "Reusing a live UI exposed that idempotent initialization can complete without changing the Plate Manager revision; the workflow criterion now owns that exception while compile and run retain the stale-row guard.",
-      "Capability-local stdout guards left delayed imports and background native output able to corrupt the persistent JSON-RPC stream; process stdout is now reserved once by the stdio transport."
+      "Capability-local stdout guards left delayed imports and background native output able to corrupt the persistent JSON-RPC stream; process stdout is now reserved once by the stdio transport.",
+      "The command examples omitted the bounded ROI-summary and atomic viewer-isolation probes needed to validate current viewer agent workflows."
     ],
     "disposition": "revise",
     "validation": [
@@ -2466,7 +2504,9 @@
       "On 2026-08-24, re-read the complete how-to after receipt status members took ownership of completion selection and every skip reason took ownership of its summary status; focused tests cover running, completed, failed, missing, unavailable, unknown, and stale domain-state outcomes.",
       "A fresh isolated desktop, MCP process, ZMQ runtime, and Napari viewer completed all nine rehearsal requirements in 161.03 seconds; init, compile, and run receipts reached completed summaries after 1, 10, and 58 state polls, execution ended complete, and no OpenHCS error or failed command was recorded.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
-      "On 2026-08-24, re-read the complete how-to against the new stdio transport owner; the page now rejects service-local redirects and the exact persistent-session regression passed."
+      "On 2026-08-24, re-read the complete how-to against the new stdio transport owner; the page now rejects service-local redirects and the exact persistent-session regression passed.",
+      "On 2026-08-25, re-read the complete how-to against the current viewer command declarations and added the bounded ROI-summary and atomic-isolation probes without duplicating their argument schema.",
+      "Three isolated real desktop, MCP, ZMQ, execution, and Napari rehearsals completed all nine acceptance requirements; ROI summaries returned in 0.063-0.485 seconds and bulk isolation in 0.078-1.078 seconds within the 2-second command budget, with no UI-log errors."
     ]
   },
   {

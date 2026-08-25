@@ -52,13 +52,20 @@ from openhcs.core.streaming_config_factory import (
     StreamingViewerRuntimeConfig,
 )
 from openhcs.runtime.viewer_controls import (
+    ViewerLayerIsolationControlOptions as ViewerLayerIsolationControlOptions,
+)
+from openhcs.runtime.viewer_controls import (
     ViewerNavigationControlOptions as ViewerNavigationControlOptions,
 )
 from openhcs.runtime.viewer_controls import (
     ViewerPayloadControlOptions as ViewerPayloadControlOptions,
 )
 from openhcs.runtime.viewer_controls import (
+    ViewerPayloadProjectionOptions as ViewerPayloadProjectionOptions,
+)
+from openhcs.runtime.viewer_controls import (
     ViewerScalar,
+    ViewerShapePayloadProjection,
     ViewerStateControlOptions,
 )
 
@@ -82,6 +89,7 @@ class ViewerControlMessageType(Enum):
     STATE = "state"
     PAYLOADS = "payloads"
     NAVIGATE = "navigate"
+    ISOLATE_LAYERS = "isolate_layers"
 
 
 class ViewerSettlePhase(str, Enum):
@@ -126,6 +134,14 @@ class ViewerControlField(str, Enum):
     AXIS_LABELS = "axis_labels"
     COMPONENT_GROUP_COUNT = "component_group_count"
     COMPONENT_ITEM_COUNT = "component_item_count"
+
+
+class ViewerLayerIsolationField(str, Enum):
+    """Atomic layer-isolation response fields."""
+
+    APPLIED = "applied"
+    CHANGED_ROUTE_COUNT = "changed_route_count"
+    MISSING_ROUTE_KEYS = "missing_route_keys"
 
 
 class ViewerLayerField(str, Enum):

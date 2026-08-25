@@ -117,6 +117,7 @@ from openhcs.mcp.lifecycle import (
 from openhcs.runtime.viewer_controls import (
     ViewerNavigationControlOptions,
     ViewerPayloadControlOptions,
+    ViewerPayloadProjectionOptions,
     ViewerStateControlOptions,
 )
 from openhcs.serialization.json import to_jsonable
@@ -2752,7 +2753,9 @@ class McpViewerConnectionToolArgs(ViewerWindowControlRequest):
         return ViewerWindowPayloadRequest(
             connection=self.connection,
             timeout_ms=self.timeout_ms,
-            payload_controls=payload_controls,
+            payload_projection=ViewerPayloadProjectionOptions(
+                controls=payload_controls,
+            ),
             include_response=include_response,
         )
 

@@ -104,7 +104,8 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-25, re-read the complete module-structure reference after the viewer protocol gained typed payload and isolation controls; package layout, submodule ownership, and contributor navigation remain unchanged."
     ]
   },
   {
@@ -166,7 +167,8 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-25, re-read the complete troubleshooting how-to after the viewer protocol gained bounded payload and isolation controls; its launch, connection, mismatch, and recovery guidance remains accurate."
     ]
   },
   {
@@ -650,7 +652,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "01f660a155e24f524299e5182289b93d058dcdd97619b54a97bcc8ba04298e73",
+        "sha256": "fca3e3ca9b8d10ea39f8bf3481716e2d44aa4c940cf35fe44fdf3494639db01d",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -1410,7 +1412,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "01f660a155e24f524299e5182289b93d058dcdd97619b54a97bcc8ba04298e73",
+        "sha256": "fca3e3ca9b8d10ea39f8bf3481716e2d44aa4c940cf35fe44fdf3494639db01d",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -1618,7 +1620,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "01f660a155e24f524299e5182289b93d058dcdd97619b54a97bcc8ba04298e73",
+        "sha256": "fca3e3ca9b8d10ea39f8bf3481716e2d44aa4c940cf35fe44fdf3494639db01d",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -1639,7 +1641,8 @@
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/runtime/fiji_viewer_server.py; openhcs/runtime/viewer_protocol.py; external/zmqruntime/src/zmqruntime/__init__.py; tests/unit/test_fiji_viewer_server.py.",
       "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks.",
       "Re-reviewed the complete page after ZMQRuntime added deadline exports; Fiji ownership and capability claims remain unchanged.",
-      "On 2026-08-23, re-reviewed the complete page after ZMQRuntime exported execution progress observations; its viewer ownership and capability claims remain unchanged."
+      "On 2026-08-23, re-reviewed the complete page after ZMQRuntime exported execution progress observations; its viewer ownership and capability claims remain unchanged.",
+      "On 2026-08-25, re-read the complete Fiji explanation after the shared viewer protocol gained a Napari-supported isolation message; Fiji streaming, ROI handling, and lifecycle claims remain unchanged."
     ]
   },
   {
@@ -1664,7 +1667,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "01f660a155e24f524299e5182289b93d058dcdd97619b54a97bcc8ba04298e73",
+        "sha256": "fca3e3ca9b8d10ea39f8bf3481716e2d44aa4c940cf35fe44fdf3494639db01d",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -1688,7 +1691,8 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-24, rechecked the guide index after PolyStore moved OMERO table-column construction into its declaration owner; the integration routes remain accurate."
+      "On 2026-08-24, rechecked the guide index after PolyStore moved OMERO table-column construction into its declaration owner; the integration routes remain accurate.",
+      "On 2026-08-25, re-read the complete guide index after the viewer protocol gained bounded payload and isolation controls; the compiler, memory, viewer, and OMERO routes remain accurate."
     ]
   },
   {
@@ -2058,7 +2062,7 @@
   },
   {
     "path": "docs/source/guides/viewer_management.rst",
-    "source_sha256": "053910bdcf66f14cdd2c22f73dd70964365c652929c5d60445d0edbaf1b4378b",
+    "source_sha256": "cf6b38318a5464e6b0d30394f7a5c3bed5b3ca8af1a336486a9d4962bc104996",
     "audience": [
       "viewer integrators",
       "pipeline authors"
@@ -2068,7 +2072,7 @@
     "authority": [
       {
         "path": "openhcs/runtime/napari_viewer_server.py",
-        "sha256": "85619e9b7c9ed7d8bfc136db64362759d749ae50006b7c42b18c54fcf99c86ce",
+        "sha256": "b7356098c98044833af4c84691b80dd225dae993313c401d92e781b42c21951f",
         "role": "Implements Napari stream reception, layer updates, ROI navigation, and endpoint lifecycle."
       },
       {
@@ -2078,8 +2082,18 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "01f660a155e24f524299e5182289b93d058dcdd97619b54a97bcc8ba04298e73",
+        "sha256": "fca3e3ca9b8d10ea39f8bf3481716e2d44aa4c940cf35fe44fdf3494639db01d",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
+      },
+      {
+        "path": "openhcs/runtime/viewer_controls.py",
+        "sha256": "15771270df1419048ae906daed353acdb6d882a346d5be5a72d20bd56dbd785a",
+        "role": "Declares caller payload controls, response-wide shape projection policy, and one atomic layer-isolation request."
+      },
+      {
+        "path": "openhcs/agent/services/viewer_window_service.py",
+        "sha256": "3a5411c2ba2114a3af93c245fac00301863c3b33aab8f39db0d7c0a7bfb33344",
+        "role": "Projects bounded ROI metadata and one bulk isolation response into viewer-agent results."
       },
       {
         "path": "openhcs/napari.yaml",
@@ -2093,8 +2107,13 @@
       },
       {
         "path": "tests/unit/test_napari_streaming_handlers.py",
-        "sha256": "496e211a48a2276a42a84599651c011b36cc40639623d7bba4cc483a14957934",
+        "sha256": "b27543f8126ca33db80b94ff425d695037a73a9550592de4b6563a38d7284acd",
         "role": "Proves Napari streaming updates layers and carries ROI navigation through the declared protocol."
+      },
+      {
+        "path": "tests/unit/test_viewer_result_element_selection.py",
+        "sha256": "6cc5c6db5e214d170df7ce8ed09e691b7a7fcb6b4920f224c8cccf0058395796",
+        "role": "Proves isolation preflights every requested route and selected-route axis before changing live Napari state."
       },
       {
         "path": "openhcs/runtime/napari_streaming_handlers.py",
@@ -2105,7 +2124,9 @@
     "findings": [
       "The viewer explanation did not state that every route shares the display declaration's axis slots or that reduced components occupy singleton slots.",
       "The viewer explanation did not state that the selected OpenHCS route owns dimension-label presentation or that non-OpenHCS selection clears stale route state.",
-      "The persistence explanation treated execution-server teardown as owning persistent viewers, which contradicted their post-run reuse and inspection contract."
+      "The persistence explanation treated execution-server teardown as owning persistent viewers, which contradicted their post-run reuse and inspection contract.",
+      "The explanation did not distinguish bounded metadata-only ROI summaries from explicit raw geometry inspection.",
+      "The explanation did not state that visibility, selection, and selected-route navigation are validated and applied as one viewer operation."
     ],
     "disposition": "revise",
     "validation": [
@@ -2115,7 +2136,9 @@
       "Current-source validation passed the 153-page editorial audit, warning-clean Sphinx build, and 159 focused editor, catalogue, and Napari regressions.",
       "On 2026-08-22, re-read the complete explanation against Napari route resolution and navigation tests; the focused OpenHCS documentation-drift suite passed 238 tests.",
       "On 2026-08-23, re-read the complete explanation after the real-viewer smoke exposed premature persistent-viewer cleanup; the page now distinguishes execution-owned non-persistent processes from persistent typed lifecycle shutdown.",
-      "The exact Official30 Fiji and Fiji-plus-Napari real-viewer smokes passed locally with post-execution macro observation after execution-server teardown."
+      "The exact Official30 Fiji and Fiji-plus-Napari real-viewer smokes passed locally with post-execution macro observation after execution-server teardown.",
+      "On 2026-08-25, re-read the complete explanation against the caller-control, runtime-policy, Napari, agent-service, and regression authorities added for bounded ROI projection and atomic isolation.",
+      "The complete 186-test viewer family and 377 agent/MCP tests passed; three isolated real rehearsals returned ROI summaries in 0.063-0.485 seconds and bulk isolation in 0.078-1.078 seconds within the 2-second command budget."
     ]
   },
   {
@@ -3007,7 +3030,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "9137335fc71b59541c4457ba74c19200c766d8285505f587fa0d468b4438b20a",
+        "sha256": "d308c73e7281b72fe50328fb87c6a149fc37be2026bf9b3b7c7de0e8f8706d31",
         "role": "Proves MCP server tool registration, request handling, and lifecycle behaviour."
       }
     ],
@@ -3026,12 +3049,13 @@
       "On 2026-08-24, re-read the complete client how-to after idempotent initialization polling gained a shared MCP regression; installation, registration, path-policy, and reconnect guidance remain accurate.",
       "On 2026-08-24, re-read the complete client how-to after dev-client UI request projections were consolidated behind their DTO authorities; no installation or client-facing guidance changed.",
       "On 2026-08-24, re-read the complete client how-to after selected-workflow receipt outcomes became declaration-owned; installation, connection, discovery, and recovery guidance remain accurate.",
-      "On 2026-08-24, re-read the complete client how-to after stdio output containment moved to a dedicated transport owner; installation, registration, path-policy, and reconnect guidance remain accurate."
+      "On 2026-08-24, re-read the complete client how-to after stdio output containment moved to a dedicated transport owner; installation, registration, path-policy, and reconnect guidance remain accurate.",
+      "On 2026-08-25, re-read the complete client how-to after viewer-only MCP regressions changed the shared server test authority; installation, registration, path-policy, and reconnect guidance remain unchanged."
     ]
   },
   {
     "path": "docs/source/user_guide/real_time_visualization.rst",
-    "source_sha256": "34ceddfec02a0ffe4725e358c41d16ed482467472418d794bcb3898d4da21f60",
+    "source_sha256": "31d88c83c9a68f15aa2b944770118ff58c4c752bb5fb7a0132fcefae4619b6e7",
     "audience": [
       "pipeline authors reviewing live scientific outputs"
     ],
@@ -3045,12 +3069,22 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "01f660a155e24f524299e5182289b93d058dcdd97619b54a97bcc8ba04298e73",
+        "sha256": "fca3e3ca9b8d10ea39f8bf3481716e2d44aa4c940cf35fe44fdf3494639db01d",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
+        "path": "openhcs/runtime/viewer_controls.py",
+        "sha256": "15771270df1419048ae906daed353acdb6d882a346d5be5a72d20bd56dbd785a",
+        "role": "Declares the bounded payload and atomic layer-isolation controls used by focused agent review."
+      },
+      {
+        "path": "openhcs/agent/services/viewer_window_service.py",
+        "sha256": "3a5411c2ba2114a3af93c245fac00301863c3b33aab8f39db0d7c0a7bfb33344",
+        "role": "Projects viewer responses into bounded ROI summaries and one-operation isolation results."
+      },
+      {
         "path": "openhcs/runtime/napari_viewer_server.py",
-        "sha256": "85619e9b7c9ed7d8bfc136db64362759d749ae50006b7c42b18c54fcf99c86ce",
+        "sha256": "b7356098c98044833af4c84691b80dd225dae993313c401d92e781b42c21951f",
         "role": "Implements Napari stream reception, layer updates, ROI navigation, and endpoint lifecycle."
       },
       {
@@ -3060,8 +3094,13 @@
       },
       {
         "path": "tests/unit/test_napari_streaming_handlers.py",
-        "sha256": "496e211a48a2276a42a84599651c011b36cc40639623d7bba4cc483a14957934",
+        "sha256": "b27543f8126ca33db80b94ff425d695037a73a9550592de4b6563a38d7284acd",
         "role": "Proves Napari streaming updates layers and carries ROI navigation through the declared protocol."
+      },
+      {
+        "path": "tests/unit/test_viewer_result_element_selection.py",
+        "sha256": "6cc5c6db5e214d170df7ce8ed09e691b7a7fcb6b4920f224c8cccf0058395796",
+        "role": "Proves focused layer isolation is rejected before mutation when any route or axis is invalid."
       },
       {
         "path": "tests/unit/test_fiji_viewer_server.py",
@@ -3076,7 +3115,8 @@
     ],
     "findings": [
       "The task guide did not explain how Napari preserves declaration-owned axis sizes across full and component-reduced step outputs.",
-      "The task guide did not explain the selected-route dimension-label invariant or how to recognise stale overlay state."
+      "The task guide did not explain the selected-route dimension-label invariant or how to recognise stale overlay state.",
+      "The task guide did not identify bounded ROI metadata summaries and one-operation layer isolation as the focused agent-review path."
     ],
     "disposition": "revise",
     "validation": [
@@ -3085,7 +3125,9 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-22, re-read the complete how-to against the current Napari route-selection regressions; the focused OpenHCS documentation-drift suite passed 238 tests."
+      "On 2026-08-22, re-read the complete how-to against the current Napari route-selection regressions; the focused OpenHCS documentation-drift suite passed 238 tests.",
+      "On 2026-08-25, re-read the complete how-to against the caller-control, runtime-policy, Napari, agent-service, and regression authorities added for bounded ROI projection and atomic isolation.",
+      "The complete 186-test viewer family and 377 agent/MCP tests passed; three isolated real rehearsals returned ROI summaries in 0.063-0.485 seconds and bulk isolation in 0.078-1.078 seconds within the 2-second command budget."
     ]
   }
 ]

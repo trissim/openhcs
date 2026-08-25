@@ -77,6 +77,7 @@ from openhcs.agent.dto.ui_bridge import (
 )
 from openhcs.agent.dto.viewer import (
     ViewerWindowDescriptor,
+    ViewerWindowLayerIsolationResult,
     ViewerWindowLayerPayloads,
     ViewerWindowLayerState,
     ViewerWindowNavigationResult,
@@ -143,6 +144,9 @@ class _ProjectedViewerWindowService(ViewerWindowService):
 
     def navigate_window(self, request):
         return self._delegate.navigate_window(request)
+
+    def isolate_layers(self, request):
+        return self._delegate.isolate_layers(request)
 
 
 def _viewer_mcp_context(viewer_window_service):
@@ -13742,7 +13746,7 @@ def test_mcp_sample_viewer_image_auto_selects_single_image_layer():
 
     assert viewer_window_service.payload_requests
     request = viewer_window_service.payload_requests[0]
-    assert request.payload_controls.route_key is None
+    assert request.payload_projection.controls.route_key is None
     assert payload["requested_route_key"] is None
     assert payload["route_key"] == "image-layer"
     assert payload["auto_selected_route_key"] == "image-layer"
@@ -15327,7 +15331,7 @@ def test_mcp_viewer_mutation_tools_default_to_command_timeout():
     class _ViewerWindowService:
         def __init__(self):
             self.navigation_requests = []
-            self.state_requests = []
+            self.isolation_requests = []
 
         def navigate_window(self, request):
             self.navigation_requests.append(request)
@@ -15344,35 +15348,16 @@ def test_mcp_viewer_mutation_tools_default_to_command_timeout():
                 selected=request.navigation.selected,
             )
 
-        def window_state(self, request):
-            self.state_requests.append(request)
-            return ViewerWindowStateResult(
+        def isolate_layers(self, request):
+            self.isolation_requests.append(request)
+            return ViewerWindowLayerIsolationResult(
                 schema_version=SCHEMA_VERSION,
                 connection=request.connection,
                 observed=True,
-                viewer=ViewerWindowDescriptor(
-                    viewer_type=ViewerType.NAPARI,
-                    title="OpenHCS Napari Visualization",
-                ),
+                applied=True,
+                selected_route_key=request.isolation.selected_route,
+                visible_route_keys=request.isolation.requested_visible_route_keys,
                 layer_count=2,
-                layers=(
-                    ViewerWindowLayerState(
-                        route_key="image-layer",
-                        title="Image",
-                        mounted=True,
-                        item_count=1,
-                        visible=True,
-                        selected=False,
-                    ),
-                    ViewerWindowLayerState(
-                        route_key="roi-layer",
-                        title="ROI",
-                        mounted=True,
-                        item_count=1,
-                        visible=True,
-                        selected=True,
-                    ),
-                ),
             )
 
     viewer_window_service = _ViewerWindowService()
@@ -15405,73 +15390,33 @@ def test_mcp_viewer_mutation_tools_default_to_command_timeout():
         request.timeout_ms == 2000
         for request in viewer_window_service.navigation_requests
     )
-    assert viewer_window_service.state_requests
+    assert viewer_window_service.isolation_requests
     assert all(
-        request.timeout_ms == 2000 for request in viewer_window_service.state_requests
+        request.timeout_ms == 2000
+        for request in viewer_window_service.isolation_requests
     )
 
 
-def test_mcp_isolate_viewer_reports_applied_when_final_state_times_out():
+def test_mcp_isolate_viewer_projects_one_bulk_service_result():
     if importlib.util.find_spec("mcp") is None:
         return
 
     class _ViewerWindowService:
         def __init__(self):
-            self.state_calls = 0
-            self.navigation_requests = []
+            self.isolation_requests = []
 
-        def navigate_window(self, request):
-            self.navigation_requests.append(request)
-            return ViewerWindowNavigationResult(
+        def isolate_layers(self, request):
+            self.isolation_requests.append(request)
+            return ViewerWindowLayerIsolationResult(
                 schema_version=SCHEMA_VERSION,
                 connection=request.connection,
                 observed=True,
-                viewer=ViewerWindowDescriptor(
-                    viewer_type=ViewerType.NAPARI,
-                    title="OpenHCS Napari Visualization",
-                ),
-                route_key=request.navigation.route_key,
-                visible=request.navigation.visible,
-                selected=request.navigation.selected,
-            )
-
-        def window_state(self, request):
-            self.state_calls += 1
-            if self.state_calls > 1:
-                return ViewerWindowStateResult.from_error(
-                    connection=request.connection,
-                    error=AgentError(
-                        code="viewer_window_state_failed",
-                        message="Viewer control request timed out.",
-                    ),
-                )
-            return ViewerWindowStateResult(
-                schema_version=SCHEMA_VERSION,
-                connection=request.connection,
-                observed=True,
-                viewer=ViewerWindowDescriptor(
-                    viewer_type=ViewerType.NAPARI,
-                    title="OpenHCS Napari Visualization",
-                ),
+                applied=True,
+                selected_route_key=request.isolation.selected_route,
+                visible_route_keys=("roi-layer",),
+                hidden_route_keys=("image-layer",),
+                changed_route_count=2,
                 layer_count=2,
-                layers=(
-                    ViewerWindowLayerState(
-                        route_key="image-layer",
-                        title="Image",
-                        mounted=True,
-                        item_count=1,
-                        visible=True,
-                        selected=True,
-                    ),
-                    ViewerWindowLayerState(
-                        route_key="roi-layer",
-                        title="ROI",
-                        mounted=True,
-                        item_count=1,
-                        visible=True,
-                        selected=False,
-                    ),
-                ),
             )
 
     viewer_window_service = _ViewerWindowService()
@@ -15494,11 +15439,11 @@ def test_mcp_isolate_viewer_reports_applied_when_final_state_times_out():
     payload = json.loads(_direct_tool_text(result))
 
     assert payload["applied"] is True
-    assert payload["observed"] is False
+    assert payload["observed"] is True
     assert payload["selected_route_key"] == "roi-layer"
     assert payload["visible_route_keys"] == ["roi-layer"]
     assert payload["hidden_route_keys"] == ["image-layer"]
     assert payload["changed_route_count"] == 2
     assert payload["layer_count"] == 2
-    assert payload["errors"][0]["code"] == "viewer_window_state_failed"
-    assert len(viewer_window_service.navigation_requests) == 2
+    assert payload["errors"] == []
+    assert len(viewer_window_service.isolation_requests) == 1

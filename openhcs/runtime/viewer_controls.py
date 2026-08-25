@@ -4,19 +4,50 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import Enum
 from math import isfinite
 from numbers import Real
-from typing import Self, TypeAlias
+from typing import Self, TypeAlias, TypeVar
 
+from zmqruntime.viewer_protocol import ViewerWireField
 
 ViewerScalar: TypeAlias = str | int | float | bool | None
-ViewerControlWireValue: TypeAlias = (
-    ViewerScalar
-    | tuple["ViewerControlWireValue", ...]
-    | list["ViewerControlWireValue"]
-    | dict[str, "ViewerControlWireValue"]
-)
 ViewerPayloadAxisIndices: TypeAlias = tuple[int, ...] | dict[str, int]
+ViewerShapePayloadValueT = TypeVar("ViewerShapePayloadValueT")
+
+
+class ViewerShapePayloadProjection(str, Enum):
+    """Declared shape-payload detail retained by a viewer projection."""
+
+    projected_fields: tuple[ViewerWireField, ...] | None
+
+    FULL = ("full", None)
+    SUMMARY = (
+        "summary",
+        (ViewerWireField.TYPE, ViewerWireField.METADATA),
+    )
+
+    def __new__(
+        cls,
+        value: str,
+        projected_fields: tuple[ViewerWireField, ...] | None,
+    ) -> "ViewerShapePayloadProjection":
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member.projected_fields = projected_fields
+        return member
+
+    def selected_items(
+        self,
+        payload: Mapping[object, ViewerShapePayloadValueT],
+    ) -> tuple[tuple[object, ViewerShapePayloadValueT], ...]:
+        if self.projected_fields is None:
+            return tuple(payload.items())
+        return tuple(
+            (field.value, payload[field.value])
+            for field in self.projected_fields
+            if field.value in payload
+        )
 
 
 class ViewerResultElementCoordinateAuthority:
@@ -147,7 +178,7 @@ class ViewerResultElementCoordinateAuthority:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ViewerPayloadControlOptions:
-    """Formal payload-inspection controls shared by agent and viewer runtimes."""
+    """Caller-declared payload selection and inspection controls."""
 
     route_key: str | None = None
     axis_indices: ViewerPayloadAxisIndices | None = None
@@ -272,6 +303,39 @@ class ViewerPayloadControlOptions:
             raise TypeError(f"Viewer payload {field_name} must be an integer.")
         if value < 0:
             raise ValueError(f"Viewer payload {field_name} must be nonnegative.")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ViewerPayloadProjectionOptions:
+    """Runtime projection policy over caller-declared payload controls."""
+
+    controls: ViewerPayloadControlOptions = field(
+        default_factory=ViewerPayloadControlOptions
+    )
+    max_total_shape_payloads: int | None = None
+    shape_payload_projection: ViewerShapePayloadProjection = (
+        ViewerShapePayloadProjection.FULL
+    )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.controls, ViewerPayloadControlOptions):
+            raise TypeError(
+                "Viewer payload projection controls must be "
+                "ViewerPayloadControlOptions."
+            )
+        if self.max_total_shape_payloads is not None:
+            ViewerPayloadControlOptions._validate_nonnegative_int(
+                self.max_total_shape_payloads,
+                "max_total_shape_payloads",
+            )
+        if not isinstance(
+            self.shape_payload_projection,
+            ViewerShapePayloadProjection,
+        ):
+            raise TypeError(
+                "Viewer payload shape_payload_projection must be a "
+                "ViewerShapePayloadProjection."
+            )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -406,4 +470,79 @@ class ViewerNavigationControlOptions:
             visible=visible,
             selected=selected,
             data_index=data_index,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ViewerLayerIsolationControlOptions:
+    """Atomic visibility, selection, and navigation for a viewer layer set."""
+
+    visible_route_keys: tuple[str, ...]
+    selected_route_key: str | None = None
+    axis_indices: Mapping[str, int] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.visible_route_keys:
+            raise ValueError(
+                "Viewer layer isolation requires at least one visible route key."
+            )
+        if any(
+            not isinstance(route_key, str) or not route_key
+            for route_key in self.visible_route_keys
+        ):
+            raise ValueError(
+                "Viewer layer isolation route keys must be non-empty strings."
+            )
+        if self.selected_route_key is not None and (
+            not isinstance(self.selected_route_key, str) or not self.selected_route_key
+        ):
+            raise ValueError(
+                "Viewer layer isolation selected_route_key must be a non-empty string."
+            )
+        ViewerNavigationControlOptions.from_overrides(
+            route_key=self.selected_route,
+            axis_indices=self.axis_indices,
+            visible=True,
+            selected=True,
+        )
+
+    @classmethod
+    def from_overrides(
+        cls,
+        *,
+        visible_route_keys: Sequence[str],
+        selected_route_key: str | None = None,
+        axis_indices: Mapping[str, int] | None = None,
+    ) -> Self:
+        return cls(
+            visible_route_keys=tuple(visible_route_keys),
+            selected_route_key=selected_route_key,
+            axis_indices=dict(axis_indices or {}),
+        )
+
+    @property
+    def requested_visible_route_keys(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(self.visible_route_keys))
+
+    @property
+    def selected_route(self) -> str:
+        return self.selected_route_key or self.requested_visible_route_keys[-1]
+
+    @property
+    def effective_visible_route_keys(self) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys((*self.requested_visible_route_keys, self.selected_route))
+        )
+
+    @property
+    def visible_routes(self) -> frozenset[str]:
+        return frozenset(self.effective_visible_route_keys)
+
+    def navigation_for(self, route_key: str) -> ViewerNavigationControlOptions:
+        selected = route_key == self.selected_route
+        return ViewerNavigationControlOptions.from_overrides(
+            route_key=route_key,
+            axis_indices=self.axis_indices if selected else None,
+            visible=route_key in self.visible_routes,
+            selected=selected,
         )

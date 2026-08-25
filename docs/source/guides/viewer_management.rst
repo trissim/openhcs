@@ -193,6 +193,18 @@ evidence; a successfully launched viewer alone is not result validation.
 Likewise, layer existence and nonzero pixels prove transport and content, not
 that the chosen layers communicate the requested scientific result.
 
+Agent-facing ROI summaries retain full ROI-member counts from layer summaries
+while returning only bounded type and metadata examples. ``max_rois`` is one
+budget across the complete response, not a separate allowance for every
+payload record, and the summary path does not transfer polygon coordinates.
+Raw viewer payload inspection remains the explicit route for geometry.
+
+Layer isolation applies visibility, active-layer selection, and selected-route
+axis navigation as one control operation. Napari validates the complete request
+before changing any layer and returns the resulting viewer state. An invalid
+route or axis therefore reports an error without leaving a partially hidden or
+partially selected layer set.
+
 Standalone review of already persisted plate files launches through the
 validated OpenHCS UI process identity when a UI bridge is available. The
 platform authority projects only its declared graphical-session and child

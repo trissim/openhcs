@@ -174,6 +174,29 @@ children from ports, process names, or command lines.
 Each retained endpoint process also owns one terminal observation that reaps
 the child when it exits, even if no later caller polls the process handle.
 
+Bounded viewer control projection
+---------------------------------
+
+Viewer inspection distinguishes caller controls from runtime projection policy.
+``ViewerPayloadControlOptions`` owns the route, axis selection, array bounds,
+and per-record shape bound declared by the caller.
+``ViewerPayloadProjectionOptions`` composes those controls with transfer policy
+that is internal to the requested operation. The ROI-summary route selects the
+``SUMMARY`` member of ``ViewerShapePayloadProjection`` and one global shape
+budget. Napari therefore converts and transports only shape type and metadata
+for at most that many ROI members across the complete response; it does not
+serialise geometry merely to discard it in the agent service. Raw payload
+inspection retains the full projection when explicitly requested.
+
+Layer isolation is one typed control operation rather than a client-side
+sequence of state and navigation requests. ``ViewerLayerIsolationControlOptions``
+owns route normalisation, effective visibility, selection, and selected-route
+navigation. Napari resolves every requested route and preflights every
+navigation before mutating a layer. It then applies the prepared projection in
+one Qt turn, refreshes the overlay once, and returns the resulting state. A
+missing route or invalid axis therefore cannot leave a partially isolated
+viewer, and command latency does not grow by one control round trip per layer.
+
 Failure boundaries
 ------------------
 
@@ -189,6 +212,8 @@ Failure boundaries
   is not itself a failure.
 - Non-persistent execution fails cleanup if its viewer remains active; runtime
   acceptance also verifies that its owned endpoint was released.
+- Layer isolation fails before mutation when any requested route or selected
+  route navigation is invalid.
 
 Do not repair these boundaries with port-existence readiness, copied viewer-name
 tables, filename-derived producer identity, shape-based source inference,

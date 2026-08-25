@@ -39,6 +39,7 @@ from openhcs.agent.dto.viewer import (
     ViewerWindowLayerVisibilityRecord,
     ViewerWindowNavigationRequest,
     ViewerWindowPayloadRequest,
+    ViewerWindowRoiSummaryRequest,
     ViewerWindowSnapshotRequest,
     ViewerWindowStateRequest,
     ViewerWindowValidationPolicy,
@@ -97,8 +98,11 @@ from openhcs.core.source_workspace_projection import VirtualWorkspaceSourceProje
 from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.microscopes.exceptions import MicroscopePixelSizeUnavailableError
 from openhcs.runtime.viewer_protocol import (
+    ViewerLayerIsolationField,
     ViewerNavigationControlOptions,
     ViewerPayloadControlOptions,
+    ViewerPayloadProjectionOptions,
+    ViewerShapePayloadProjection,
     ViewerStateControlOptions,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
@@ -899,6 +903,42 @@ class _FakeViewerWindowGateway(ViewerWindowGatewayABC):
         )
         return response
 
+    def isolate_layers(self, request):
+        self.requests.append(request)
+        response = self.window_state(request)
+        self.requests.pop()
+        mounted_routes = {
+            layer["route_key"] for layer in response["layers"] if layer["mounted"]
+        }
+        missing_routes = tuple(
+            route_key
+            for route_key in request.isolation.effective_visible_route_keys
+            if route_key not in mounted_routes
+        )
+        changed_route_count = 0
+        layers = []
+        for source_layer in response["layers"]:
+            layer = dict(source_layer)
+            if layer["mounted"] and not missing_routes:
+                target_visible = layer["route_key"] in request.isolation.visible_routes
+                target_selected = layer["route_key"] == request.isolation.selected_route
+                if (
+                    layer["visible"] != target_visible
+                    or layer["selected"] != target_selected
+                    or (target_selected and bool(request.isolation.axis_indices))
+                ):
+                    changed_route_count += 1
+                layer["visible"] = target_visible
+                layer["selected"] = target_selected
+            layers.append(layer)
+        response["layers"] = tuple(layers)
+        response[ViewerLayerIsolationField.APPLIED.value] = not missing_routes
+        response[ViewerLayerIsolationField.CHANGED_ROUTE_COUNT.value] = (
+            changed_route_count
+        )
+        response[ViewerLayerIsolationField.MISSING_ROUTE_KEYS.value] = missing_routes
+        return response
+
 
 class _UnmountedRouteViewerWindowGateway(_FakeViewerWindowGateway):
     def window_state(self, request):
@@ -933,6 +973,10 @@ class _MalformedViewerWindowGateway(ViewerWindowGatewayABC):
         return {"status": "success", "layers": ()}
 
     def navigate_window(self, request):
+        del request
+        return {"status": "success", "layers": ()}
+
+    def isolate_layers(self, request):
         del request
         return {"status": "success", "layers": ()}
 
@@ -1942,10 +1986,12 @@ def test_viewer_window_service_reads_payload_records():
     result = service.window_payloads(
         ViewerWindowPayloadRequest(
             connection=_viewer_connection(),
-            payload_controls=ViewerPayloadControlOptions.from_overrides(
-                route_key="IdentifyPrimaryObjects|image",
-                include_array_values=True,
-                max_array_elements=16,
+            payload_projection=ViewerPayloadProjectionOptions(
+                controls=ViewerPayloadControlOptions.from_overrides(
+                    route_key="IdentifyPrimaryObjects|image",
+                    include_array_values=True,
+                    max_array_elements=16,
+                )
             ),
         ),
     )
@@ -1978,12 +2024,14 @@ def test_viewer_window_service_reads_payload_records():
         },
     )
     assert (
-        gateway.requests[0].payload_controls.route_key == "IdentifyPrimaryObjects|image"
+        gateway.requests[0].payload_projection.controls.route_key
+        == "IdentifyPrimaryObjects|image"
     )
-    assert gateway.requests[0].payload_controls.include_array_values is True
-    assert gateway.requests[0].payload_controls.max_array_elements == 16
-    assert gateway.requests[0].payload_controls.include_shape_payloads is True
-    assert gateway.requests[0].payload_controls.max_shape_payloads == 256
+    controls = gateway.requests[0].payload_projection.controls
+    assert controls.include_array_values is True
+    assert controls.max_array_elements == 16
+    assert controls.include_shape_payloads is True
+    assert controls.max_shape_payloads == 256
 
 
 def test_viewer_window_service_can_omit_raw_payload_response():
@@ -1994,14 +2042,34 @@ def test_viewer_window_service_can_omit_raw_payload_response():
         ViewerWindowPayloadRequest(
             connection=_viewer_connection(),
             include_response=False,
-            payload_controls=ViewerPayloadControlOptions.from_overrides(
-                route_key="IdentifyPrimaryObjects|image",
+            payload_projection=ViewerPayloadProjectionOptions(
+                controls=ViewerPayloadControlOptions.from_overrides(
+                    route_key="IdentifyPrimaryObjects|image",
+                )
             ),
         )
     )
 
     assert result.observed is True
     assert result.response == {}
+
+
+def test_viewer_roi_summary_requests_bounded_metadata_without_geometry() -> None:
+    gateway = _FakeViewerWindowGateway()
+    service = ViewerWindowService(gateway=gateway)
+
+    service.summarize_rois(
+        ViewerWindowRoiSummaryRequest(
+            connection=_viewer_connection(),
+            route_key="IdentifyPrimaryObjects|image",
+            max_rois=17,
+        )
+    )
+
+    projection = gateway.requests[0].payload_projection
+    assert projection.controls.max_shape_payloads == 17
+    assert projection.max_total_shape_payloads == 17
+    assert projection.shape_payload_projection is ViewerShapePayloadProjection.SUMMARY
 
 
 def test_viewer_window_service_navigates_running_viewer_window():
@@ -2053,13 +2121,13 @@ def test_viewer_window_service_isolates_only_mounted_layers() -> None:
         )
     )
 
-    navigation_requests = tuple(
+    isolation_requests = tuple(
         request
         for request in gateway.requests
-        if isinstance(request, ViewerWindowNavigationRequest)
+        if isinstance(request, ViewerWindowLayerIsolationRequest)
     )
     assert result.applied is True
-    assert result.changed_route_count == 1
+    assert result.changed_route_count == 0
     assert result.layer_count == 1
     assert result.visible_route_keys == ("IdentifyPrimaryObjects|image",)
     assert result.hidden_route_keys == ()
@@ -2071,8 +2139,10 @@ def test_viewer_window_service_isolates_only_mounted_layers() -> None:
             selected=True,
         ),
     )
-    assert tuple(request.navigation.route_key for request in navigation_requests) == (
-        "IdentifyPrimaryObjects|image",
+    assert isolation_requests == (gateway.requests[0],)
+    assert not any(
+        isinstance(request, ViewerWindowNavigationRequest)
+        for request in gateway.requests
     )
 
 

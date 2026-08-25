@@ -35,6 +35,15 @@ what the pipeline actually produced. Screenshots are evidence about rendering,
 not the authority for whether a hidden artifact exists or which object identity
 its pixels carry.
 
+For a focused agent review, isolate the required image and ROI routes in one
+viewer command, select the route that owns the active axes, and provide any
+route-local axis indices in that same request. Napari validates the complete
+layer set and navigation before changing visibility or selection, so a rejected
+request does not leave a partial presentation. Use the ROI-summary command with
+an explicit ``max_rois`` bound for metadata examples. That bound applies across
+the complete response and the summary omits geometry; request raw viewer
+payloads only when coordinates are needed.
+
 To display only one step, leave viewer streaming disabled at global and
 pipeline scope and enable ``napari_streaming_config`` or
 ``fiji_streaming_config`` only on that ``FunctionStep``. Use its ``well_filter``

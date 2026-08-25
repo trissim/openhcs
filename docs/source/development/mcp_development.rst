@@ -93,6 +93,8 @@ Source the active checkout environment, then call the dev client directly:
    python -m openhcs.mcp.dev_client selected-workflow init_plate
    python -m openhcs.mcp.dev_client widget-tree plate_manager
    python -m openhcs.mcp.dev_client viewer-payloads 5565 --include-shape-payloads
+   python -m openhcs.mcp.dev_client viewer-rois 5565 ROI_ROUTE --max-rois 100 --max-examples 10
+   python -m openhcs.mcp.dev_client isolate-viewer 5565 IMAGE_ROUTE ROI_ROUTE --selected-route-key ROI_ROUTE --axis-index well=0
 
 The development client uses the ``full`` local surface by default. Pass
 ``--surface desktop``, ``core``, or ``authoring`` before the command when testing

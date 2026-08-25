@@ -12,7 +12,10 @@ import pytest
 from zmqruntime.viewer_protocol import ViewerComponentMode
 
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
-from openhcs.agent.dto.viewer import ViewerWindowNavigationRequest
+from openhcs.agent.dto.viewer import (
+    ViewerWindowLayerIsolationRequest,
+    ViewerWindowNavigationRequest,
+)
 from openhcs.agent.services.viewer_window_service import (
     ViewerWindowGatewayABC,
     ViewerWindowService,
@@ -24,11 +27,13 @@ from openhcs.runtime.napari_streaming_handlers import (
     NapariLayerRouteStateStore,
 )
 from openhcs.runtime.napari_viewer_server import (
+    NapariLayerIsolationControlMessageAction,
     NapariNavigationControlMessageAction,
     NapariResultSelectionSurface,
     NapariViewerServer,
 )
 from openhcs.runtime.viewer_controls import (
+    ViewerLayerIsolationControlOptions,
     ViewerNavigationControlOptions,
     ViewerResultElementCoordinateAuthority,
 )
@@ -37,7 +42,10 @@ from openhcs.runtime.viewer_component_system import (
     ViewerComponentLayout,
     ViewerLayerAxisProjection,
 )
-from openhcs.runtime.viewer_protocol import ViewerControlResponseField
+from openhcs.runtime.viewer_protocol import (
+    ViewerControlResponseField,
+    ViewerLayerIsolationField,
+)
 
 
 class _NavigationResponseGateway(ViewerWindowGatewayABC):
@@ -54,6 +62,10 @@ class _NavigationResponseGateway(ViewerWindowGatewayABC):
         raise AssertionError(request)
 
     def navigate_window(self, request):
+        return self.response
+
+    def isolate_layers(self, request):
+        del request
         return self.response
 
 
@@ -213,6 +225,111 @@ def test_napari_navigation_selects_native_feature_row_and_projects_evidence(qtbo
     assert result.data_index == 1
     assert result.feature_row_count == 2
     assert result.selected_data_indices == (1,)
+
+
+def test_napari_layer_isolation_applies_all_routes_in_one_control_action() -> None:
+    from napari.components import ViewerModel
+
+    viewer = ViewerModel()
+    selected_layer = viewer.add_image(np.zeros((8, 8), dtype=np.uint8), name="Keep")
+    hidden_layer = viewer.add_image(np.ones((8, 8), dtype=np.uint8), name="Hide")
+    server, overlay, _result_selection_dock, _qt_window = _viewer_server(
+        viewer,
+        selected_layer,
+        route_key="keep",
+    )
+    server.layer_route_state.set_title("hide", "Hide")
+    server.layer_route_state.set_layer("hide", hidden_layer)
+    request = ViewerLayerIsolationControlOptions.from_overrides(
+        visible_route_keys=("keep",),
+        selected_route_key="keep",
+    )
+
+    response = NapariLayerIsolationControlMessageAction().handle(
+        server,
+        {ViewerControlResponseField.PAYLOAD.value: request},
+    )
+
+    assert response[ViewerLayerIsolationField.APPLIED.value] is True
+    assert response[ViewerLayerIsolationField.CHANGED_ROUTE_COUNT.value] == 2
+    assert response[ViewerLayerIsolationField.MISSING_ROUTE_KEYS.value] == ()
+    assert selected_layer.visible is True
+    assert hidden_layer.visible is False
+    assert viewer.layers.selection.active is selected_layer
+    assert overlay.refresh_count == 1
+
+    result = ViewerWindowService(
+        gateway=_NavigationResponseGateway(response)
+    ).isolate_layers(
+        ViewerWindowLayerIsolationRequest.from_fields(
+            connection=ExecutionConnectionSpec(port=5900),
+            visible_route_keys=("keep",),
+            selected_route_key="keep",
+        )
+    )
+    assert result.applied is True
+    assert result.visible_route_keys == ("keep",)
+    assert result.hidden_route_keys == ("hide",)
+    assert result.changed_route_count == 2
+
+
+def test_napari_layer_isolation_rejects_missing_routes_before_mutation() -> None:
+    from napari.components import ViewerModel
+
+    viewer = ViewerModel()
+    layer = viewer.add_image(np.zeros((8, 8), dtype=np.uint8), name="Keep")
+    server, overlay, _result_selection_dock, _qt_window = _viewer_server(
+        viewer,
+        layer,
+        route_key="keep",
+    )
+    request = ViewerLayerIsolationControlOptions.from_overrides(
+        visible_route_keys=("missing",),
+    )
+
+    response = NapariLayerIsolationControlMessageAction().handle(
+        server,
+        {ViewerControlResponseField.PAYLOAD.value: request},
+    )
+
+    assert response[ViewerLayerIsolationField.APPLIED.value] is False
+    assert response[ViewerLayerIsolationField.CHANGED_ROUTE_COUNT.value] == 0
+    assert response[ViewerLayerIsolationField.MISSING_ROUTE_KEYS.value] == ("missing",)
+    assert layer.visible is True
+    assert overlay.refresh_count == 0
+
+
+def test_napari_layer_isolation_preflights_navigation_before_mutation() -> None:
+    from napari.components import ViewerModel
+
+    viewer = ViewerModel()
+    hidden_layer = viewer.add_image(np.ones((8, 8), dtype=np.uint8), name="Hide")
+    selected_layer = viewer.add_image(np.zeros((8, 8), dtype=np.uint8), name="Keep")
+    server, overlay, _result_selection_dock, _qt_window = _viewer_server(
+        viewer,
+        selected_layer,
+        route_key="keep",
+    )
+    server.layer_route_state.set_title("hide", "Hide")
+    server.layer_route_state.set_layer("hide", hidden_layer)
+    viewer.layers.selection.active = hidden_layer
+    request = ViewerLayerIsolationControlOptions.from_overrides(
+        visible_route_keys=("keep",),
+        selected_route_key="keep",
+        axis_indices={"channel": 0},
+    )
+
+    response = NapariLayerIsolationControlMessageAction().handle(
+        server,
+        {ViewerControlResponseField.PAYLOAD.value: request},
+    )
+
+    assert response["status"] == "error"
+    assert "no semantic axis labels" in response["message"]
+    assert hidden_layer.visible is True
+    assert selected_layer.visible is True
+    assert viewer.layers.selection.active is hidden_layer
+    assert overlay.refresh_count == 0
 
 
 def test_napari_navigation_moves_to_selected_roi_component_slice(qtbot) -> None:

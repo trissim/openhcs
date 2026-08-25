@@ -1531,7 +1531,7 @@
       },
       {
         "path": "openhcs/mcp/server.py",
-        "sha256": "bc927c55d629ccfa14243a7ce5191ca9d199b92e4bfd42aa00906445ea6b4e87",
+        "sha256": "6f586551780a9981c472808571569f39a63710132e091fe9231914f8aee35944",
         "role": "Binds the selected declaration registry into the local stdio MCP server."
       },
       {
@@ -1596,7 +1596,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "9137335fc71b59541c4457ba74c19200c766d8285505f587fa0d468b4438b20a",
+        "sha256": "d308c73e7281b72fe50328fb87c6a149fc37be2026bf9b3b7c7de0e8f8706d31",
         "role": "Proves MCP and development-client snapshot inputs reject undeclared native capture."
       }
     ],
@@ -1621,7 +1621,8 @@
       "On 2026-08-24, re-read the complete explanation after dev-client UI arguments were projected by their request DTO authorities; capability and transport ownership remain unchanged.",
       "On 2026-08-24, re-read the complete explanation after UI bridge operation statuses began owning terminality, overview severity, and generic completion selection; no user-facing code/UI conversion claim changed.",
       "On 2026-08-24, re-read the complete distribution explanation after the installer profile became the install-policy owner and native contracts became exact-version generated projections.",
-      "On 2026-08-24, re-read the complete explanation against the process-level stdio owner and its persistent-session regression; the page now makes protocol-channel ownership explicit."
+      "On 2026-08-24, re-read the complete explanation against the process-level stdio owner and its persistent-session regression; the page now makes protocol-channel ownership explicit.",
+      "On 2026-08-25, re-read the complete distribution explanation after bounded viewer projection and one-operation isolation changed the MCP server and shared server regressions; capability registration, transport, packaging, and release projection claims remain unchanged."
     ]
   },
   {

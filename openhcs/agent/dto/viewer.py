@@ -29,8 +29,11 @@ from openhcs.agent.dto.execution import (
 from openhcs.agent.path_policy import DEFAULT_AGENT_WINDOW_SNAPSHOT_DIR
 from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.runtime.viewer_controls import (
+    ViewerLayerIsolationControlOptions,
     ViewerNavigationControlOptions,
     ViewerPayloadControlOptions,
+    ViewerPayloadProjectionOptions,
+    ViewerShapePayloadProjection,
     ViewerStateControlOptions,
 )
 from openhcs.serialization.json import to_jsonable
@@ -226,8 +229,8 @@ class ViewerWindowStateRequest(ViewerWindowControlRequest):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ViewerWindowPayloadRequest(ViewerWindowControlRequest):
-    payload_controls: ViewerPayloadControlOptions = field(
-        default_factory=ViewerPayloadControlOptions
+    payload_projection: ViewerPayloadProjectionOptions = field(
+        default_factory=ViewerPayloadProjectionOptions
     )
 
     @staticmethod
@@ -238,7 +241,7 @@ class ViewerWindowPayloadRequest(ViewerWindowControlRequest):
     ) -> tuple[tuple[int, int], ...] | None:
         if value is None:
             return None
-        return tuple(tuple(slice_pair) for slice_pair in value)
+        return tuple((start, stop) for start, stop in value)
 
     @classmethod
     def from_fields(
@@ -261,14 +264,16 @@ class ViewerWindowPayloadRequest(ViewerWindowControlRequest):
             connection=connection,
             timeout_ms=timeout_ms,
             include_response=include_response,
-            payload_controls=ViewerPayloadControlOptions.from_overrides(
-                route_key=route_key,
-                axis_indices=cls.axis_indices_from_fields(axis_indices),
-                include_array_values=include_array_values,
-                max_array_elements=max_array_elements,
-                array_slices=cls.array_slices_from_fields(array_slices),
-                include_shape_payloads=include_shape_payloads,
-                max_shape_payloads=max_shape_payloads,
+            payload_projection=ViewerPayloadProjectionOptions(
+                controls=ViewerPayloadControlOptions.from_overrides(
+                    route_key=route_key,
+                    axis_indices=cls.axis_indices_from_fields(axis_indices),
+                    include_array_values=include_array_values,
+                    max_array_elements=max_array_elements,
+                    array_slices=cls.array_slices_from_fields(array_slices),
+                    include_shape_payloads=include_shape_payloads,
+                    max_shape_payloads=max_shape_payloads,
+                )
             ),
         )
 
@@ -277,7 +282,7 @@ class ViewerWindowPayloadRequest(ViewerWindowControlRequest):
         payload.update(
             cast(
                 dict[str, JsonValue],
-                to_jsonable(self.payload_controls),
+                to_jsonable(self.payload_projection.controls),
             )
         )
         payload["include_response"] = self.include_response
@@ -320,13 +325,7 @@ class ViewerWindowNavigationRequest(ViewerWindowControlRequest):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ViewerWindowLayerIsolationRequest(ViewerWindowControlRequest):
-    visible_route_keys: tuple[str, ...]
-    selected_route_key: str | None = None
-    axis_indices: dict[str, int] | None = None
-
-    def __post_init__(self) -> None:
-        if not self.visible_route_keys:
-            raise ValueError("visible_route_keys must contain at least one route key.")
+    isolation: ViewerLayerIsolationControlOptions
 
     @classmethod
     def from_fields(
@@ -341,62 +340,23 @@ class ViewerWindowLayerIsolationRequest(ViewerWindowControlRequest):
         return cls(
             connection=connection,
             timeout_ms=timeout_ms,
-            visible_route_keys=tuple(visible_route_keys),
-            selected_route_key=selected_route_key,
-            axis_indices=axis_indices,
+            isolation=ViewerLayerIsolationControlOptions.from_overrides(
+                visible_route_keys=visible_route_keys,
+                selected_route_key=selected_route_key,
+                axis_indices=axis_indices,
+            ),
         )
 
     def as_tool_arguments(self) -> dict[str, JsonValue]:
         payload = self.connection_tool_arguments()
         payload.update(
             {
-                "visible_route_keys": list(self.visible_route_keys),
-                "selected_route_key": self.selected_route_key,
-                "axis_indices": self.axis_indices,
+                "visible_route_keys": list(self.isolation.requested_visible_route_keys),
+                "selected_route_key": self.isolation.selected_route_key,
+                "axis_indices": dict(self.isolation.axis_indices),
             }
         )
         return payload
-
-    @property
-    def requested_visible_route_keys(self) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(self.visible_route_keys))
-
-    @property
-    def selected_route(self) -> str:
-        return self.selected_route_key or self.requested_visible_route_keys[-1]
-
-    @property
-    def visible_routes(self) -> frozenset[str]:
-        return frozenset((*self.requested_visible_route_keys, self.selected_route))
-
-    def state_request(self) -> ViewerWindowStateRequest:
-        return ViewerWindowStateRequest(
-            connection=self.connection,
-            timeout_ms=self.timeout_ms,
-            include_response=False,
-            state_controls=ViewerStateControlOptions.from_overrides(
-                include_component_values=False,
-                include_payload_summaries=False,
-            ),
-        )
-
-    def navigation_request(
-        self,
-        *,
-        route_key: str,
-        visible: bool,
-        selected: bool,
-    ) -> ViewerWindowNavigationRequest:
-        return ViewerWindowNavigationRequest(
-            connection=self.connection,
-            timeout_ms=self.timeout_ms,
-            navigation=ViewerNavigationControlOptions.from_overrides(
-                route_key=route_key,
-                axis_indices=self.axis_indices if selected else None,
-                visible=visible,
-                selected=selected,
-            ),
-        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -480,13 +440,15 @@ class ViewerWindowImageSampleRequest(ViewerWindowControlRequest):
             connection=self.connection,
             timeout_ms=self.timeout_ms,
             include_response=False,
-            payload_controls=ViewerPayloadControlOptions.from_overrides(
-                route_key=self.route_key,
-                axis_indices=self.axis_indices,
-                include_array_values=True,
-                max_array_elements=self.protocol_max_array_elements,
-                array_slices=self.array_slices,
-                include_shape_payloads=False,
+            payload_projection=ViewerPayloadProjectionOptions(
+                controls=ViewerPayloadControlOptions.from_overrides(
+                    route_key=self.route_key,
+                    axis_indices=self.axis_indices,
+                    include_array_values=True,
+                    max_array_elements=self.protocol_max_array_elements,
+                    array_slices=self.array_slices,
+                    include_shape_payloads=False,
+                )
             ),
         )
 
@@ -541,12 +503,16 @@ class ViewerWindowRoiSummaryRequest(ViewerWindowControlRequest):
             connection=self.connection,
             timeout_ms=self.timeout_ms,
             include_response=False,
-            payload_controls=ViewerPayloadControlOptions.from_overrides(
-                route_key=self.route_key,
-                axis_indices=self.axis_indices,
-                include_array_values=False,
-                include_shape_payloads=True,
-                max_shape_payloads=self.max_rois,
+            payload_projection=ViewerPayloadProjectionOptions(
+                controls=ViewerPayloadControlOptions.from_overrides(
+                    route_key=self.route_key,
+                    axis_indices=self.axis_indices,
+                    include_array_values=False,
+                    include_shape_payloads=True,
+                    max_shape_payloads=self.max_rois,
+                ),
+                max_total_shape_payloads=self.max_rois,
+                shape_payload_projection=ViewerShapePayloadProjection.SUMMARY,
             ),
         )
 
@@ -885,9 +851,15 @@ class ViewerWindowLayerVisibilityRecord:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ViewerWindowLayerIsolationResult(AgentResultEnvelope):
+class ViewerWindowLayerIsolationResult(
+    ViewerWindowObservedErrorResultMixin,
+    AgentResultEnvelope,
+    ExecutionConnectionProjection,
+):
+    registry_key: ClassVar[str] = "layer_isolation"
+
     observed: bool
-    applied: bool
+    applied: bool = False
     selected_route_key: str | None = None
     visible_route_keys: tuple[str, ...] = ()
     hidden_route_keys: tuple[str, ...] = ()

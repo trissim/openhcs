@@ -20,7 +20,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from itertools import product
 from numbers import Integral
-from typing import TYPE_CHECKING, ClassVar, Sequence, TypeAlias, cast
+from typing import TYPE_CHECKING, ClassVar, Generic, Sequence, TypeAlias, TypeVar, cast
 
 import numpy as np
 import zmq
@@ -117,9 +117,11 @@ from openhcs.runtime.viewer_protocol import (
     ViewerControlReplyPayload,
     ViewerControlResponseField,
     ViewerDescriptorField,
+    ViewerLayerIsolationControlOptions,
+    ViewerLayerIsolationField,
     ViewerLayerField,
     ViewerNavigationControlOptions,
-    ViewerPayloadControlOptions,
+    ViewerPayloadProjectionOptions,
     ViewerPayloadField,
     ViewerPayloadSummaryField,
     ViewerProtocolStatus,
@@ -162,6 +164,7 @@ NapariWireValue: TypeAlias = (
 NapariBatchImagePayloads: TypeAlias = list[Mapping[str, NapariWireValue]]
 NapariComponentModeMap: TypeAlias = dict[str, str]
 NapariComponentGroups: TypeAlias = dict[str, list[NapariStreamLayerItem]]
+NapariViewerProjectionRequestT = TypeVar("NapariViewerProjectionRequestT")
 
 
 @dataclass(frozen=True)
@@ -226,9 +229,7 @@ class NapariWireField(str, Enum):
 
     CENTER = "center"
     COORDINATES = "coordinates"
-    METADATA = "metadata"
     RADII = "radii"
-    SNAPSHOT = "snapshot"
 
 
 @dataclass(frozen=True)
@@ -3155,7 +3156,7 @@ class NapariResultSelectionController:
             self._refreshing_highlights = True
             try:
                 if axis_indices:
-                    navigation.apply_axis_indices(
+                    viewer_step = navigation.axis_step(
                         self.server,
                         native_layer,
                         ViewerNavigationControlOptions.from_overrides(
@@ -3163,6 +3164,7 @@ class NapariResultSelectionController:
                             axis_indices=axis_indices,
                         ),
                     )
+                    self.server.viewer.dims.current_step = viewer_step
             finally:
                 # Napari clears Shapes.selected_data when a dims change slices the
                 # selected geometry out of view. Re-assert the same authoritative
@@ -3361,14 +3363,12 @@ def _install_result_selection_toolbar(
 
 
 @dataclass(frozen=True, slots=True)
-class NapariViewerStateProjection:
-    """Project live Napari route/component stores into an agent-readable state."""
+class NapariViewerProjectionABC(ABC, Generic[NapariViewerProjectionRequestT]):
+    """Shared projection of live Napari route and component stores."""
 
     server: "NapariViewerServer"
     viewer: NapariViewerLayerCreator
-    request: ViewerStateControlOptions = field(
-        default_factory=ViewerStateControlOptions
-    )
+    request: NapariViewerProjectionRequestT
 
     def wire_envelope(
         self,
@@ -3386,33 +3386,6 @@ class NapariViewerStateProjection:
             ViewerControlField.LAYER_COUNT.value: len(layers),
             ViewerControlField.LAYERS.value: layers,
         }
-
-    def to_wire_mapping(self) -> dict[str, NapariWireValue]:
-        route_keys = self.route_keys()
-        layers = tuple(self.layer_state_for(route_key) for route_key in route_keys)
-        wire_mapping = self.wire_envelope(response_type="state_ack", layers=layers)
-        wire_mapping.update(
-            {
-                ViewerControlField.ACTIVE_DIMENSION_LABEL_ROUTE.value: (
-                    self.server.layer_route_state.active_dimension_label_route
-                ),
-                ViewerControlField.VIEWER_NDIM.value: int(self.viewer.dims.ndim),
-                ViewerControlField.CURRENT_STEP.value: tuple(
-                    int(step) for step in self.viewer.dims.current_step
-                ),
-                ViewerControlField.AXIS_LABELS.value: tuple(
-                    str(label) for label in self.viewer.dims.axis_labels
-                ),
-                ViewerControlField.COMPONENT_GROUP_COUNT.value: len(
-                    self.server.component_groups
-                ),
-                ViewerControlField.COMPONENT_ITEM_COUNT.value: sum(
-                    self.server.component_groups.item_count(route_key)
-                    for route_key in route_keys
-                ),
-            }
-        )
-        return wire_mapping
 
     def route_keys(self) -> tuple[str, ...]:
         route_keys = tuple(
@@ -3555,14 +3528,13 @@ class NapariViewerStateProjection:
             return items
         return items[:limit]
 
+    @abstractmethod
     def state_controls(self) -> ViewerStateControlOptions:
-        return self.request
+        """Return the state-detail controls for this projection."""
 
+    @abstractmethod
     def _route_key_filter(self) -> str | None:
-        route_key = self.request.route_key
-        if isinstance(route_key, str):
-            return route_key
-        return None
+        """Return the route selected by this projection, when any."""
 
     def layer_title(self, route_key: str) -> str | None:
         if route_key not in self.server.layer_route_state.layer_titles:
@@ -3697,7 +3669,7 @@ class NapariViewerStateProjection:
     def shape_source_spatial_shape(
         payload: Mapping[str, NapariWireValue],
     ) -> tuple[int, int] | None:
-        metadata = payload.get(NapariWireField.METADATA.value)
+        metadata = payload.get(ViewerWireField.METADATA.value)
         if not isinstance(metadata, Mapping):
             return None
         return SourceSpatialDomain.from_viewer_wire_mapping(
@@ -3732,32 +3704,90 @@ class NapariViewerStateProjection:
         return str(scalar)
 
 
-@dataclass(frozen=True, slots=True)
-class NapariViewerPayloadProjection(NapariViewerStateProjection):
-    """Project live Napari layer payloads with axis-coordinate evidence."""
+class NapariViewerStateProjection(NapariViewerProjectionABC[ViewerStateControlOptions]):
+    """Project live Napari route/component stores into agent-readable state."""
 
-    request: ViewerPayloadControlOptions
+    def state_controls(self) -> ViewerStateControlOptions:
+        return self.request
+
+    def _route_key_filter(self) -> str | None:
+        return self.request.route_key
+
+    def to_wire_mapping(self) -> dict[str, NapariWireValue]:
+        route_keys = self.route_keys()
+        layers = tuple(self.layer_state_for(route_key) for route_key in route_keys)
+        wire_mapping = self.wire_envelope(response_type="state_ack", layers=layers)
+        wire_mapping.update(
+            {
+                ViewerControlField.ACTIVE_DIMENSION_LABEL_ROUTE.value: (
+                    self.server.layer_route_state.active_dimension_label_route
+                ),
+                ViewerControlField.VIEWER_NDIM.value: int(self.viewer.dims.ndim),
+                ViewerControlField.CURRENT_STEP.value: tuple(
+                    int(step) for step in self.viewer.dims.current_step
+                ),
+                ViewerControlField.AXIS_LABELS.value: tuple(
+                    str(label) for label in self.viewer.dims.axis_labels
+                ),
+                ViewerControlField.COMPONENT_GROUP_COUNT.value: len(
+                    self.server.component_groups
+                ),
+                ViewerControlField.COMPONENT_ITEM_COUNT.value: sum(
+                    self.server.component_groups.item_count(route_key)
+                    for route_key in route_keys
+                ),
+            }
+        )
+        return wire_mapping
+
+
+@dataclass(slots=True)
+class _NapariShapePayloadBudget:
+    remaining_payloads: int | None
+
+    def record_limit(self, maximum_per_record: int) -> int:
+        if self.remaining_payloads is None:
+            return maximum_per_record
+        return min(maximum_per_record, self.remaining_payloads)
+
+    def consume(self, payload_count: int) -> None:
+        if self.remaining_payloads is None:
+            return
+        self.remaining_payloads -= payload_count
+
+
+class NapariViewerPayloadProjection(
+    NapariViewerProjectionABC[ViewerPayloadProjectionOptions]
+):
+    """Project live Napari layer payloads with axis-coordinate evidence."""
 
     def state_controls(self) -> ViewerStateControlOptions:
         return ViewerStateControlOptions.from_overrides(
-            route_key=self.request.route_key,
+            route_key=self.request.controls.route_key,
         )
 
     def to_wire_mapping(self) -> dict[str, NapariWireValue]:
+        payload_budget = _NapariShapePayloadBudget(
+            self.request.max_total_shape_payloads
+        )
         layers = tuple(
-            self.layer_payloads_for(route_key) for route_key in self.route_keys()
+            self.layer_payloads_for(route_key, payload_budget)
+            for route_key in self.route_keys()
         )
         return self.wire_envelope(response_type="payloads_ack", layers=layers)
 
-    def route_keys(self) -> tuple[str, ...]:
-        route_keys = NapariViewerStateProjection.route_keys(self)
-        if self.request.route_key is None:
-            return route_keys
-        return tuple(
-            route_key for route_key in route_keys if route_key == self.request.route_key
-        )
+    def _route_key_filter(self) -> str | None:
+        return self.request.controls.route_key
 
-    def layer_payloads_for(self, route_key: str) -> dict[str, NapariWireValue]:
+    def layer_payloads_for(
+        self,
+        route_key: str,
+        payload_budget: _NapariShapePayloadBudget | None = None,
+    ) -> dict[str, NapariWireValue]:
+        if payload_budget is None:
+            payload_budget = _NapariShapePayloadBudget(
+                self.request.max_total_shape_payloads
+            )
         layer_state = self.layer_state_for(route_key)
         items = self.server.component_groups.existing_items_for(route_key)
         item_tuple: tuple[NapariStreamLayerItem, ...] = ()
@@ -3784,7 +3814,12 @@ class NapariViewerPayloadProjection(NapariViewerStateProjection):
             ViewerLayerField.PAYLOADS.value: tuple(
                 record
                 for item in item_tuple
-                for record in self.records_for_item(item, route_key, dimension_state)
+                for record in self.records_for_item(
+                    item,
+                    route_key,
+                    dimension_state,
+                    payload_budget,
+                )
             ),
         }
 
@@ -3793,11 +3828,21 @@ class NapariViewerPayloadProjection(NapariViewerStateProjection):
         item: NapariStreamLayerItem,
         route_key: str,
         dimension_state: NapariDimensionLayerState,
+        payload_budget: _NapariShapePayloadBudget,
     ) -> tuple[dict[str, NapariWireValue], ...]:
         if dimension_state.presentation is None:
             if not self.axis_indices_match((), dimension_state):
                 return ()
-            return (self.record_for_item(item, route_key, (), (), None),)
+            return (
+                self.record_for_item(
+                    item,
+                    route_key,
+                    (),
+                    (),
+                    None,
+                    payload_budget,
+                ),
+            )
 
         aggregate_axis_bindings = dimension_state.presentation.aggregate_axis_bindings
         aggregate_index_tuples = self.aggregate_index_tuples(aggregate_axis_bindings)
@@ -3820,6 +3865,7 @@ class NapariViewerPayloadProjection(NapariViewerStateProjection):
                     aggregate_indices,
                     axis_indices,
                     aggregate_axis_bindings,
+                    payload_budget,
                 )
             )
         return tuple(records)
@@ -3829,15 +3875,15 @@ class NapariViewerPayloadProjection(NapariViewerStateProjection):
         axis_indices: tuple[int, ...],
         dimension_state: NapariDimensionLayerState,
     ) -> bool:
-        if self.request.axis_indices is None:
+        if self.request.controls.axis_indices is None:
             return True
-        if isinstance(self.request.axis_indices, Mapping):
+        if isinstance(self.request.controls.axis_indices, Mapping):
             return self.semantic_axis_indices_match(
                 axis_indices,
                 dimension_state,
-                self.request.axis_indices,
+                self.request.controls.axis_indices,
             )
-        return tuple(axis_indices) == self.request.axis_indices
+        return tuple(axis_indices) == self.request.controls.axis_indices
 
     @staticmethod
     def semantic_axis_indices_match(
@@ -3879,6 +3925,7 @@ class NapariViewerPayloadProjection(NapariViewerStateProjection):
         aggregate_indices: tuple[int, ...],
         axis_indices: tuple[int, ...],
         aggregate_axis_bindings: NapariAggregateAxisBindingSet | None,
+        payload_budget: _NapariShapePayloadBudget,
     ) -> dict[str, NapariWireValue]:
         components = dict(item.address.components)
         data = item.data
@@ -3908,7 +3955,10 @@ class NapariViewerPayloadProjection(NapariViewerStateProjection):
             ),
             ViewerPayloadField.ARRAY_VALUES.value: array_values,
             ViewerPayloadField.ARRAY_VALUE_SUMMARY.value: array_value_summary,
-            ViewerPayloadField.SHAPE_PAYLOADS.value: self.shape_payloads(data),
+            ViewerPayloadField.SHAPE_PAYLOADS.value: self.shape_payloads(
+                data,
+                payload_budget,
+            ),
         }
 
     @staticmethod
@@ -3926,7 +3976,7 @@ class NapariViewerPayloadProjection(NapariViewerStateProjection):
         self,
         data: LayerData,
     ) -> tuple[tuple[NapariWireValue, ...], dict[str, NapariWireValue]]:
-        if not self.request.include_array_values:
+        if not self.request.controls.include_array_values:
             return (), {}
         summary: dict[str, NapariWireValue] = {
             "requested": True,
@@ -3955,9 +4005,9 @@ class NapariViewerPayloadProjection(NapariViewerStateProjection):
             summary["max"] = self.json_scalar(np.max(sample))
         if "omitted_reason" in summary:
             return (), summary
-        if sample.size > self.request.max_array_elements:
+        if sample.size > self.request.controls.max_array_elements:
             summary["omitted_reason"] = "max_array_elements_exceeded"
-            summary["max_array_elements"] = self.request.max_array_elements
+            summary["max_array_elements"] = self.request.controls.max_array_elements
             return (), summary
 
         summary["included"] = True
@@ -3970,28 +4020,28 @@ class NapariViewerPayloadProjection(NapariViewerStateProjection):
         self,
         data: np.ndarray,
     ) -> tuple[np.ndarray, dict[str, NapariWireValue]]:
-        if self.request.array_slices is None:
+        if self.request.controls.array_slices is None:
             return data, {
                 "slice_ranges": tuple((0, int(axis_size)) for axis_size in data.shape)
             }
-        if len(self.request.array_slices) > data.ndim:
+        if len(self.request.controls.array_slices) > data.ndim:
             if data.ndim == 0:
                 sample = data.reshape((1,))[0:0]
             else:
                 sample = data[tuple(slice(0, 0) for _ in data.shape)]
             return sample, {
                 "slice_ranges": (),
-                "requested_slice_ranges": self.request.array_slices,
+                "requested_slice_ranges": self.request.controls.array_slices,
                 "omitted_reason": "slice_rank_exceeds_array_rank",
             }
 
-        leading_dimension_count = data.ndim - len(self.request.array_slices)
+        leading_dimension_count = data.ndim - len(self.request.controls.array_slices)
         slices: list[slice] = []
         applied_ranges: list[tuple[int, int]] = []
         for axis_index, axis_size in enumerate(data.shape):
             slice_index = axis_index - leading_dimension_count
             if slice_index >= 0:
-                start, stop = self.request.array_slices[slice_index]
+                start, stop = self.request.controls.array_slices[slice_index]
                 bounded_start = min(start, int(axis_size))
                 bounded_stop = min(stop, int(axis_size))
             else:
@@ -4001,23 +4051,38 @@ class NapariViewerPayloadProjection(NapariViewerStateProjection):
             applied_ranges.append((bounded_start, bounded_stop))
         return data[tuple(slices)], {
             "slice_ranges": tuple(applied_ranges),
-            "requested_slice_ranges": self.request.array_slices,
+            "requested_slice_ranges": self.request.controls.array_slices,
         }
 
-    def shape_payloads(self, data: LayerData) -> tuple[dict[str, NapariWireValue], ...]:
-        if not self.request.include_shape_payloads:
+    def shape_payloads(
+        self,
+        data: LayerData,
+        payload_budget: _NapariShapePayloadBudget,
+    ) -> tuple[dict[str, NapariWireValue], ...]:
+        if not self.request.controls.include_shape_payloads:
             return ()
         if not isinstance(data, (list, tuple)):
+            return ()
+        record_limit = payload_budget.record_limit(
+            self.request.controls.max_shape_payloads
+        )
+        if not record_limit:
             return ()
         records: list[dict[str, NapariWireValue]] = []
         for payload in data:
             if not isinstance(payload, Mapping):
                 continue
             records.append(
-                {str(key): self.wire_value(value) for key, value in payload.items()}
+                {
+                    str(key): self.wire_value(value)
+                    for key, value in (
+                        self.request.shape_payload_projection.selected_items(payload)
+                    )
+                }
             )
-            if len(records) >= self.request.max_shape_payloads:
+            if len(records) >= record_limit:
                 break
+        payload_budget.consume(len(records))
         return tuple(records)
 
     @classmethod
@@ -4089,15 +4154,47 @@ class NapariPayloadsControlMessageAction(NapariControlMessageAction):
             ).to_wire_mapping()
 
         request = message.get(ViewerControlResponseField.PAYLOAD.value)
-        if not isinstance(request, ViewerPayloadControlOptions):
+        if not isinstance(request, ViewerPayloadProjectionOptions):
             raise TypeError(
-                "Napari payload control payload must be ViewerPayloadControlOptions."
+                "Napari payload control payload must be "
+                "ViewerPayloadProjectionOptions."
             )
         return NapariViewerPayloadProjection(
             server=server,
             viewer=server.viewer,
             request=request,
         ).to_wire_mapping()
+
+
+@dataclass(frozen=True, slots=True)
+class NapariPreparedNavigation:
+    """Validated Napari navigation ready for mutation in one Qt turn."""
+
+    layer: NapariLayerHandle
+    request: ViewerNavigationControlOptions
+    viewer_step: tuple[int, ...] | None
+
+    def changes_viewer_state(self, server: "NapariViewerServer") -> bool:
+        viewer = server.viewer
+        if viewer is None:
+            raise RuntimeError("Napari viewer is not available.")
+        return (
+            (
+                self.request.visible is not None
+                and bool(self.layer.visible) != self.request.visible
+            )
+            or (
+                self.request.selected is not None
+                and (viewer.layers.selection.active is self.layer)
+                != self.request.selected
+            )
+            or (
+                self.viewer_step is not None
+                and tuple(int(step) for step in viewer.dims.current_step)
+                != self.viewer_step
+            )
+            or self.request.data_index is not None
+        )
 
 
 class NapariNavigationControlMessageAction(NapariControlMessageAction):
@@ -4126,7 +4223,7 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
                     "Napari navigation control payload must be "
                     "ViewerNavigationControlOptions."
                 )
-            self._apply(server, request)
+            self.apply(server, request)
         except Exception as exc:
             return ViewerControlReplyPayload(
                 ViewerControlReplyHeader(
@@ -4151,11 +4248,11 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
         )
         return response
 
-    def _apply(
+    def prepare(
         self,
         server: "NapariViewerServer",
         request: ViewerNavigationControlOptions,
-    ) -> None:
+    ) -> NapariPreparedNavigation:
         layer = self._mounted_layer(server, request.route_key)
         if request.data_index is not None:
             NapariResultElementSelectionAuthority.require_data_index(
@@ -4196,10 +4293,41 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
                 request,
                 axis_indices={**result_axis_indices, **request.axis_indices},
             )
+        viewer_step = (
+            self.axis_step(server, layer, request) if request.axis_indices else None
+        )
+        return NapariPreparedNavigation(
+            layer=layer,
+            request=request,
+            viewer_step=viewer_step,
+        )
+
+    def apply(
+        self,
+        server: "NapariViewerServer",
+        request: ViewerNavigationControlOptions,
+        *,
+        refresh_overlay: bool = True,
+    ) -> None:
+        self.apply_prepared(
+            server,
+            self.prepare(server, request),
+            refresh_overlay=refresh_overlay,
+        )
+
+    def apply_prepared(
+        self,
+        server: "NapariViewerServer",
+        prepared: NapariPreparedNavigation,
+        *,
+        refresh_overlay: bool = True,
+    ) -> None:
+        layer = prepared.layer
+        request = prepared.request
         if request.visible is not None:
             layer.visible = request.visible
-        if request.axis_indices:
-            self.apply_axis_indices(server, layer, request)
+        if prepared.viewer_step is not None:
+            server.viewer.dims.current_step = prepared.viewer_step
         if request.selected is True:
             server.viewer.layers.selection.active = layer
         elif (
@@ -4212,7 +4340,8 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
                 request.data_index,
             )
 
-        server.display_pipeline.dimension_label_overlay.refresh()
+        if refresh_overlay:
+            server.display_pipeline.dimension_label_overlay.refresh()
         if request.data_index is not None:
             server.raise_result_selection_surface()
 
@@ -4258,12 +4387,12 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
             displayed_axis_count=int(server.viewer.dims.ndisplay),
         )
 
-    def apply_axis_indices(
+    def axis_step(
         self,
         server: "NapariViewerServer",
         layer: NapariLayerHandle,
         request: ViewerNavigationControlOptions,
-    ) -> None:
+    ) -> tuple[int, ...]:
         dimension_state = server.layer_route_state.dimension_state_for(
             request.route_key
         )
@@ -4304,7 +4433,7 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
                 axis_position,
                 viewer_axis_origin=viewer_axis_origins[axis_position],
             )
-        server.viewer.dims.current_step = tuple(current_step)
+        return tuple(current_step)
 
     @staticmethod
     def _axis_position(
@@ -4338,6 +4467,104 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
                 f"Axis {axis_name!r} index {local_axis_index} is outside "
                 f"the route-local extent {local_extent}."
             )
+
+
+class NapariLayerIsolationControlMessageAction(NapariControlMessageAction):
+    """Apply one atomic visibility and selection projection to mounted layers."""
+
+    message_type = ViewerControlMessageType.ISOLATE_LAYERS.value
+
+    def handle(
+        self,
+        server: "NapariViewerServer",
+        message: Mapping[str, object],
+    ) -> dict[str, object]:
+        if server.viewer is None:
+            return ViewerControlReplyPayload(
+                ViewerControlReplyHeader(
+                    ViewerProtocolStatus.ERROR,
+                    response_type="layer_isolation_ack",
+                    message="Napari viewer is not available.",
+                )
+            ).to_wire_mapping()
+
+        try:
+            request = message.get(ViewerControlResponseField.PAYLOAD.value)
+            if not isinstance(request, ViewerLayerIsolationControlOptions):
+                raise TypeError(
+                    "Napari layer isolation payload must be "
+                    "ViewerLayerIsolationControlOptions."
+                )
+            changed_route_count, missing_route_keys = self._apply(server, request)
+        except Exception as exc:
+            return ViewerControlReplyPayload(
+                ViewerControlReplyHeader(
+                    ViewerProtocolStatus.ERROR,
+                    response_type="layer_isolation_ack",
+                    message=str(exc),
+                )
+            ).to_wire_mapping()
+
+        applied = not missing_route_keys
+        response = NapariViewerStateProjection(
+            server=server,
+            viewer=server.viewer,
+            request=ViewerStateControlOptions.from_overrides(
+                include_component_values=False,
+                include_payload_summaries=False,
+            ),
+        ).to_wire_mapping()
+        response[ViewerControlResponseField.TYPE.value] = "layer_isolation_ack"
+        response[ViewerControlResponseField.MESSAGE.value] = (
+            "Viewer layer isolation applied."
+            if applied
+            else "Viewer layer isolation was not applied because routes are missing."
+        )
+        response[ViewerLayerIsolationField.APPLIED.value] = applied
+        response[ViewerLayerIsolationField.CHANGED_ROUTE_COUNT.value] = (
+            changed_route_count
+        )
+        response[ViewerLayerIsolationField.MISSING_ROUTE_KEYS.value] = (
+            missing_route_keys
+        )
+        return response
+
+    @staticmethod
+    def _apply(
+        server: "NapariViewerServer",
+        request: ViewerLayerIsolationControlOptions,
+    ) -> tuple[int, tuple[str, ...]]:
+        mounted_layers = tuple(
+            (route_key, layer)
+            for layer in server.viewer.layers
+            if (route_key := server.layer_route_state.route_for_layer(layer))
+            is not None
+        )
+        mounted_routes = frozenset(route_key for route_key, _ in mounted_layers)
+        missing_route_keys = tuple(
+            route_key
+            for route_key in request.effective_visible_route_keys
+            if route_key not in mounted_routes
+        )
+        if missing_route_keys:
+            return 0, missing_route_keys
+
+        navigation_action = NapariNavigationControlMessageAction()
+        prepared_navigations = tuple(
+            navigation_action.prepare(server, request.navigation_for(route_key))
+            for route_key, _ in mounted_layers
+        )
+        changed_route_count = sum(
+            prepared.changes_viewer_state(server) for prepared in prepared_navigations
+        )
+        for prepared in prepared_navigations:
+            navigation_action.apply_prepared(
+                server,
+                prepared,
+                refresh_overlay=False,
+            )
+        server.display_pipeline.dimension_label_overlay.refresh()
+        return changed_route_count, ()
 
 
 class NapariScreenshotControlMessageAction(NapariControlMessageAction):

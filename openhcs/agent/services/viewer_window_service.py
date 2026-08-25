@@ -66,6 +66,7 @@ from openhcs.runtime.viewer_protocol import (
     ViewerControlMessageType,
     ViewerControlResponseField,
     ViewerDescriptorField,
+    ViewerLayerIsolationField,
     ViewerLayerField,
     ViewerPayloadField,
     ViewerPayloadSummaryField,
@@ -1030,6 +1031,10 @@ class ViewerWindowGatewayABC(ABC):
     def navigate_window(self, request: ViewerWindowNavigationRequest) -> JsonObject:
         raise NotImplementedError
 
+    @abstractmethod
+    def isolate_layers(self, request: ViewerWindowLayerIsolationRequest) -> JsonObject:
+        raise NotImplementedError
+
 
 class ZMQViewerWindowGateway(ViewerWindowGatewayABC):
     """Viewer gateway backed by the existing ZMQ control socket."""
@@ -1056,7 +1061,7 @@ class ZMQViewerWindowGateway(ViewerWindowGatewayABC):
     def window_payloads(self, request: ViewerWindowPayloadRequest) -> JsonObject:
         message: dict[str, object] = {
             ViewerControlResponseField.TYPE: ViewerControlMessageType.PAYLOADS.value,
-            ViewerControlResponseField.PAYLOAD.value: request.payload_controls,
+            ViewerControlResponseField.PAYLOAD.value: request.payload_projection,
         }
         return self._send_control_message(request, message)
 
@@ -1067,6 +1072,15 @@ class ZMQViewerWindowGateway(ViewerWindowGatewayABC):
         }
         return self._send_control_message(request, message)
 
+    def isolate_layers(self, request: ViewerWindowLayerIsolationRequest) -> JsonObject:
+        message: dict[str, object] = {
+            ViewerControlResponseField.TYPE: (
+                ViewerControlMessageType.ISOLATE_LAYERS.value
+            ),
+            ViewerControlResponseField.PAYLOAD.value: request.isolation,
+        }
+        return self._send_control_message(request, message)
+
     def _send_control_message(
         self,
         request: (
@@ -1074,6 +1088,7 @@ class ZMQViewerWindowGateway(ViewerWindowGatewayABC):
             | ViewerWindowStateRequest
             | ViewerWindowPayloadRequest
             | ViewerWindowNavigationRequest
+            | ViewerWindowLayerIsolationRequest
         ),
         message: Mapping[str, object],
     ) -> JsonObject:
@@ -1331,31 +1346,40 @@ class ViewerWindowService:
         self,
         request: ViewerWindowLayerIsolationRequest,
     ) -> ViewerWindowLayerIsolationResult:
-        state = self.window_state(request.state_request())
-        if state.errors:
-            return ViewerWindowLayerIsolationResult(
-                schema_version=SCHEMA_VERSION,
-                observed=state.observed,
-                applied=False,
-                errors=state.errors,
-                warnings=state.warnings,
+        try:
+            response = self._gateway.isolate_layers(request)
+        except Exception as exc:
+            return ViewerWindowLayerIsolationResult.from_error(
+                connection=request.connection,
+                error=AgentError.from_exception(
+                    "viewer_layer_isolation_failed",
+                    exc,
+                ),
             )
 
-        mounted_layers = tuple(layer for layer in state.layers if layer.mounted)
-        layer_routes = {layer.route_key for layer in mounted_layers}
-        missing_routes = tuple(
-            route_key
-            for route_key in request.visible_routes
-            if route_key not in layer_routes
-        )
-        if missing_routes:
-            return ViewerWindowLayerIsolationResult(
-                schema_version=SCHEMA_VERSION,
-                observed=state.observed,
-                applied=False,
-                missing_route_keys=missing_routes,
-                available_layers=self._layer_visibility_records(mounted_layers),
-                errors=(
+        try:
+            state = self._state_result_from_response(
+                connection=request.connection,
+                response=response,
+                include_response=False,
+            )
+            if state.errors:
+                return ViewerWindowLayerIsolationResult(
+                    schema_version=SCHEMA_VERSION,
+                    connection=request.connection,
+                    observed=state.observed,
+                    applied=False,
+                    errors=state.errors,
+                    warnings=state.warnings,
+                )
+            mounted_layers = tuple(layer for layer in state.layers if layer.mounted)
+            missing_routes = self._required_typed_tuple(
+                response,
+                ViewerLayerIsolationField.MISSING_ROUTE_KEYS,
+                str,
+            )
+            errors = (
+                (
                     AgentError(
                         code="viewer_layer_route_missing",
                         message=(
@@ -1363,94 +1387,60 @@ class ViewerWindowService:
                             + ", ".join(missing_routes)
                         ),
                     ),
-                ),
-                warnings=state.warnings,
-            )
-
-        navigation_errors: list[AgentError] = []
-        changed_routes: list[str] = []
-        for layer in mounted_layers:
-            route_visible = layer.route_key in request.visible_routes
-            route_selected = layer.route_key == request.selected_route
-            navigation = self.navigate_window(
-                request.navigation_request(
-                    route_key=layer.route_key,
-                    visible=route_visible,
-                    selected=route_selected,
                 )
+                if missing_routes
+                else ()
             )
-            if navigation.errors:
-                navigation_errors.extend(navigation.errors)
-            else:
-                changed_routes.append(layer.route_key)
-
-        final_state = self.window_state(request.state_request())
-        if final_state.errors:
             return ViewerWindowLayerIsolationResult(
                 schema_version=SCHEMA_VERSION,
-                observed=final_state.observed,
-                applied=not navigation_errors,
-                selected_route_key=request.selected_route,
-                visible_route_keys=request.requested_visible_route_keys,
-                hidden_route_keys=tuple(
-                    layer.route_key
-                    for layer in mounted_layers
-                    if layer.route_key not in request.visible_routes
+                connection=request.connection,
+                observed=state.observed,
+                applied=self._required_scalar(
+                    response,
+                    ViewerLayerIsolationField.APPLIED,
+                    bool,
+                    "a boolean",
                 ),
-                changed_route_count=len(changed_routes),
+                selected_route_key=request.isolation.selected_route,
+                visible_route_keys=tuple(
+                    layer.route_key for layer in mounted_layers if layer.visible
+                ),
+                hidden_route_keys=tuple(
+                    layer.route_key for layer in mounted_layers if not layer.visible
+                ),
+                missing_route_keys=missing_routes,
+                changed_route_count=self._required_scalar(
+                    response,
+                    ViewerLayerIsolationField.CHANGED_ROUTE_COUNT,
+                    int,
+                    "an integer",
+                ),
                 layer_count=len(mounted_layers),
-                active_dimension_label_route=None,
-                current_step=(),
-                axis_labels=(),
+                active_dimension_label_route=state.active_dimension_label_route,
+                current_step=state.current_step,
+                axis_labels=state.axis_labels,
                 available_layers=self._layer_visibility_records(mounted_layers),
                 visible_layers=tuple(
                     ViewerWindowLayerVisibilityRecord(
                         route_key=layer.route_key,
                         title=layer.title,
-                        visible=layer.route_key in request.visible_routes,
-                        selected=layer.route_key == request.selected_route,
+                        visible=layer.visible,
+                        selected=layer.selected,
                     )
                     for layer in mounted_layers
-                    if layer.route_key in request.visible_routes
+                    if layer.visible
                 ),
-                errors=tuple((*navigation_errors, *final_state.errors)),
-                warnings=final_state.warnings,
+                errors=errors,
+                warnings=state.warnings,
             )
-
-        return ViewerWindowLayerIsolationResult(
-            schema_version=SCHEMA_VERSION,
-            observed=final_state.observed,
-            applied=not navigation_errors and not final_state.errors,
-            selected_route_key=request.selected_route,
-            visible_route_keys=tuple(
-                layer.route_key
-                for layer in final_state.layers
-                if layer.mounted and layer.visible
-            ),
-            hidden_route_keys=tuple(
-                layer.route_key
-                for layer in final_state.layers
-                if layer.mounted and not layer.visible
-            ),
-            changed_route_count=len(changed_routes),
-            layer_count=sum(1 for layer in final_state.layers if layer.mounted),
-            active_dimension_label_route=final_state.active_dimension_label_route,
-            current_step=final_state.current_step,
-            axis_labels=final_state.axis_labels,
-            available_layers=self._layer_visibility_records(final_state.layers),
-            visible_layers=tuple(
-                ViewerWindowLayerVisibilityRecord(
-                    route_key=layer.route_key,
-                    title=layer.title,
-                    visible=layer.visible,
-                    selected=layer.selected,
-                )
-                for layer in final_state.layers
-                if layer.mounted and layer.visible
-            ),
-            errors=tuple((*navigation_errors, *final_state.errors)),
-            warnings=final_state.warnings,
-        )
+        except Exception as exc:
+            return ViewerWindowLayerIsolationResult.from_error(
+                connection=request.connection,
+                error=AgentError.from_exception(
+                    "viewer_layer_isolation_response_invalid",
+                    exc,
+                ),
+            )
 
     def sample_image(
         self,

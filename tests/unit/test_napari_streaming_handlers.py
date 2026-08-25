@@ -27,6 +27,8 @@ from openhcs.runtime.viewer_protocol import (
     ViewerControlResponseField,
     ViewerNavigationControlOptions,
     ViewerPayloadControlOptions,
+    ViewerPayloadProjectionOptions,
+    ViewerShapePayloadProjection,
     ViewerProtocolStatus,
     ViewerSettlePhase,
     ViewerSettleProgress,
@@ -336,7 +338,7 @@ def test_napari_viewer_payload_projection_reuses_state_route_key_contract():
     projection = napari_viewer_server.NapariViewerPayloadProjection(
         server=server,
         viewer=_FakeViewer(),
-        request=napari_viewer_server.ViewerPayloadControlOptions(),
+        request=ViewerPayloadProjectionOptions(),
     )
 
     assert projection.route_keys() == ("mounted-route", "payload-route")
@@ -374,7 +376,9 @@ def test_napari_viewer_payload_projection_reuses_state_producer_identities():
     projection = napari_viewer_server.NapariViewerPayloadProjection(
         server=server,
         viewer=_FakeViewer(),
-        request=ViewerPayloadControlOptions.from_overrides(route_key=route_key),
+        request=ViewerPayloadProjectionOptions(
+            controls=ViewerPayloadControlOptions.from_overrides(route_key=route_key),
+        ),
     )
 
     state_layer = projection.layer_state_for(route_key)
@@ -424,12 +428,14 @@ def test_napari_viewer_payload_projection_filters_axis_and_samples_array_crop():
     projection = napari_viewer_server.NapariViewerPayloadProjection(
         server=server,
         viewer=_FakeViewer(),
-        request=ViewerPayloadControlOptions.from_overrides(
-            route_key=route_key,
-            axis_indices=(1,),
-            include_array_values=True,
-            max_array_elements=4,
-            array_slices=((1, 3), (2, 4)),
+        request=ViewerPayloadProjectionOptions(
+            controls=ViewerPayloadControlOptions.from_overrides(
+                route_key=route_key,
+                axis_indices=(1,),
+                include_array_values=True,
+                max_array_elements=4,
+                array_slices=((1, 3), (2, 4)),
+            ),
         ),
     )
 
@@ -492,9 +498,11 @@ def test_napari_viewer_payload_projection_filters_semantic_axis_index():
     projection = napari_viewer_server.NapariViewerPayloadProjection(
         server=server,
         viewer=_FakeViewer(),
-        request=ViewerPayloadControlOptions.from_overrides(
-            route_key=route_key,
-            axis_indices={"channel": 1},
+        request=ViewerPayloadProjectionOptions(
+            controls=ViewerPayloadControlOptions.from_overrides(
+                route_key=route_key,
+                axis_indices={"channel": 1},
+            ),
         ),
     )
 
@@ -505,6 +513,76 @@ def test_napari_viewer_payload_projection_filters_semantic_axis_index():
     record = layer["payloads"][0]
     assert record["components"] == {"channel": 2}
     assert record["axis_indices"] == (1,)
+
+
+def test_napari_roi_summary_projection_bounds_globally_and_omits_geometry():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+    server = type(
+        "Server",
+        (),
+        {
+            "napari_window_title": "OpenHCS Napari Viewer",
+            "layer_route_state": NapariLayerRouteStateStore.empty(),
+            "component_groups": NapariComponentGroupStore(),
+        },
+    )()
+    route_key = "roi-route"
+    server.layer_route_state.set_title(route_key, "ROIs")
+
+    def shapes(start: int) -> list[dict[str, object]]:
+        return [
+            {
+                "type": "polygon",
+                "data": np.array(
+                    [[0, 0], [0, label], [label, label]],
+                    dtype=float,
+                ),
+                "metadata": {"label": label, "area": float(label)},
+            }
+            for label in range(start, start + 3)
+        ]
+
+    server.component_groups.items_for(route_key).extend(
+        (
+            _layer_item(
+                {"well": "A01"},
+                data=shapes(1),
+                stream_layer_data_type=StreamingDataType.SHAPES,
+            ),
+            _layer_item(
+                {"well": "B01"},
+                data=shapes(4),
+                stream_layer_data_type=StreamingDataType.SHAPES,
+            ),
+        )
+    )
+    projection = napari_viewer_server.NapariViewerPayloadProjection(
+        server=server,
+        viewer=_FakeViewer(),
+        request=ViewerPayloadProjectionOptions(
+            controls=ViewerPayloadControlOptions.from_overrides(
+                route_key=route_key,
+                include_shape_payloads=True,
+                max_shape_payloads=5,
+            ),
+            max_total_shape_payloads=4,
+            shape_payload_projection=ViewerShapePayloadProjection.SUMMARY,
+        ),
+    )
+
+    payload = projection.to_wire_mapping()
+
+    records = payload["layers"][0]["payloads"]
+    assert [len(record["shape_payloads"]) for record in records] == [3, 1]
+    assert [record["summary"]["shape_payload_count"] for record in records] == [
+        3,
+        3,
+    ]
+    assert all(
+        set(shape_payload) == {"type", "metadata"}
+        for record in records
+        for shape_payload in record["shape_payloads"]
+    )
 
 
 def test_napari_viewer_state_projection_filters_and_bounds_layer_details():
