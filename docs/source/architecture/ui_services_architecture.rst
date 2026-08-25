@@ -45,6 +45,14 @@ generic registration, focus/reuse, parentage, navigation, and close cleanup.
 Reopening a scoped editor therefore focuses the existing window; it does not
 create a second domain state or a second window registry.
 
+The process configuration ObjectState scopes share one stable configuration
+window. OpenHCS registers those declared scopes as routes to that window, while
+its navigation driver derives the owning tab from the requested ObjectState
+scope and field path. An ambiguous or undeclared field is rejected instead of
+being reported as navigated merely because the window was focused. Generic
+focus, readiness, scrolling, and deferred form-construction mechanics remain in
+pyqt-reactive.
+
 The UI bridge projects the complete desktop under the declared
 ``MainWindowWidgetIdentity`` and projects embedded panes under their own stable
 identities. Registering an embedded pane with ``WindowManager`` for code-mode

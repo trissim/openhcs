@@ -281,7 +281,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "13903cd931be9a7998ebbac135069ee839c95199dac91d79943febcb43f54feb",
+        "sha256": "f9563d7c26edc1082a87e222fa0793478736bdc592f2c0629d7947783dd2111c",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
@@ -340,7 +340,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "13903cd931be9a7998ebbac135069ee839c95199dac91d79943febcb43f54feb",
+        "sha256": "f9563d7c26edc1082a87e222fa0793478736bdc592f2c0629d7947783dd2111c",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
@@ -988,7 +988,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "13903cd931be9a7998ebbac135069ee839c95199dac91d79943febcb43f54feb",
+        "sha256": "f9563d7c26edc1082a87e222fa0793478736bdc592f2c0629d7947783dd2111c",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
@@ -1220,7 +1220,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "13903cd931be9a7998ebbac135069ee839c95199dac91d79943febcb43f54feb",
+        "sha256": "f9563d7c26edc1082a87e222fa0793478736bdc592f2c0629d7947783dd2111c",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
@@ -1230,7 +1230,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/window_handlers.py",
-        "sha256": "6be4aafc283b120b0fa2c858566a93eaf1410acb3ebcf716ee8580572e778387",
+        "sha256": "3b805bce6921609dfa7c709561b478d4ca748f90956d3bfc4d79f5cb6ccb422e",
         "role": "OpenHCS domain window-route registration over pyqt-reactive."
       }
     ],
@@ -1264,7 +1264,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
+        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1456,7 +1456,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
+        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1505,7 +1505,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
+        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -1537,7 +1537,7 @@
   },
   {
     "path": "docs/source/architecture/ui_services_architecture.rst",
-    "source_sha256": "1218cf108bcddcb44a438db989eb6924fd191838069634079e8b344732f37f37",
+    "source_sha256": "2796f5374ee51c00cdba240d3481d4de009f49057838de5daa30aed2cb926898",
     "audience": [
       "OpenHCS desktop, ObjectState, and UI-service maintainers"
     ],
@@ -1556,8 +1556,8 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/window_handlers.py",
-        "sha256": "6be4aafc283b120b0fa2c858566a93eaf1410acb3ebcf716ee8580572e778387",
-        "role": "OpenHCS domain window-route registration over pyqt-reactive."
+        "sha256": "3b805bce6921609dfa7c709561b478d4ca748f90956d3bfc4d79f5cb6ccb422e",
+        "role": "Registers OpenHCS domain window routes, including declaration-owned config ObjectState scopes, over pyqt-reactive."
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/scope_window_factory.py",
@@ -1582,13 +1582,15 @@
     ],
     "findings": [
       "The page named the removed ScopeWindowFactory instead of ScopeWindowRegistry and incorrectly assigned the OpenHCSZMQConfig subtype itself to the generic transport package.",
-      "The UI configuration explanation did not record the single absolute process-local cache override used by isolated launches."
+      "The UI configuration explanation did not record the single absolute process-local cache override used by isolated launches.",
+      "The window-composition explanation did not record that process configuration scopes share one stable window while the requested ObjectState scope and field select the owning tab."
     ],
     "disposition": "revise",
     "validation": [
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
       "tests/unit/test_ui_zmq_config_authority.py passed; source inspection confirmed ScopeWindowRegistry routing and OpenHCSZMQConfig inheritance",
-      "On 2026-08-22, re-read the complete explanation against UIConfig cache ownership and lifecycle tests; the focused OpenHCS documentation-drift suite passed 238 tests."
+      "On 2026-08-22, re-read the complete explanation against UIConfig cache ownership and lifecycle tests; the focused OpenHCS documentation-drift suite passed 238 tests.",
+      "On 2026-08-25, re-read the complete explanation against OpenHCS config route registration and pyqt-reactive navigation ownership; focused config-window tests and live UI navigation proved declared scope routing, tab selection, and rejection of ambiguous fields."
     ]
   },
   {
@@ -1602,7 +1604,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "13903cd931be9a7998ebbac135069ee839c95199dac91d79943febcb43f54feb",
+        "sha256": "f9563d7c26edc1082a87e222fa0793478736bdc592f2c0629d7947783dd2111c",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
@@ -2244,7 +2246,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
+        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2317,7 +2319,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
+        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2352,7 +2354,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
+        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2461,7 +2463,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "da955e954f7c2af269c2c353f8dd4738617137fcc4e695011e48cf010bc52e25",
+        "sha256": "103a907f3a031c21c77199242e516648f22a16082c2ee269a5c43de6c65572a4",
         "role": "Proves stale protocol and application versions fail before UI operation dispatch."
       },
       {
@@ -2733,7 +2735,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
+        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2748,7 +2750,7 @@
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "13903cd931be9a7998ebbac135069ee839c95199dac91d79943febcb43f54feb",
+        "sha256": "f9563d7c26edc1082a87e222fa0793478736bdc592f2c0629d7947783dd2111c",
         "role": "Reusable parameter-form lifecycle and value projection."
       }
     ],
@@ -2899,7 +2901,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
+        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

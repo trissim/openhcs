@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from objectstate.lazy_factory import ensure_global_config_context
 from objectstate.object_state import ObjectState, ObjectStateRegistry
+from PyQt6 import sip
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QApplication,
@@ -135,15 +136,15 @@ from openhcs.core.progress.projection import (
 )
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.pyqt_gui.config import AgentUiBridgeConfig
+from openhcs.pyqt_gui.services.config_window_code_document import (
+    ConfigCodeDocumentDriver,
+)
 from openhcs.pyqt_gui.services.embedded_code_documents import (
     EmbeddedCodeDocumentRegistrationABC,
 )
 from openhcs.pyqt_gui.services.main_window_workflows import (
     MainWindowDockPane,
     MainWindowEmbeddedWidgets,
-)
-from openhcs.pyqt_gui.services.config_window_code_document import (
-    ConfigCodeDocumentDriver,
 )
 from openhcs.pyqt_gui.services.reactor_providers import OpenHCSCodegenProvider
 from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
@@ -185,6 +186,7 @@ from openhcs.pyqt_gui.services.ui_bridge_server import (
 from openhcs.pyqt_gui.services.ui_bridge_windows import (
     MainWindowBridgeProviderSet,
     ManagedWindowAction,
+    QtTopLevelWindowProjection,
     UiWidgetTreeResultFactory,
     UiWindowProjectionService,
 )
@@ -1555,6 +1557,29 @@ def test_embedded_registration_does_not_hide_main_window_from_bridge(
     finally:
         WindowManager.unregister(embedded_scope_id, embedded_widget)
         main_window.close()
+
+
+def test_qt_top_level_target_contains_deletion_after_discovery(
+    qapp,
+    monkeypatch,
+) -> None:
+    stale_window = QDockWidget()
+    stale_window.show()
+    qapp.processEvents()
+
+    def stale_discovery() -> tuple[QWidget, ...]:
+        sip.delete(stale_window)
+        return (stale_window,)
+
+    monkeypatch.setattr(
+        WindowManager,
+        "visible_top_level_windows",
+        staticmethod(stale_discovery),
+    )
+
+    projection = QtTopLevelWindowProjection(main_window=None)
+
+    assert projection.target(UiWindowIdentity(window_id="qt_top_level:stale")) is None
 
 
 def test_widget_tree_item_rows_carry_shared_object_state_roles() -> None:

@@ -85,8 +85,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowNavigateRequest,
     UiWindowNavigateResult,
     UiWindowOperationRequest,
-    UiWindowSemanticMarker,
     UiWindowSemanticCarrier,
+    UiWindowSemanticMarker,
     UiWindowSnapshotRequest,
     UiWindowSnapshotResult,
     UiWindowSummary,
@@ -1021,11 +1021,22 @@ class QtTopLevelWindowProjection(
     def target(self, identity: UiWindowIdentity) -> WindowProjectionTarget | None:
         identity = identity.as_identity()
         for widget in self._projected_top_level_widgets():
-            if self._identity(widget) == identity:
-                return WindowProjectionTarget(
-                    widget=widget, summary=self.summary(widget)
-                )
+            target = WindowManager.project_live_window(
+                widget,
+                lambda live_widget: self._matching_target(live_widget, identity),
+            )
+            if target is not None:
+                return target
         return None
+
+    def _matching_target(
+        self,
+        widget: QWidget,
+        identity: UiWindowIdentity,
+    ) -> WindowProjectionTarget | None:
+        if self._identity(widget) != identity:
+            return None
+        return WindowProjectionTarget(widget=widget, summary=self.summary(widget))
 
     def target_for_operation(
         self,

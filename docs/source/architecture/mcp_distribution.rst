@@ -71,6 +71,12 @@ rendering evidence for agent orientation and UI diagnostics; semantic state
 continues to come from code documents, widget fields, state surfaces, and
 declared actions.
 
+Window focus and target navigation are separate results. The bridge reports
+``navigated`` only when the registered nominal driver accepts the requested
+ObjectState scope and item or field target. Focusing an existing window cannot
+turn an undeclared target into success; the response instead carries the typed
+``ui_window_navigation_target_unsupported`` error.
+
 Generic widget-tree projection applies its depth and node limits while visiting
 the live tree. pyqt-reactive presents visible siblings first within those bounds
 and retains each child's original Qt or item-model index as its path identity.

@@ -359,7 +359,7 @@
       },
       {
         "path": "openhcs/agent/dto/ui_bridge.py",
-        "sha256": "f10c9fda866fd649004e7376d67c443c42ab9800772b150f7e22a5f93a9aae21",
+        "sha256": "1f85b0ec5f10b03e97d067b1805bf4782abd756114fd6c881586b33583921ca4",
         "role": "Carries generic endpoint application and operation-lifecycle declarations through UI bridge descriptors and request/response envelopes."
       },
       {
@@ -394,7 +394,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "da955e954f7c2af269c2c353f8dd4738617137fcc4e695011e48cf010bc52e25",
+        "sha256": "103a907f3a031c21c77199242e516648f22a16082c2ee269a5c43de6c65572a4",
         "role": "Verifies read-only rejection, semantic no-op application, and branch restoration through the UI bridge."
       },
       {
@@ -831,7 +831,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/window_manager.py",
-        "sha256": "c30a6c116c66def309a9007851403e328da6d6c60625af7e2d92163c516ddfdf",
+        "sha256": "bd5416b15ae58f91c12248ddea0761c57c87dddec56a10a23e59b33f0e57e254",
         "role": "Implements live top-level window discovery plus generic registered window lifecycle, reuse, parentage, and cleanup."
       },
       {
@@ -976,7 +976,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
+        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -1129,7 +1129,7 @@
       },
       {
         "path": "external/pyqt-reactive/tests/test_core.py",
-        "sha256": "3c917c8f9041bcacbb327a45a3667fd825fa1daec59e8837a8a88509026b1d21",
+        "sha256": "a2aba8923fd176a75a9e94f5c3b1fa0a6d18f41b28935b0c4d39ed75892894fb",
         "role": "Exercises reusable reactive update and lifecycle behaviour."
       }
     ],
@@ -1516,7 +1516,7 @@
   },
   {
     "path": "docs/source/architecture/mcp_distribution.rst",
-    "source_sha256": "d1d0609ad8ba7333bc33936f1746c8c156c5319cd32b5d7103aa215c5d4aa01f",
+    "source_sha256": "31de70b88535b9622b89173167d023bc1f22127a63a73c33607b43324828e25a",
     "audience": [
       "OpenHCS MCP maintainers",
       "packaging and hosted-deployment integrators"
@@ -1591,8 +1591,8 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/ui_bridge_windows.py",
-        "sha256": "7d150ab19cb5ee18e896a688a5aba333e9da68189d58e060da562ef9b238c3ca",
-        "role": "Resolves authorised OpenHCS windows and projects generic snapshot results into application DTOs."
+        "sha256": "82abc5f6f24a839ad169c50f386258c4bf791fcf083a04a86f1bf99f4d95a4b2",
+        "role": "Resolves authorised OpenHCS windows, projects generic snapshot results, and distinguishes focus from accepted target navigation in application DTOs."
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
@@ -1606,7 +1606,9 @@
       "The Windows distribution explanation now distinguishes the stable launcher cache from the separately published current-environment authority and its bounded sharing-violation retry.",
       "The page did not describe the screenshot privacy boundary; it now separates generic bounded Qt rendering from OpenHCS window discovery, authorisation, DTOs, and transport.",
       "The native installer contract is now documented as a generated projection instead of a manually mirrored product declaration.",
-      "Service-local stdout guards could not protect the persistent stdio protocol from delayed imports or background native writes; the transport now owns the process channel for its full lifetime."
+      "Service-local stdout guards could not protect the persistent stdio protocol from delayed imports or background native writes; the transport now owns the process channel for its full lifetime.",
+      "The window projection previously allowed focus to imply successful target navigation; it now reports navigation only from the registered nominal driver and returns a typed error for an unsupported target.",
+      "Dynamic Qt target lookup bypassed pyqt-reactive's live-window projection after discovery, so a deleted C++ window could escape through its stale Python wrapper; target resolution now uses the generic lifecycle boundary."
     ],
     "disposition": "revise",
     "validation": [
@@ -1622,7 +1624,9 @@
       "On 2026-08-24, re-read the complete explanation after UI bridge operation statuses began owning terminality, overview severity, and generic completion selection; no user-facing code/UI conversion claim changed.",
       "On 2026-08-24, re-read the complete distribution explanation after the installer profile became the install-policy owner and native contracts became exact-version generated projections.",
       "On 2026-08-24, re-read the complete explanation against the process-level stdio owner and its persistent-session regression; the page now makes protocol-channel ownership explicit.",
-      "On 2026-08-25, re-read the complete distribution explanation after bounded viewer projection and one-operation isolation changed the MCP server and shared server regressions; capability registration, transport, packaging, and release projection claims remain unchanged."
+      "On 2026-08-25, re-read the complete distribution explanation after bounded viewer projection and one-operation isolation changed the MCP server and shared server regressions; capability registration, transport, packaging, and release projection claims remain unchanged.",
+      "On 2026-08-25, re-read the complete page against the UI window projection and nominal navigation owner; focused tests and a fresh desktop MCP probe proved that focus, accepted target navigation, and unsupported targets are reported separately.",
+      "On 2026-08-25, a combined UI bridge run exposed a deleted QDockWidget wrapper during dynamic target lookup; the new regression deletes the C++ object after discovery and proves OpenHCS reuses pyqt-reactive's live-window projection instead of calling QWidget APIs on stale wrappers."
     ]
   },
   {

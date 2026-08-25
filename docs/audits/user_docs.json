@@ -153,7 +153,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
+        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -622,7 +622,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
+        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -794,7 +794,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
+        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -921,7 +921,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/basic_interface.rst",
-    "source_sha256": "d732846bf68812dd4638b714bb24df478c279379f7958c7e627f00da8b69ccb5",
+    "source_sha256": "24dca2ca77228d450c9b18d25bc6e6854c1bebc213d9223089c9984989c8aef5",
     "audience": [
       "desktop users",
       "MCP-assisted operators"
@@ -956,8 +956,8 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "da955e954f7c2af269c2c353f8dd4738617137fcc4e695011e48cf010bc52e25",
-        "role": "Proves bidirectional UI-bridge inspection and mutation of live pipeline declarations."
+        "sha256": "103a907f3a031c21c77199242e516648f22a16082c2ee269a5c43de6c65572a4",
+        "role": "Proves bidirectional UI-bridge inspection and mutation of live declarations, plus truthful rejection of unsupported window-navigation targets."
       },
       {
         "path": "openhcs/core/pipeline_document.py",
@@ -989,7 +989,8 @@
       "The desktop map still described the removed Textual implementation as retained.",
       "The Pipeline Editor reference previously implied an explicit PipelineConfig assignment; it now records the supported steps-only source form.",
       "The interface reference omitted selected-plate code-document scope and complete pipeline replacement semantics.",
-      "The reference omitted the Pipeline Editor's code-apply commit semantics and the non-blocking endpoint-catalogue loading state."
+      "The reference omitted the Pipeline Editor's code-apply commit semantics and the non-blocking endpoint-catalogue loading state.",
+      "The agent-navigation reference did not distinguish successful window focus from declaration-owned field navigation or explain unsupported targets."
     ],
     "disposition": "revise",
     "validation": [
@@ -1002,7 +1003,8 @@
       "On 2026-08-21, re-read the complete page after the Pipeline Editor capability change; 137 focused UI bridge and Pipeline Editor tests passed, and live UI probing confirmed the selected and unselected document states.",
       "On 2026-08-23, re-read the complete reference after catalogue shutdown gained owned cancellation and joining; asynchronous loading remains responsive and endpoint-authoritative.",
       "On 2026-08-24, removed the duplicate embedded LLM editor path; MCP remains the supported agent-assisted desktop surface, while code mode continues to edit the same declaration-backed documents.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-25, re-read the complete reference against the current UI bridge and config-window navigation owners; focused tests and a fresh desktop MCP probe proved that field requests select their declared tab and unsupported targets are not reported as navigated."
     ]
   },
   {
@@ -1042,7 +1044,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "da955e954f7c2af269c2c353f8dd4738617137fcc4e695011e48cf010bc52e25",
+        "sha256": "103a907f3a031c21c77199242e516648f22a16082c2ee269a5c43de6c65572a4",
         "role": "Proves live field help reports the exact accepted inputs for enum-backed configuration fields."
       },
       {
@@ -1272,7 +1274,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
+        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1497,7 +1499,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "da955e954f7c2af269c2c353f8dd4738617137fcc4e695011e48cf010bc52e25",
+        "sha256": "103a907f3a031c21c77199242e516648f22a16082c2ee269a5c43de6c65572a4",
         "role": "Proves stale protocol and OpenHCS versions cannot reach running UI operations."
       }
     ],
@@ -1876,7 +1878,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
+        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -2201,7 +2203,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
+        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2579,7 +2581,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "da955e954f7c2af269c2c353f8dd4738617137fcc4e695011e48cf010bc52e25",
+        "sha256": "103a907f3a031c21c77199242e516648f22a16082c2ee269a5c43de6c65572a4",
         "role": "Proves bidirectional UI-bridge inspection, capability enforcement, semantic no-op handling, and mutation of live declarations."
       },
       {
@@ -2668,7 +2670,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
+        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],

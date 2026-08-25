@@ -103,6 +103,12 @@ An attached MCP agent should navigate semantically:
 5. validate code, then apply with the current revision token;
 6. dispatch semantic init/compile/run actions and poll operation/state surfaces.
 
+Window focus and field navigation are reported separately. A configuration
+field request selects the tab whose declared ObjectState scope owns that path.
+If no unique owner accepts the field, the window may still be focused, but the
+request reports that the target was unsupported instead of claiming it was
+navigated.
+
 The stable ``main_window`` snapshot captures the complete workspace and status
 bar. Pane identities capture a focused Plate Manager, Pipeline Editor, server
 browser, or system-monitor view, while transient dialogs are listed when they
