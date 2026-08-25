@@ -4,6 +4,12 @@ Execution cleanup guarantees
 The compiled plate execution boundary makes cleanup converge across success,
 failure, cancellation, and a broken process pool.
 
+Viewer acquisition is part of that execution transaction. If one required
+viewer fails to launch or readiness validation fails after earlier viewers were
+acquired, bootstrap rolls back those acquisitions in reverse order. It releases
+an external viewer client without terminating the external endpoint, while an
+OpenHCS-owned viewer process and endpoint are stopped and released.
+
 Parent responsibilities
 -----------------------
 

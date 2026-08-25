@@ -21,7 +21,7 @@
       },
       {
         "path": "openhcs/core/orchestrator/orchestrator.py",
-        "sha256": "f70f0eb315062e43a4756892e0dfc6c2c169942a7584537ab70d2fdb63881fc7",
+        "sha256": "235450ee0d2e5a776b0d1bd785cd47d103e63c31b8951750ed719ee6bce3d4cf",
         "role": "Owns execution orchestration, worker submission, progress handling, and cleanup of compiled bundles."
       },
       {
@@ -154,7 +154,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
+        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -240,7 +240,7 @@
       },
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "7bb3845a99b5682e539fc47e63b0eb8cbad16187d0ffbdd9b6b863929a914435",
+        "sha256": "4cd6c29abd8b8e3ecc396b424d2b8b61e819a215fc1d770d3f6852b260a0691d",
         "role": "Declares the nominal microscopy dimensions, grouping identities, and shared component enums used by pipelines."
       },
       {
@@ -327,7 +327,7 @@
     "authority": [
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "7bb3845a99b5682e539fc47e63b0eb8cbad16187d0ffbdd9b6b863929a914435",
+        "sha256": "4cd6c29abd8b8e3ecc396b424d2b8b61e819a215fc1d770d3f6852b260a0691d",
         "role": "Declares the nominal microscopy dimensions, grouping identities, and shared component enums used by pipelines."
       },
       {
@@ -400,7 +400,7 @@
     "authority": [
       {
         "path": "openhcs/microscopes/microscope_interfaces.py",
-        "sha256": "e6002b6bf978ad28c8c0f3d775e0b0a369fe589289a12f553f47060384a6e583",
+        "sha256": "cc85eee3435212f079da7ce8a23eac6e746e6df23de9b01229b0ce7040a8b780",
         "role": "Declares the microscope source interface, plate dimensions, metadata, and acquisition access contract."
       },
       {
@@ -617,7 +617,7 @@
   },
   {
     "path": "docs/source/concepts/module_structure.rst",
-    "source_sha256": "04ef6811162bdf665f0f2c6b7bf9c4118e04f703da1df74cad5dac1c89a92102",
+    "source_sha256": "5f1222340f4470b3b1cd2a1819356c4861f23b8e3f2d8a94af0916052bd0ec1e",
     "audience": [
       "contributors",
       "integrators"
@@ -627,7 +627,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
+        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -657,7 +657,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "fca3e3ca9b8d10ea39f8bf3481716e2d44aa4c940cf35fe44fdf3494639db01d",
+        "sha256": "3bfb1fe4043bb9f0b5dfc6aa8567b458f0431003507897b50e2509aa9c1f311e",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -797,7 +797,7 @@
   },
   {
     "path": "docs/source/getting_started/getting_started.rst",
-    "source_sha256": "4c64f98acc993e55d1d01f4f6a6797e1e7b9c6eaac4ca2e1b6f47cc1ee886309",
+    "source_sha256": "46beb1b43912f93aca2070d1930a75e44c9d1fc707767f7addda3c24cbc62fb3",
     "audience": [
       "new desktop users",
       "Python installers"
@@ -807,7 +807,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
+        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -857,7 +857,7 @@
       },
       {
         "path": "tests/installer/test_installer_contract.py",
-        "sha256": "07f68ea6e31789533e2fec44e9cc301a7818bd7314d2587a8f023c6bb9cfc8e5",
+        "sha256": "a785152baab487606074317aee9ce011e1e75501db7a5130c760f06ed6683f54",
         "role": "Proves both native installers and staged updates consume the same declaration-owned package and binary-wheel policy."
       },
       {
@@ -1065,7 +1065,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_self_description_contracts.py",
-        "sha256": "e219e09caa06fce3f886d5dff8cbd3d4ace769f401a7ac2c4b9bb7038670c152",
+        "sha256": "67c7f8052c852beef3dd875b5e96c0c7635e001df13a585589e320955667a59d",
         "role": "Proves MCP self-description exposes the declared configuration and capability contracts."
       },
       {
@@ -1158,7 +1158,7 @@
     "authority": [
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "7bb3845a99b5682e539fc47e63b0eb8cbad16187d0ffbdd9b6b863929a914435",
+        "sha256": "4cd6c29abd8b8e3ecc396b424d2b8b61e819a215fc1d770d3f6852b260a0691d",
         "role": "Declares the nominal microscopy dimensions, grouping identities, and shared component enums used by pipelines."
       },
       {
@@ -1195,7 +1195,7 @@
     "authority": [
       {
         "path": "openhcs/microscopes/microscope_interfaces.py",
-        "sha256": "e6002b6bf978ad28c8c0f3d775e0b0a369fe589289a12f553f47060384a6e583",
+        "sha256": "cc85eee3435212f079da7ce8a23eac6e746e6df23de9b01229b0ce7040a8b780",
         "role": "Declares the microscope source interface, plate dimensions, metadata, and acquisition access contract."
       },
       {
@@ -1210,7 +1210,7 @@
       },
       {
         "path": "openhcs/core/source_workspace_projection.py",
-        "sha256": "2c3efb44ce22f129a341c74e48dcb639bdfc6a0b4898e1bfa0cf2e8c4df71c90",
+        "sha256": "353e06354f2136f454932cdb3b0db5e360d78c648183a1274ffbff0d0163c286",
         "role": "Projects source bindings into the concrete workspace identities compiled for execution."
       },
       {
@@ -1220,17 +1220,17 @@
       },
       {
         "path": "tests/unit/test_source_bindings.py",
-        "sha256": "a0cf818922590a4a1dcb52e78a61afb819c6cf631fea14d2688bee8289f01368",
+        "sha256": "ebd11451211475f1f8c04994ce9f8a734f7a6341cc19fa843f070d7f9481992d",
         "role": "Proves source-binding validation and projection into concrete workspace identities."
       },
       {
         "path": "openhcs/core/source_binding_workspace.py",
-        "sha256": "40aeb10643ad443322ec58c4c9c20f3b7877603c829df9d6294a6d28e4b46773",
+        "sha256": "b61bf76c25164cdb230619f40a6ee3bd4abda72af557ff2282cba2ddd652b4be",
         "role": "Selects raw candidates and projects binding-owned component identity."
       },
       {
         "path": "tests/unit/test_source_binding_workspace.py",
-        "sha256": "3194aed2e40dd6ac7b7c7ec059a0dab47826e03ed2b814a5f0446a6acc8749ea",
+        "sha256": "bf999da07d6fade41bd72267d7785c78f7f2de79f96d90ae002d23553fe903f0",
         "role": "Proves raw selector coordinates are retained as original metadata while the projected address uses semantic component identity."
       }
     ],
@@ -1268,7 +1268,7 @@
       },
       {
         "path": "openhcs/microscopes/microscope_interfaces.py",
-        "sha256": "e6002b6bf978ad28c8c0f3d775e0b0a369fe589289a12f553f47060384a6e583",
+        "sha256": "cc85eee3435212f079da7ce8a23eac6e746e6df23de9b01229b0ce7040a8b780",
         "role": "Declares the microscope source interface, plate dimensions, metadata, and acquisition access contract."
       }
     ],
@@ -1291,7 +1291,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
+        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1386,7 +1386,7 @@
       },
       {
         "path": "openhcs/demo/synthetic_data.py",
-        "sha256": "9a122ed019bc28a0a7e655f7e5391324aba6cf073de9b2c76631139bf19cff4d",
+        "sha256": "6a663576083c8256b299e7144e20bcab31dc4761e749fbf2d5ca116789a2f7db",
         "role": "Generates the packaged deterministic synthetic microscopy plate consumed by the introductory workflow."
       },
       {
@@ -1439,7 +1439,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "fca3e3ca9b8d10ea39f8bf3481716e2d44aa4c940cf35fe44fdf3494639db01d",
+        "sha256": "3bfb1fe4043bb9f0b5dfc6aa8567b458f0431003507897b50e2509aa9c1f311e",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -1648,7 +1648,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "fca3e3ca9b8d10ea39f8bf3481716e2d44aa4c940cf35fe44fdf3494639db01d",
+        "sha256": "3bfb1fe4043bb9f0b5dfc6aa8567b458f0431003507897b50e2509aa9c1f311e",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -1695,12 +1695,12 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "fca3e3ca9b8d10ea39f8bf3481716e2d44aa4c940cf35fe44fdf3494639db01d",
+        "sha256": "3bfb1fe4043bb9f0b5dfc6aa8567b458f0431003507897b50e2509aa9c1f311e",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
         "path": "external/PolyStore/src/polystore/omero_local.py",
-        "sha256": "c0ba2a826120288b0c430610e8a8bbe340a7d5f95289cd9eeebac6bac33a16eb",
+        "sha256": "613f0b3b2fb527ae3753a77127d9affd75bf1d4fc1af655274a93509f3066233",
         "role": "Implements the OMERO-backed PolyStore adapter, including connection and object materialisation behaviour."
       },
       {
@@ -1741,7 +1741,7 @@
       },
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "7bb3845a99b5682e539fc47e63b0eb8cbad16187d0ffbdd9b6b863929a914435",
+        "sha256": "4cd6c29abd8b8e3ecc396b424d2b8b61e819a215fc1d770d3f6852b260a0691d",
         "role": "Provides the legacy OpenHCS constants import surface as identity-preserving compatibility re-exports."
       },
       {
@@ -1791,7 +1791,7 @@
       },
       {
         "path": "openhcs/core/steps/function_runtime.py",
-        "sha256": "29524d3d61bc3950a4e03c47eadc5747ce391a30756c248ae2463c86394566ce",
+        "sha256": "d7de33cae49f2fc99ef916ed83fff300cbbf70c9b3b05b538265f026827be2b3",
         "role": "Scopes a callable body through its declared execution framework during worker invocation."
       },
       {
@@ -1827,7 +1827,7 @@
   },
   {
     "path": "docs/source/guides/omero_integration.rst",
-    "source_sha256": "4edba313380aca1a45a2ca3a6d321c0f4ba15c6a68f428e659d617f359bb8638",
+    "source_sha256": "2347cf7a4edbc676f4273425a18184013455ac2bc8fdadc2e24751baefd1e19c",
     "audience": [
       "OMERO integrators",
       "deployment contributors"
@@ -1837,7 +1837,7 @@
     "authority": [
       {
         "path": "external/PolyStore/src/polystore/omero_local.py",
-        "sha256": "c0ba2a826120288b0c430610e8a8bbe340a7d5f95289cd9eeebac6bac33a16eb",
+        "sha256": "613f0b3b2fb527ae3753a77127d9affd75bf1d4fc1af655274a93509f3066233",
         "role": "Implements the OMERO-backed PolyStore adapter, including connection and object materialisation behaviour."
       },
       {
@@ -1867,12 +1867,12 @@
       },
       {
         "path": "openhcs/microscopes/microscope_interfaces.py",
-        "sha256": "e6002b6bf978ad28c8c0f3d775e0b0a369fe589289a12f553f47060384a6e583",
+        "sha256": "cc85eee3435212f079da7ce8a23eac6e746e6df23de9b01229b0ce7040a8b780",
         "role": "Declares the microscope source interface, plate dimensions, metadata, and acquisition access contract."
       },
       {
         "path": "tests/unit/test_omero_microscope_metadata.py",
-        "sha256": "7be661b0415974a81430adfd757215f9b946b04079d8637ecc1a8a86e7e47c6a",
+        "sha256": "433ae80bc9e0fe25047ddb0e98a8fd83b3ee952de121256781309e67365c7c33",
         "role": "Proves OMERO microscope metadata and plate dimensions satisfy the common microscope interface."
       },
       {
@@ -1892,7 +1892,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
+        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1912,7 +1912,7 @@
       },
       {
         "path": "tests/integration/test_main.py",
-        "sha256": "538c470d93759e215088270b467d6e1231df0ef19ac6d3ce35db6013a31f1c47",
+        "sha256": "099fdb349009f503d4eb115b871e78b9be5cbd860838d140111ee138074d5cd3",
         "role": "Exercises live OMERO instance and integration behaviour through the packaged OpenHCS boundary."
       }
     ],
@@ -2127,7 +2127,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "fca3e3ca9b8d10ea39f8bf3481716e2d44aa4c940cf35fe44fdf3494639db01d",
+        "sha256": "3bfb1fe4043bb9f0b5dfc6aa8567b458f0431003507897b50e2509aa9c1f311e",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -2238,7 +2238,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
+        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2707,7 +2707,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
+        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -3122,7 +3122,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "fca3e3ca9b8d10ea39f8bf3481716e2d44aa4c940cf35fe44fdf3494639db01d",
+        "sha256": "3bfb1fe4043bb9f0b5dfc6aa8567b458f0431003507897b50e2509aa9c1f311e",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {

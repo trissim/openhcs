@@ -85,7 +85,7 @@
       },
       {
         "path": "openhcs/microscopes/microscope_base.py",
-        "sha256": "b582790331efe023782c2dab84bd45c11431873afc0378e5a780caf0ddd70469",
+        "sha256": "13ca338530c97319855f1f0358c16ce1e7deb1fdb28b2a0e554083934d788082",
         "role": "Defines the microscope-handler registry and generic factory selection boundary."
       },
       {
@@ -131,7 +131,7 @@
       },
       {
         "path": "openhcs/processing/backends/analysis/consolidate_analysis_results.py",
-        "sha256": "7f6d7db009f5f6a3d7a3532e3ba35d06c34d4900447bf9dba2fa3fb7fca63834",
+        "sha256": "aad546fdc069653d809f9ef6867ad2ae351276ea9ab66b377af7cd6ab2428d60",
         "role": "Defines nominal analysis sources and summary writers, in-memory merging, rendering, and consolidation policy."
       },
       {
@@ -141,12 +141,12 @@
       },
       {
         "path": "tests/unit/test_orchestrator_lane_planning.py",
-        "sha256": "eb1ed23dd7e520923e3be6024c7a46cb46ba1f03b1ac421b7d9af538d0001325",
+        "sha256": "c8ba3d0a8650b3904b4852ff9fd8e36f22a889d5d69d02257e874e311b4ea820",
         "role": "Exercises orchestrator lane planning and post-execution analysis boundaries used by consolidation."
       },
       {
         "path": "tests/unit/test_function_artifact_materialization.py",
-        "sha256": "d91b9ddaa0fa19771f77719b5be0eb91b7f446bfe64e2426802c7a4b22b419e8",
+        "sha256": "5a075a9785925abf518cab78577fe3c80579f4bd283ce361a9cd89b1e65ecd7f",
         "role": "Proves consolidation consumes runtime CSV values, uses the compiled backend destination, ignores non-table artifacts, and propagates failures."
       }
     ],
@@ -580,7 +580,7 @@
   },
   {
     "path": "docs/source/architecture/component_system_integration.rst",
-    "source_sha256": "303ad7a3c33fdddccc8e2083658b61474d58d116e383a044eba7e3822b488473",
+    "source_sha256": "5c4c60b9b9a02dfb0dd0f56ecc2bf4528e877314f14f76d0591ec112958e84c8",
     "audience": [
       "OpenHCS compiler, source-model, and processing maintainers"
     ],
@@ -589,7 +589,7 @@
     "authority": [
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "7bb3845a99b5682e539fc47e63b0eb8cbad16187d0ffbdd9b6b863929a914435",
+        "sha256": "4cd6c29abd8b8e3ecc396b424d2b8b61e819a215fc1d770d3f6852b260a0691d",
         "role": "Declares the nominal component enum families and their distinct domains."
       },
       {
@@ -598,19 +598,33 @@
         "role": "Implements ordered enum-aware component set operations without copied name tables."
       },
       {
+        "path": "openhcs/core/components/component_values.py",
+        "sha256": "3813d6f7d6d66fc21ea881e3dfcb72f54bd1bfe36212895f00be8f09e59d49dd",
+        "role": "Carries one complete immutable value projection keyed by the canonical component declaration."
+      },
+      {
+        "path": "openhcs/core/components/parser_metaprogramming.py",
+        "sha256": "5eaf7c10d4d5667deb723c5b8d92410183ae06ce7b3092ddb71a88e9832d4b7e",
+        "role": "Wraps complete component values in a nominal filename result and exposes string keys only at explicit boundaries."
+      },
+      {
         "path": "openhcs/core/pipeline/compiler.py",
         "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
         "role": "Consumes component declarations to construct execution axes, stacks, grouping, and typed plans."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The page did not explain how complete per-plate and per-filename component values cross internal boundaries without per-axis method or string-key mirrors."
+    ],
+    "disposition": "revise",
     "validation": [
       "Re-read docs/source/architecture/component_system_integration.rst in full against repository base 32ca17c17 and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/constants/constants.py; openhcs/core/component_set.py; openhcs/core/pipeline/compiler.py.",
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-25, re-read the complete explanation against the canonical component enum, complete value carrier, nominal filename result, component-set operations, and compiler consumer; revised it to make the declaration-to-boundary projection explicit.",
+      "On 2026-08-25, 162 focused component, microscope, source-binding, streaming, viewer-protocol, and rollback tests passed; documentation validation checked 154 files, 24 Python blocks, and 153 audited sources, and warning-free Sphinx rendered all 152 active pages."
     ]
   },
   {
@@ -968,7 +982,7 @@
   },
   {
     "path": "docs/source/architecture/external_foundations.rst",
-    "source_sha256": "8ca3934429a62d32618e40dd07bb51ee691a12ae2c04f62e725330e17ed0fb99",
+    "source_sha256": "2c95e2864cf17a5a6195c2fc3c498ac99eb4cf450a841f7a8d2417a94d53f1cb",
     "audience": [
       "OpenHCS maintainers",
       "first-party package integrators"
@@ -978,7 +992,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
+        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -1013,7 +1027,7 @@
       },
       {
         "path": "external/PolyStore/README.md",
-        "sha256": "4409e4bd322feb6807fbe2d7b3a45d173902e3fad905841ba33a2fcaee23c748",
+        "sha256": "c054ab7a02e743a089ea7e258444ca2982318b86af27457877cc60156a3831cf",
         "role": "States PolyStore ownership of generic storage, ROI, and streaming mechanisms."
       },
       {
@@ -1107,7 +1121,7 @@
       },
       {
         "path": "openhcs/microscopes/microscope_base.py",
-        "sha256": "b582790331efe023782c2dab84bd45c11431873afc0378e5a780caf0ddd70469",
+        "sha256": "13ca338530c97319855f1f0358c16ce1e7deb1fdb28b2a0e554083934d788082",
         "role": "Defines registered microscope discovery and source-specific declaration ownership."
       },
       {
@@ -1792,7 +1806,7 @@
   },
   {
     "path": "docs/source/architecture/microscope_handler_integration.rst",
-    "source_sha256": "a5e4f8aecd44e4d69e030ed8b7fc6416ed310b998a5594c636b736ad79ebc867",
+    "source_sha256": "7568ee810dd5ff9f13643ee2434a239e6e79d42d0e3dd57d2690b406d41b254f",
     "audience": [
       "OpenHCS source-model maintainers",
       "microscope integration authors"
@@ -1802,13 +1816,18 @@
     "authority": [
       {
         "path": "openhcs/microscopes/microscope_base.py",
-        "sha256": "b582790331efe023782c2dab84bd45c11431873afc0378e5a780caf0ddd70469",
+        "sha256": "13ca338530c97319855f1f0358c16ce1e7deb1fdb28b2a0e554083934d788082",
         "role": "Defines the handler root, registry-backed factory, uniform plate context, detection, and declaration-owned workspace-backend replay boundary."
       },
       {
         "path": "openhcs/microscopes/openhcs.py",
-        "sha256": "c8e2c3fe168ae399590ad5a46b8a814c065a979fb019d99b2431904a064640fc",
+        "sha256": "32bfe4cb29fbbfde4c28de0415fe7b22743a0c0e2c5a3f6d31654ee7b027931e",
         "role": "Replays a persisted workspace through the source handler type recorded by the canonical OpenHCS metadata."
+      },
+      {
+        "path": "openhcs/microscopes/microscope_interfaces.py",
+        "sha256": "cc85eee3435212f079da7ce8a23eac6e746e6df23de9b01229b0ce7040a8b780",
+        "role": "Declares the single complete metadata-component projection implemented by microscope metadata handlers."
       },
       {
         "path": "openhcs/core/source_bindings.py",
@@ -1822,7 +1841,7 @@
       },
       {
         "path": "tests/unit/test_bioformats_microscope_handler.py",
-        "sha256": "c821240bd640dd0774cf76c3a61c52abe3c0861193df9135ca379b0100859528",
+        "sha256": "d12e4e85a13bc28f7d67d1547ce8a347897c89436a129aebf45bc34cd5a193d6",
         "role": "Verifies generic plate-folder binding and BioFormats handler metadata behaviour."
       },
       {
@@ -1833,7 +1852,8 @@
     ],
     "findings": [
       "The audit exposed a factory-side concrete class-name branch for OpenHCS plate context and an embedded extension procedure; the root now binds plate_folder uniformly and the page links to the task guide.",
-      "Prepared SourceBindings workspaces could not be inspected through automatic OpenHCS metadata detection because replay reconstructed an ingestion instance without its original configuration; the handler declaration now owns backend replay directly."
+      "Prepared SourceBindings workspaces could not be inspected through automatic OpenHCS metadata detection because replay reconstructed an ingestion instance without its original configuration; the handler declaration now owns backend replay directly.",
+      "Microscope metadata exposed one method per concrete axis; handlers now return one complete component value set keyed by the canonical declaration."
     ],
     "disposition": "revise",
     "validation": [
@@ -1843,7 +1863,9 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-23, re-read the complete explanation against the handler root, OpenHCS persisted-workspace reader, and inspection tests; 124 focused microscope, source-binding, workspace, and plate-inspection tests passed.",
-      "On 2026-08-24, re-read the complete explanation after stdout containment moved from plate inspection to the MCP transport; microscope ownership and replay claims remain unchanged."
+      "On 2026-08-24, re-read the complete explanation after stdout containment moved from plate inspection to the MCP transport; microscope ownership and replay claims remain unchanged.",
+      "On 2026-08-25, re-read the complete explanation against the handler root, metadata interface, persisted-workspace replay, source declarations, and handler tests; revised it to document the complete nominal metadata projection.",
+      "On 2026-08-25, 162 focused component, microscope, source-binding, streaming, viewer-protocol, and rollback tests passed; documentation validation checked 154 files, 24 Python blocks, and 153 audited sources, and warning-free Sphinx rendered all 152 active pages."
     ]
   },
   {

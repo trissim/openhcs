@@ -111,6 +111,13 @@ An existing endpoint is reusable only after a typed control reply proves that a
 compatible viewer is ready. Endpoint files or bound ports are discovery facts,
 not readiness evidence.
 
+Execution bootstrap records each acquired viewer as it is returned. A later
+launch or readiness failure rolls back only those recorded acquisitions:
+OpenHCS-owned processes are stopped, while a connected external endpoint keeps
+running and only the transient client is released. This prevents a partial
+multi-viewer startup from leaking processes without turning external discovery
+into process ownership.
+
 Napari owns its widgets and layer mutation on the Qt main thread. Its detached
 entry point constructs the viewer, enters the Qt event loop, and uses an initial
 Qt callback to install the recurring message timer before binding the ZMQ

@@ -45,7 +45,7 @@
     "authority": [
       {
         "path": "openhcs/core/viewer_streaming_service.py",
-        "sha256": "5417225a2087a0316a799d462701b171cd00b7f7eff14c647cdb5a1c01a475b8",
+        "sha256": "3a58e1accfa318b9d1a6ed849acc80e735dedc1394faa67087f3fe8a16f2221d",
         "role": "Compiled output streaming, viewer settlement, state evidence, and lifecycle cleanup."
       },
       {
@@ -120,7 +120,7 @@
   },
   {
     "path": "docs/source/architecture/omero_backend_system.rst",
-    "source_sha256": "c983368ef5ce6670971fb6751fd9ed9a50a27c562192f1e2e28f8e60d7b9d179",
+    "source_sha256": "83df8f90d84fb9bbef1f4120a853f5ea2deba8762e2fde3751210ade6d95dc53",
     "audience": [
       "OpenHCS users and integrators following the former OMERO architecture URL"
     ],
@@ -129,7 +129,7 @@
     "authority": [
       {
         "path": "external/PolyStore/src/polystore/omero_local.py",
-        "sha256": "c0ba2a826120288b0c430610e8a8bbe340a7d5f95289cd9eeebac6bac33a16eb",
+        "sha256": "613f0b3b2fb527ae3753a77127d9affd75bf1d4fc1af655274a93509f3066233",
         "role": "Generic OMERO virtual-backend addressing, listing, pixel access, and declaration-owned output dispatch."
       },
       {
@@ -144,7 +144,7 @@
       },
       {
         "path": "external/PolyStore/docs/source/guides/omero_backend.rst",
-        "sha256": "b95a56d98af3f04ab7c75ae08b0fcaca3a27cf3edb201ca70d7aa13ea50bb0ef",
+        "sha256": "2ccc3dd21cf24460d41b4eb217dbbbcc8cb81e225dfbbf735402983f338e98ae",
         "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/omero_backend_system.rst."
       },
       {
@@ -192,7 +192,7 @@
   },
   {
     "path": "docs/source/architecture/orchestrator_cleanup_guarantees.rst",
-    "source_sha256": "a1778f0b65ff237408cad9927b73e6eec4f60a7b56e573f339229df1b7b02de0",
+    "source_sha256": "37309668c73f07af13858e895cf8bb1545a44c3aa373b2c32a485d05f0728f2f",
     "audience": [
       "OpenHCS runtime maintainers"
     ],
@@ -201,7 +201,7 @@
     "authority": [
       {
         "path": "openhcs/core/orchestrator/compiled_plate_execution.py",
-        "sha256": "9f51b21f6cb5663e044ac6c85b21687b35b6977f374ba9420c0eb75796b60a50",
+        "sha256": "8c5349414461754ab24b9ded3919e3a6635dbe74914fe87d8a012d0324dfe0d3",
         "role": "Parent compiled-plate execution, terminal steps, viewer settlement, evidence, and cleanup ordering."
       },
       {
@@ -211,8 +211,13 @@
       },
       {
         "path": "openhcs/core/orchestrator/orchestrator.py",
-        "sha256": "f70f0eb315062e43a4756892e0dfc6c2c169942a7584537ab70d2fdb63881fc7",
+        "sha256": "235450ee0d2e5a776b0d1bd785cd47d103e63c31b8951750ed719ee6bce3d4cf",
         "role": "PipelineOrchestrator configuration ownership, resolution, compiler setup, and executor lifecycle."
+      },
+      {
+        "path": "openhcs/runtime/viewer_protocol.py",
+        "sha256": "3bfb1fe4043bb9f0b5dfc6aa8567b458f0431003507897b50e2509aa9c1f311e",
+        "role": "Distinguishes external viewer clients from owned viewer processes during failed-bootstrap rollback."
       },
       {
         "path": "openhcs/core/orchestrator/cancellation.py",
@@ -228,11 +233,17 @@
         "path": "tests/unit/test_framework_device_resolver.py",
         "sha256": "90b288a2ab4645226b3e8a3dea7b9338ff57592a434baa6b0c4f984bf0651b1c",
         "role": "Regression proof for independent framework namespaces and exact compiled device bindings."
+      },
+      {
+        "path": "tests/unit/test_orchestrator_lane_planning.py",
+        "sha256": "c8ba3d0a8650b3904b4852ff9fd8e36f22a889d5d69d02257e874e311b4ea820",
+        "role": "Proves partial viewer acquisition and readiness failures roll back every acquired viewer."
       }
     ],
     "findings": [
       "The cleanup ordering omitted exact terminal-state ownership, cooperative safe boundaries, and closure of the execution cancellation scope.",
-      "Global GPU scheduler cleanup was removed; cleanup now follows each compiled framework/device footprint at its owning process boundary."
+      "Global GPU scheduler cleanup was removed; cleanup now follows each compiled framework/device footprint at its owning process boundary.",
+      "Viewer bootstrap previously returned its acquired set only after every viewer was created, so a later acquisition failure could leak earlier viewer processes."
     ],
     "disposition": "revise",
     "validation": [
@@ -242,7 +253,9 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-24, re-read the complete explanation after completed-plate metadata finalization was inserted before viewer settlement; the documented cleanup owners and terminal ordering remain accurate.",
-      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
+      "On 2026-08-25, re-read the complete cleanup explanation against compiled viewer acquisition, lifecycle ownership, and rollback regressions; revised it to cover partial-bootstrap cleanup without claiming ownership of external endpoints.",
+      "On 2026-08-25, 162 focused component, microscope, source-binding, streaming, viewer-protocol, and rollback tests passed; documentation validation checked 154 files, 24 Python blocks, and 153 audited sources, and warning-free Sphinx rendered all 152 active pages."
     ]
   },
   {
@@ -256,7 +269,7 @@
     "authority": [
       {
         "path": "openhcs/core/orchestrator/orchestrator.py",
-        "sha256": "f70f0eb315062e43a4756892e0dfc6c2c169942a7584537ab70d2fdb63881fc7",
+        "sha256": "235450ee0d2e5a776b0d1bd785cd47d103e63c31b8951750ed719ee6bce3d4cf",
         "role": "PipelineOrchestrator configuration ownership, resolution, compiler setup, and executor lifecycle."
       },
       {
@@ -431,7 +444,7 @@
       },
       {
         "path": "openhcs/core/source_binding_selection.py",
-        "sha256": "71409b6868d85b73b4bfbeafc923a12d93644503b637e710a77f6e0673ab58c5",
+        "sha256": "5afcabc6dae1181ae219294baedefe3c1b7ef41bbe03d44dd779a126c9405df1",
         "role": "Nominal source selection, matching, and component projection strategies."
       },
       {
@@ -518,7 +531,7 @@
       },
       {
         "path": "openhcs/core/orchestrator/compiled_plate_execution.py",
-        "sha256": "9f51b21f6cb5663e044ac6c85b21687b35b6977f374ba9420c0eb75796b60a50",
+        "sha256": "8c5349414461754ab24b9ded3919e3a6635dbe74914fe87d8a012d0324dfe0d3",
         "role": "Parent execution ordering for plate-scoped work, completed-output metadata projection, and viewer settlement."
       },
       {
@@ -902,7 +915,7 @@
       },
       {
         "path": "openhcs/processing/materialization/core.py",
-        "sha256": "5b2e961cd627f97a6569d80460e00276cfd786b6d109217b88e656077ed05235",
+        "sha256": "b4429937f8cf5a604369aae5da827995d8796befa5cd527d24c1288fda986a68",
         "role": "Nominal artifact materialisation and ROI projection strategies."
       },
       {
@@ -961,7 +974,7 @@
       },
       {
         "path": "openhcs/core/steps/function_runtime.py",
-        "sha256": "29524d3d61bc3950a4e03c47eadc5747ce391a30756c248ae2463c86394566ce",
+        "sha256": "d7de33cae49f2fc99ef916ed83fff300cbbf70c9b3b05b538265f026827be2b3",
         "role": "Runtime callable invocation and output-context strategy implementation."
       },
       {
@@ -1155,7 +1168,7 @@
       },
       {
         "path": "openhcs/core/source_binding_workspace.py",
-        "sha256": "40aeb10643ad443322ec58c4c9c20f3b7877603c829df9d6294a6d28e4b46773",
+        "sha256": "b61bf76c25164cdb230619f40a6ee3bd4abda72af557ff2282cba2ddd652b4be",
         "role": "Compiled virtual source workspace and binding projection."
       },
       {
@@ -1277,7 +1290,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
+        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1301,7 +1314,7 @@
   },
   {
     "path": "docs/source/architecture/streaming_boundary_and_wrappers.rst",
-    "source_sha256": "af0cfdf1e595aa8dcb991d6de284ddde4810ac8606b485bd08fd7017f3736986",
+    "source_sha256": "51db1817e6f7c80cfcc15bb8a4c17211784d943b4bea42330da561b6e869a7e8",
     "audience": [
       "OpenHCS streaming, viewer, and runtime maintainers"
     ],
@@ -1310,7 +1323,7 @@
     "authority": [
       {
         "path": "openhcs/core/viewer_streaming_service.py",
-        "sha256": "5417225a2087a0316a799d462701b171cd00b7f7eff14c647cdb5a1c01a475b8",
+        "sha256": "3a58e1accfa318b9d1a6ed849acc80e735dedc1394faa67087f3fe8a16f2221d",
         "role": "Compiled output streaming, viewer settlement, state evidence, and lifecycle cleanup."
       },
       {
@@ -1320,7 +1333,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "fca3e3ca9b8d10ea39f8bf3481716e2d44aa4c940cf35fe44fdf3494639db01d",
+        "sha256": "3bfb1fe4043bb9f0b5dfc6aa8567b458f0431003507897b50e2509aa9c1f311e",
         "role": "OpenHCS viewer persistence policy, exact process ownership, platform policy, readiness, and settlement contracts."
       },
       {
@@ -1345,8 +1358,13 @@
       },
       {
         "path": "openhcs/core/execution_visualizer.py",
-        "sha256": "871115f4e63600c602c6be7affc4700ac5d043878577cb3cee0b88a9b2a3ce96",
+        "sha256": "11d38b360063df20ccd60a1f75dcdab0231a99efae5576920f56e35e3406f3a9",
         "role": "Declares the nominal application viewer contract consumed by compiled execution."
+      },
+      {
+        "path": "openhcs/core/orchestrator/compiled_plate_execution.py",
+        "sha256": "8c5349414461754ab24b9ded3919e3a6635dbe74914fe87d8a012d0324dfe0d3",
+        "role": "Acquires required viewers transactionally and rolls back the exact acquired set on launch or readiness failure."
       },
       {
         "path": "external/PolyStore/src/polystore/filemanager.py",
@@ -1377,6 +1395,11 @@
         "path": "tests/unit/test_napari_streaming_handlers.py",
         "sha256": "b27543f8126ca33db80b94ff425d695037a73a9550592de4b6563a38d7284acd",
         "role": "Proves one global ROI-member budget and metadata-only shape projection across payload records."
+      },
+      {
+        "path": "tests/unit/test_orchestrator_lane_planning.py",
+        "sha256": "c8ba3d0a8650b3904b4852ff9fd8e36f22a889d5d69d02257e874e311b4ea820",
+        "role": "Proves multi-viewer bootstrap rollback after partial acquisition and readiness failure."
       }
     ],
     "findings": [
@@ -1384,7 +1407,8 @@
       "Execution-server cleanup registered persistent viewers in its transient process group and stopped them before post-run inspection; persistence policy now limits that exact group to non-persistent viewers.",
       "A terminated retained endpoint process previously depended on later caller polling for child reaping; ZMQRuntime now retains one terminal observer per exact process.",
       "ROI summaries transported full shape geometry and applied the per-record maximum independently; the runtime now composes one response-wide budget with metadata-only summary projection.",
-      "Layer isolation required state inspection followed by one navigation round trip per mounted layer; the viewer now preflights and applies the complete typed projection in one control operation."
+      "Layer isolation required state inspection followed by one navigation round trip per mounted layer; the viewer now preflights and applies the complete typed projection in one control operation.",
+      "Multi-viewer bootstrap did not retain incremental acquisition evidence, allowing a later launch or readiness failure to leak an earlier owned viewer."
     ],
     "disposition": "revise",
     "validation": [
@@ -1400,7 +1424,9 @@
       "On 2026-08-24, re-read the complete explanation after replacing its stale ZMQRuntime release link with the maintained owner source; the streaming ownership and lifecycle claims remain unchanged.",
       "On 2026-08-24, re-read the explanation against the declaration-owned ViewerType refactor; the page now distinguishes typed viewer semantics from lowercase wire identifiers.",
       "On 2026-08-25, re-read the complete explanation against the caller-control, runtime-policy, Napari, agent-service, and regression authorities added for bounded ROI projection and atomic isolation.",
-      "Three isolated real desktop, MCP, ZMQ, execution, and Napari rehearsals completed all nine acceptance requirements; ROI summaries returned in 0.063-0.485 seconds and bulk isolation in 0.078-1.078 seconds within the 2-second command budget, with no UI-log errors."
+      "Three isolated real desktop, MCP, ZMQ, execution, and Napari rehearsals completed all nine acceptance requirements; ROI summaries returned in 0.063-0.485 seconds and bulk isolation in 0.078-1.078 seconds within the 2-second command budget, with no UI-log errors.",
+      "On 2026-08-25, re-read the complete explanation against the visualizer contract, transactional acquisition path, lifecycle owner, and rollback regressions; revised it to distinguish owned-process cleanup from external-client release.",
+      "On 2026-08-25, 162 focused component, microscope, source-binding, streaming, viewer-protocol, and rollback tests passed; documentation validation checked 154 files, 24 Python blocks, and 153 audited sources, and warning-free Sphinx rendered all 152 active pages."
     ]
   },
   {
@@ -1471,7 +1497,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
+        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1533,7 +1559,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
+        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -1989,7 +2015,7 @@
       },
       {
         "path": "openhcs/demo/synthetic_data.py",
-        "sha256": "9a122ed019bc28a0a7e655f7e5391324aba6cf073de9b2c76631139bf19cff4d",
+        "sha256": "6a663576083c8256b299e7144e20bcab31dc4761e749fbf2d5ca116789a2f7db",
         "role": "Installed deterministic synthetic-plate implementation used by the production service and MCP demo."
       },
       {
@@ -2287,7 +2313,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
+        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2363,7 +2389,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
+        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2400,7 +2426,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
+        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2729,7 +2755,7 @@
   },
   {
     "path": "docs/source/development/omero_testing.rst",
-    "source_sha256": "d8130a80fe8ea63831e6b0df2d8a70b353580bf99800ac64cf46a2e58b81e824",
+    "source_sha256": "dfea9770124c3c1598a804688be4939b9bfeeca0319b9febff7ab6d7a4a65042",
     "audience": [
       "OpenHCS and OMERO integration testers"
     ],
@@ -2738,7 +2764,7 @@
     "authority": [
       {
         "path": "external/PolyStore/src/polystore/omero_local.py",
-        "sha256": "c0ba2a826120288b0c430610e8a8bbe340a7d5f95289cd9eeebac6bac33a16eb",
+        "sha256": "613f0b3b2fb527ae3753a77127d9affd75bf1d4fc1af655274a93509f3066233",
         "role": "Generic OMERO addressing, persistence dispatch, and image-plane batching."
       },
       {
@@ -2758,7 +2784,7 @@
       },
       {
         "path": "tests/integration/test_main.py",
-        "sha256": "538c470d93759e215088270b467d6e1231df0ef19ac6d3ce35db6013a31f1c47",
+        "sha256": "099fdb349009f503d4eb115b871e78b9be5cbd860838d140111ee138074d5cd3",
         "role": "Direct and ZMQ compile-before-execute integration harness with explicit OMERO lifecycle cleanup and no browser side effect."
       },
       {
@@ -2807,7 +2833,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
+        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2937,7 +2963,7 @@
       },
       {
         "path": "openhcs/core/steps/function_runtime.py",
-        "sha256": "29524d3d61bc3950a4e03c47eadc5747ce391a30756c248ae2463c86394566ce",
+        "sha256": "d7de33cae49f2fc99ef916ed83fff300cbbf70c9b3b05b538265f026827be2b3",
         "role": "Runtime conversion and invocation inside the compiled execution-framework device scope."
       },
       {
@@ -2976,7 +3002,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
+        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -3153,7 +3179,7 @@
       },
       {
         "path": "openhcs/core/source_binding_workspace.py",
-        "sha256": "40aeb10643ad443322ec58c4c9c20f3b7877603c829df9d6294a6d28e4b46773",
+        "sha256": "b61bf76c25164cdb230619f40a6ee3bd4abda72af557ff2282cba2ddd652b4be",
         "role": "Compiled virtual source workspace and binding projection."
       },
       {

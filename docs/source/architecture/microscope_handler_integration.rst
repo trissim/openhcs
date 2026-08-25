@@ -47,6 +47,13 @@ source planes. Once it persists the canonical virtual workspace, its active
 read one post-initialisation authority instead of conditionally combining raw
 store coordinates with projected workspace coordinates.
 
+``MetadataHandler.component_value_set()`` returns one complete
+``MetadataComponentValueSet`` keyed by the canonical ``AllComponents``
+declaration. Handlers implement that single projection; generic consumers
+iterate the declaration instead of calling one handler method per concrete
+axis. Viewer and serialized mappings receive string keys only at their explicit
+boundary.
+
 The persisted workspace records the handler declaration that produced its
 backing references. When the workspace is reopened, that registered handler
 class re-registers its decoder backends together with the plate-specific

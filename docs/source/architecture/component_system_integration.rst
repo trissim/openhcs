@@ -24,5 +24,13 @@ on a particular plate. UI selectors, compiler stages, and runtime filters query
 those projections; they do not invent component keys or depend on a concrete
 microscope module.
 
+Complete component values cross internal boundaries as
+``OpenHCSComponentValues`` keyed by ``AllComponents`` members in declaration
+order. Filename parsers carry that value set in ``FilenameParseResult`` and
+metadata handlers project it through ``MetadataComponentValueSet``. Missing
+values remain explicit entries rather than making each consumer maintain a
+separate list of axes. String-keyed mappings are produced only at declared wire
+or persistence boundaries.
+
 See :doc:`component_validation_system`, :doc:`source_model`, and
 :doc:`processing_semantics`.

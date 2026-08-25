@@ -12,7 +12,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
+        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
         "role": "Declares the published README, Python range, package dependencies, optional surfaces, console commands, and project links."
       },
       {
@@ -42,7 +42,7 @@
       },
       {
         "path": "openhcs/constants/constants.py",
-        "sha256": "7bb3845a99b5682e539fc47e63b0eb8cbad16187d0ffbdd9b6b863929a914435",
+        "sha256": "4cd6c29abd8b8e3ecc396b424d2b8b61e819a215fc1d770d3f6852b260a0691d",
         "role": "Declares supported microscope source identities, processing axes, memory types, and file formats."
       },
       {
@@ -52,7 +52,7 @@
       },
       {
         "path": "openhcs/core/viewer_streaming_service.py",
-        "sha256": "5417225a2087a0316a799d462701b171cd00b7f7eff14c647cdb5a1c01a475b8",
+        "sha256": "3a58e1accfa318b9d1a6ed849acc80e735dedc1394faa67087f3fe8a16f2221d",
         "role": "Owns manual and orchestrated image and ROI streaming through registered viewer declarations."
       },
       {
