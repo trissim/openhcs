@@ -147,6 +147,7 @@ dna/
 torbi/
 
 # Development/analysis folders (local only)
+.codebase/
 archive/
 !docs/archive/
 !docs/archive/**
