@@ -12,6 +12,7 @@ from typing import ClassVar
 
 from polystore import (
     OMEROPlaneAddress,
+    OMEROPlaneFilenameTemplate,
     OMEROWellAddress,
 )
 from polystore.exceptions import MetadataNotFoundError
@@ -304,14 +305,14 @@ class OMEROFilenameParser(FilenameParser):
         return OMEROPlaneAddress.from_filename(filename) is not None
 
     def parse_filename(self, filename: str) -> FilenameParseResult | None:
-        """Project one PolyStore OMERO address onto OpenHCS components."""
+        """Project one PolyStore OMERO filename template onto OpenHCS components."""
 
-        address = OMEROPlaneAddress.from_filename(filename)
-        if address is None:
+        template = OMEROPlaneFilenameTemplate.from_filename(filename)
+        if template is None:
             return None
         return FilenameParseResult.from_projection(
-            address.declared_values(),
-            extension=address.extension,
+            template.projected_values(),
+            extension=template.extension,
         )
 
     def construct_filename(self, components: FilenameParseResult) -> str:
@@ -320,7 +321,7 @@ class OMEROFilenameParser(FilenameParser):
 
         OMERO always generates complete filenames with all components.
         """
-        return OMEROPlaneAddress.from_member_projection(
+        return OMEROPlaneFilenameTemplate.from_member_projection(
             components.declared_values(),
             extension=components.extension,
         ).filename()

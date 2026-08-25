@@ -154,7 +154,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
+        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -617,7 +617,7 @@
   },
   {
     "path": "docs/source/concepts/module_structure.rst",
-    "source_sha256": "5f1222340f4470b3b1cd2a1819356c4861f23b8e3f2d8a94af0916052bd0ec1e",
+    "source_sha256": "ec505381da7f75f2072a57a139d6664152156aaff9835c59b9c56cc557c49720",
     "audience": [
       "contributors",
       "integrators"
@@ -627,8 +627,13 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
+        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
+      },
+      {
+        "path": "external/PolyStore/src/polystore/omero_address.py",
+        "sha256": "8a3ae8789fceba0f099eef2ee983d858a8f83b764f19b70dfa7bb88f521c0c92",
+        "role": "Owns canonical OMERO well, concrete plane-address, and symbolic filename-template semantics."
       },
       {
         "path": "external/python-introspect/README.md",
@@ -700,7 +705,8 @@
       "On 2026-08-23, re-read the complete reference against ZMQRuntime 0.2.15 and the canonical repository-setup how-to; generic process-exit ownership and the setup link are now explicit.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
+      "On 2026-08-25, re-read the complete reference against PolyStore 0.2.8 and revised the package boundary to include its separate symbolic OMERO filename-template declaration."
     ]
   },
   {
@@ -807,7 +813,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
+        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1291,7 +1297,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
+        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1827,7 +1833,7 @@
   },
   {
     "path": "docs/source/guides/omero_integration.rst",
-    "source_sha256": "2347cf7a4edbc676f4273425a18184013455ac2bc8fdadc2e24751baefd1e19c",
+    "source_sha256": "1dc669eecb16bbffe66ca12e1df984ea4e256123c6b4fbe2d202ca52a3932d0a",
     "audience": [
       "OMERO integrators",
       "deployment contributors"
@@ -1839,6 +1845,11 @@
         "path": "external/PolyStore/src/polystore/omero_local.py",
         "sha256": "613f0b3b2fb527ae3753a77127d9affd75bf1d4fc1af655274a93509f3066233",
         "role": "Implements the OMERO-backed PolyStore adapter, including connection and object materialisation behaviour."
+      },
+      {
+        "path": "external/PolyStore/src/polystore/omero_address.py",
+        "sha256": "8a3ae8789fceba0f099eef2ee983d858a8f83b764f19b70dfa7bb88f521c0c92",
+        "role": "Owns strict concrete OMERO plane addresses and symbolic filename templates through one component grammar."
       },
       {
         "path": "external/PolyStore/src/polystore/filemanager.py",
@@ -1871,9 +1882,14 @@
         "role": "Declares the microscope source interface, plate dimensions, metadata, and acquisition access contract."
       },
       {
+        "path": "openhcs/microscopes/omero.py",
+        "sha256": "341733257cfb4c3bbe35dbc311c60e1666d357af6c6b7dc416399f77a92c570e",
+        "role": "Projects PolyStore's concrete and symbolic OMERO filename boundaries into OpenHCS components."
+      },
+      {
         "path": "tests/unit/test_omero_microscope_metadata.py",
-        "sha256": "433ae80bc9e0fe25047ddb0e98a8fd83b3ee952de121256781309e67365c7c33",
-        "role": "Proves OMERO microscope metadata and plate dimensions satisfy the common microscope interface."
+        "sha256": "066e612d760bb5d0a75c5301cc6fb2d39ef460f1d7e84c67679505bec11ec7b9",
+        "role": "Proves microscope metadata plus concrete and symbolic OMERO pattern projection through the common interfaces."
       },
       {
         "path": "openhcs/omero/plugin/README.md",
@@ -1892,7 +1908,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
+        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1924,7 +1940,8 @@
       "Two compose declarations and hardcoded shell probes competed with the runtime lifecycle owner; the bundle now ships one pinned compose file and the wheel gate rejects parallel declarations.",
       "The default compose stack exposed an alpha panel that cannot submit the current execution contract; the upstream OMERO.web viewer remains available while the panel stays behind its owner-package integration gate.",
       "The manager mirrored local connection defaults from Compose; typed settings now project the canonical declaration and explicit values remain remote-instance overrides.",
-      "Generic platform-string dispatch attempted to start Docker Desktop or a host service manager; the integration boundary now requires host-owned Docker availability."
+      "Generic platform-string dispatch attempted to start Docker Desktop or a host service manager; the integration boundary now requires host-owned Docker availability.",
+      "Pattern discovery passed symbolic fields through the strict concrete plane-address type; PolyStore now owns a separate template identity without weakening address validation."
     ],
     "disposition": "revise",
     "validation": [
@@ -1944,7 +1961,8 @@
       "On 2026-08-25, re-read the explanation against the canonical Compose declaration, instance manager, package manifest, wheel validator, plugin compatibility owner, and focused deployment tests; revised the page to distinguish supported storage integration from the gated alpha panel.",
       "On 2026-08-25, verified the manager's typed local connection projection and explicit remote override path against the Compose extension and focused unit tests.",
       "On 2026-08-25, re-read the explanation after removing platform-specific Docker daemon launch; the packaged Compose lifecycle remains OpenHCS-owned and host process lifecycle remains external.",
-      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
+      "On 2026-08-25, re-read the complete explanation against PolyStore 0.2.8, the OpenHCS adapter, and the exact PatternDiscoveryEngine regression; revised the owner boundary for symbolic filename templates."
     ]
   },
   {
@@ -2238,7 +2256,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
+        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2707,7 +2725,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
+        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],

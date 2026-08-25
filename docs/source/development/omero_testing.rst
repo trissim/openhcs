@@ -19,7 +19,9 @@ dtype, padding, and Z/C/T order without a live server.
 Address tests must exercise ``OMEROWellAddress`` and ``OMEROPlaneAddress``
 directly, including multi-letter rows, Windows-style virtual paths, result
 suffixes, sparse site identities, and rejection of string-keyed coordinate
-bags. OpenHCS tests only the nominal projection from PolyStore components into
+bags. ``OMEROPlaneFilenameTemplate`` tests additionally prove that symbolic
+pattern fields round-trip without weakening concrete plane-address validation.
+OpenHCS tests only the nominal projection from PolyStore components into
 ``FilenameParseResult``.
 
 Integration tests

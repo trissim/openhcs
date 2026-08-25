@@ -144,7 +144,7 @@
       },
       {
         "path": "external/PolyStore/docs/source/guides/omero_backend.rst",
-        "sha256": "2ccc3dd21cf24460d41b4eb217dbbbcc8cb81e225dfbbf735402983f338e98ae",
+        "sha256": "77a8a6b816597de6c13633f56cbc3f797976f42799b61d574bc60181b74da1d3",
         "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/omero_backend_system.rst."
       },
       {
@@ -1290,7 +1290,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
+        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1497,7 +1497,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
+        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1559,7 +1559,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
+        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -2313,7 +2313,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
+        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2389,7 +2389,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
+        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2426,7 +2426,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
+        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2755,7 +2755,7 @@
   },
   {
     "path": "docs/source/development/omero_testing.rst",
-    "source_sha256": "dfea9770124c3c1598a804688be4939b9bfeeca0319b9febff7ab6d7a4a65042",
+    "source_sha256": "bb3fd16991f87ad96475fec7b40f055938146d5744857847fa44542f60b1e468",
     "audience": [
       "OpenHCS and OMERO integration testers"
     ],
@@ -2766,6 +2766,16 @@
         "path": "external/PolyStore/src/polystore/omero_local.py",
         "sha256": "613f0b3b2fb527ae3753a77127d9affd75bf1d4fc1af655274a93509f3066233",
         "role": "Generic OMERO addressing, persistence dispatch, and image-plane batching."
+      },
+      {
+        "path": "external/PolyStore/src/polystore/omero_address.py",
+        "sha256": "8a3ae8789fceba0f099eef2ee983d858a8f83b764f19b70dfa7bb88f521c0c92",
+        "role": "Separates strict concrete plane addresses from symbolic filename templates through component-owned grammar."
+      },
+      {
+        "path": "external/PolyStore/tests/test_omero_address.py",
+        "sha256": "15d81321402ccf015f5d687b70c27e64d58ba97e719bb090efeea74821e7ffd0",
+        "role": "Proves exact-address validation and symbolic filename-template round trips independently."
       },
       {
         "path": "external/PolyStore/tests/test_omero_image_plane_batch.py",
@@ -2806,7 +2816,8 @@
     "findings": [
       "The how-to omitted declaration-level tests for OMERO text, table-service, and image-plane semantics and did not require direct plus ZMQ live execution or a cold deployment.",
       "Legacy setup documentation inferred readiness from a hardcoded container name; the how-to now follows the instance manager and PolyStore table-service authorities.",
-      "The how-to did not distinguish the packaged Compose lifecycle from host-owned Docker daemon startup."
+      "The how-to did not distinguish the packaged Compose lifecycle from host-owned Docker daemon startup.",
+      "The address-testing boundary did not distinguish concrete plane identities from symbolic pattern-discovery templates."
     ],
     "disposition": "revise",
     "validation": [
@@ -2819,7 +2830,8 @@
       "On 2026-08-24, rechecked the how-to after PolyStore added pandas 3 and missing-object column projection coverage; the testing tiers and owner boundaries remain accurate.",
       "On 2026-08-25, re-read the how-to against the single packaged Compose declaration, fail-closed context manager, complete table readiness, and CI component diagnostics.",
       "On 2026-08-25, verified the no-daemon-side-effect contract and documented that live tests require Docker to be running before selection.",
-      "On 2026-08-25, re-read the complete page against the integration workflow after OMERO selection became fail-closed and component diagnostics exposed table-service startup; all remaining CI claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the integration workflow after OMERO selection became fail-closed and component diagnostics exposed table-service startup; all remaining CI claims remain accurate.",
+      "On 2026-08-25, re-read the complete how-to against PolyStore's separate exact-address and symbolic-template declarations and their owner tests."
     ]
   },
   {
@@ -2833,7 +2845,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
+        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -3002,7 +3014,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "1f652f447fc0005ab4061b3ad9e0026cae287e1a59ccc2d86637ce3673f43d5c",
+        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

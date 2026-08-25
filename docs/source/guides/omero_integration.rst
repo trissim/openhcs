@@ -22,10 +22,12 @@ OpenHCS
   reports readiness; a responsive Blitz gateway alone is not the complete
   storage contract.
 
-``OMEROLocalBackend`` generates and parses virtual image identities through its
-own ``OMEROPlaneAddress`` declaration. OpenHCS's ``OMEROFilenameParser`` projects
-that declaration into ``FilenameParseResult``; neither package copies the
-filename grammar or imports the other's registry.
+``OMEROLocalBackend`` generates and parses concrete virtual image identities
+through its own ``OMEROPlaneAddress`` declaration. Pattern discovery projects
+symbolic fields through PolyStore's matching ``OMEROPlaneFilenameTemplate``.
+OpenHCS's ``OMEROFilenameParser`` maps both boundaries into
+``FilenameParseResult``; neither package copies the filename grammar or imports
+the other's registry.
 
 Deployment maturity belongs to the packaged ``openhcs/omero`` bundle; web-client
 application behaviour belongs to ``omero_openhcs``. Treat a web entry point as
