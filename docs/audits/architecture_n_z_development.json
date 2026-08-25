@@ -196,7 +196,7 @@
       },
       {
         "path": "openhcs/core/orchestrator/worker_execution.py",
-        "sha256": "f4c04774014c7d423e982cfa84c2d914d068cbe194e53362fea558449fe1f6f5",
+        "sha256": "d5a4c60794e6b6edf162059e1c0a969d3fae8731b7fd32346a692a3c72a8444a",
         "role": "Worker task execution and owner-bound runtime/framework cleanup for process, inline, and thread lanes."
       },
       {
@@ -1262,7 +1262,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "46b221bd46969f47f99d8d60eb98729870e9224b5216b035163f8b7e4c9fed64",
+        "sha256": "6e55bc63b713e75124e2e3fe7bb46bf0e7d2f53d2fca95143a3d64a7eac5f4d3",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1425,7 +1425,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "46b221bd46969f47f99d8d60eb98729870e9224b5216b035163f8b7e4c9fed64",
+        "sha256": "6e55bc63b713e75124e2e3fe7bb46bf0e7d2f53d2fca95143a3d64a7eac5f4d3",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1473,7 +1473,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "46b221bd46969f47f99d8d60eb98729870e9224b5216b035163f8b7e4c9fed64",
+        "sha256": "6e55bc63b713e75124e2e3fe7bb46bf0e7d2f53d2fca95143a3d64a7eac5f4d3",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -2212,7 +2212,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "46b221bd46969f47f99d8d60eb98729870e9224b5216b035163f8b7e4c9fed64",
+        "sha256": "6e55bc63b713e75124e2e3fe7bb46bf0e7d2f53d2fca95143a3d64a7eac5f4d3",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2285,7 +2285,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "46b221bd46969f47f99d8d60eb98729870e9224b5216b035163f8b7e4c9fed64",
+        "sha256": "6e55bc63b713e75124e2e3fe7bb46bf0e7d2f53d2fca95143a3d64a7eac5f4d3",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2320,7 +2320,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "46b221bd46969f47f99d8d60eb98729870e9224b5216b035163f8b7e4c9fed64",
+        "sha256": "6e55bc63b713e75124e2e3fe7bb46bf0e7d2f53d2fca95143a3d64a7eac5f4d3",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2424,7 +2424,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "d10c9ab4ad9d2857fe31a5389a4aa6ace61eb4667a815ef45a02e66c22f43014",
+        "sha256": "3481fd64aca3fe0b8fd580da9201be1dabde3b06e77e03860b9bf3650db0e9a4",
         "role": "Proves stale protocol and application versions fail before UI operation dispatch."
       },
       {
@@ -2518,7 +2518,7 @@
     "authority": [
       {
         "path": "openhcs/__init__.py",
-        "sha256": "6727fe68cff3951c886727ab7f6d978e6a9dbc2d9f36f636d4c5576be4c8f3c0",
+        "sha256": "f18e49bcc096687beb0f2a3bd187492c12f75609f2dfea4473d2c147f54a403c",
         "role": "Single OpenHCS package version authority."
       },
       {
@@ -2588,7 +2588,7 @@
       },
       {
         "path": "tests/unit/test_ci_package_boundaries.py",
-        "sha256": "6ebc27d8fc60b6ca47357b052fee3ff31878ef8a458a26ec29e254ea97c76674",
+        "sha256": "ca127c99068f5a8ff998f618f518ba1cbcd6a03c5419780257134ddb0f6442c5",
         "role": "Proves publication consumes the central release requirements instead of a copied workflow package list."
       }
     ],
@@ -2690,7 +2690,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "46b221bd46969f47f99d8d60eb98729870e9224b5216b035163f8b7e4c9fed64",
+        "sha256": "6e55bc63b713e75124e2e3fe7bb46bf0e7d2f53d2fca95143a3d64a7eac5f4d3",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2856,7 +2856,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "46b221bd46969f47f99d8d60eb98729870e9224b5216b035163f8b7e4c9fed64",
+        "sha256": "6e55bc63b713e75124e2e3fe7bb46bf0e7d2f53d2fca95143a3d64a7eac5f4d3",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

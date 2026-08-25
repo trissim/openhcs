@@ -997,9 +997,12 @@ class QtTopLevelWindowProjection(
         self._main_window = main_window
 
     def summaries(self) -> tuple[UiWindowSummary, ...]:
-        return tuple(
-            self.summary(widget) for widget in self._projected_top_level_widgets()
-        )
+        summaries = []
+        for widget in self._projected_top_level_widgets():
+            summary = WindowManager.project_live_window(widget, self.summary)
+            if summary is not None:
+                summaries.append(summary)
+        return tuple(summaries)
 
     def handles(self, window_id: str) -> bool:
         return self.target(UiWindowIdentity(window_id=window_id)) is not None

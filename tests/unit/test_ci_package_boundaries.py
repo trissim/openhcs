@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
 import re
 import subprocess
@@ -61,6 +62,44 @@ def test_openhcs_version_has_one_source_authority() -> None:
                 assignments.append(str(path.relative_to(REPO_ROOT)))
 
     assert assignments == ["openhcs/__init__.py"]
+
+
+def test_package_import_does_not_claim_process_logging_authority() -> None:
+    probe_source = "\n".join(
+        (
+            "import json",
+            "import logging",
+            "file_handler_init = logging.FileHandler.__init__",
+            "root_logger = logging.getLogger()",
+            "root_level = root_logger.level",
+            "root_handlers = tuple(root_logger.handlers)",
+            "import openhcs",
+            "print(json.dumps({",
+            "    'file_handler_init_unchanged': "
+            "logging.FileHandler.__init__ is file_handler_init,",
+            "    'root_level_unchanged': root_logger.level == root_level,",
+            "    'root_handlers_unchanged': "
+            "tuple(root_logger.handlers) == root_handlers,",
+            "}))",
+        )
+    )
+    probe = subprocess.run(
+        (
+            sys.executable,
+            "-c",
+            probe_source,
+        ),
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(probe.stdout) == {
+        "file_handler_init_unchanged": True,
+        "root_handlers_unchanged": True,
+        "root_level_unchanged": True,
+    }
 
 
 def test_shipped_python_sources_have_no_developer_home_paths() -> None:

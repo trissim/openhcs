@@ -12,7 +12,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "46b221bd46969f47f99d8d60eb98729870e9224b5216b035163f8b7e4c9fed64",
+        "sha256": "6e55bc63b713e75124e2e3fe7bb46bf0e7d2f53d2fca95143a3d64a7eac5f4d3",
         "role": "Declares the published README, Python range, package dependencies, optional surfaces, console commands, and project links."
       },
       {

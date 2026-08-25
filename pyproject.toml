@@ -99,7 +99,7 @@ dependencies = [
     "metaclass-registry>=0.2.0,<0.3",
     "arraybridge>=0.3.2",
     "polystore>=0.2.1",
-    "pyqt-reactive>=0.3.6,<0.4",
+    "pyqt-reactive>=0.3.7,<0.4",
 ]
 
 [project.optional-dependencies]

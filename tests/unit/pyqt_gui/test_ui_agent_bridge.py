@@ -1473,7 +1473,9 @@ def test_floating_embedded_pane_is_not_duplicated_as_qt_top_level() -> None:
         assert pipeline_summaries[0].window_kind == "embedded"
         assert pipeline_pane.dock_widget.isFloating()
     finally:
+        pipeline_pane.dock_widget.close()
         main_window.close()
+        app.processEvents()
 
 
 def test_embedded_registration_does_not_hide_main_window_from_bridge(

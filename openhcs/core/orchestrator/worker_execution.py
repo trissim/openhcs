@@ -55,7 +55,6 @@ from openhcs.core.steps.function_artifact_materialization import (
 )
 from openhcs.utils.environment import OpenHCSProcessEnvironment
 
-
 logger = logging.getLogger(__name__)
 PIPELINE_PROGRESS_STEP_NAME = "pipeline"
 
@@ -384,7 +383,7 @@ def _configure_worker_logging(log_file_base: str) -> None:
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
 
-    file_handler = logging.FileHandler(worker_log_file)
+    file_handler = logging.FileHandler(worker_log_file, encoding="utf-8")
     file_handler.setFormatter(
         logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     )
