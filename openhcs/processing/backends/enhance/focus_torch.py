@@ -1,16 +1,16 @@
+from __future__ import annotations
 
-from __future__ import annotations 
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from openhcs.core.utils import optional_import
-from openhcs.core.memory import torch as torch_decorator
-
 # Import torch modules as optional dependencies
 from openhcs.core.lazy_gpu_imports import torch
-F = optional_import("torch.nn.functional") if torch else None
+from openhcs.core.memory import torch as torch_decorator
+from openhcs.utils.import_utils import optional_import_placeholder
+
+F = optional_import_placeholder("torch.nn.functional") if torch else None
 
 
 class FocusSharpnessMethod(Enum):
@@ -18,6 +18,7 @@ class FocusSharpnessMethod(Enum):
 
     LAPLACIAN = "laplacian"
     GRADIENT = "gradient"
+
 
 def _laplacian_sharpness(image_stack: "torch.Tensor") -> "torch.Tensor":
     return torch.abs(laplacian(image_stack.unsqueeze(1))).squeeze(1)
@@ -82,8 +83,10 @@ def laplacian(image: "torch.Tensor") -> "torch.Tensor":
     """Applies a 2D Laplacian filter."""
     # Input image is expected to be [N, C, H, W] or [C, H, W] or [H, W]
     # Kernel is [out_channels, in_channels/groups, kH, kW]
-    kernel = torch.tensor([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=image.dtype, device=image.device)
-    kernel = kernel.reshape(1, 1, 3, 3) # For a single channel input/output
+    kernel = torch.tensor(
+        [[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=image.dtype, device=image.device
+    )
+    kernel = kernel.reshape(1, 1, 3, 3)  # For a single channel input/output
 
     projection = LaplacianImageProjection.from_image(image)
 
@@ -93,13 +96,14 @@ def laplacian(image: "torch.Tensor") -> "torch.Tensor":
     laplacian_img = F.conv2d(projection.image, kernel, padding=1)
     return projection.restore(laplacian_img)
 
+
 @torch_decorator
 def focus_stack_max_sharpness(
     image_stack: "torch.Tensor",
     method: FocusSharpnessMethod = FocusSharpnessMethod.LAPLACIAN,
     patch_size: Optional[int] = None,
     stride: Optional[int] = None,
-    normalize_sharpness: bool = False
+    normalize_sharpness: bool = False,
 ) -> "torch.Tensor":
     """
     GPU-accelerated focus stacking using PyTorch. Selects sharpest regions from a Z-stack.
@@ -133,10 +137,8 @@ def focus_stack_max_sharpness(
 
     # Generate sliding window patches
     patches = F.unfold(
-        sharpness.unsqueeze(1),
-        kernel_size=patch_size,
-        stride=stride
-    ).view(Z, -1, H//stride, W//stride)
+        sharpness.unsqueeze(1), kernel_size=patch_size, stride=stride
+    ).view(Z, -1, H // stride, W // stride)
 
     # Find sharpest z-index per patch
     _, max_indices = torch.max(patches, dim=0)
@@ -147,14 +149,20 @@ def focus_stack_max_sharpness(
 
     for i in range(max_indices.shape[1]):
         for j in range(max_indices.shape[2]):
-            z_idx = max_indices[0,i,j]
+            z_idx = max_indices[0, i, j]
             h_start = i * stride
             w_start = j * stride
 
-            composite_slice = composite[h_start:h_start+patch_size, w_start:w_start+patch_size]
-            weight_slice = weights[h_start:h_start+patch_size, w_start:w_start+patch_size]
+            composite_slice = composite[
+                h_start : h_start + patch_size, w_start : w_start + patch_size
+            ]
+            weight_slice = weights[
+                h_start : h_start + patch_size, w_start : w_start + patch_size
+            ]
 
-            composite_slice += image_stack[z_idx, h_start:h_start+patch_size, w_start:w_start+patch_size]
+            composite_slice += image_stack[
+                z_idx, h_start : h_start + patch_size, w_start : w_start + patch_size
+            ]
             weight_slice += torch.ones_like(weight_slice)
 
     # Avoid division by zero in overlapping regions

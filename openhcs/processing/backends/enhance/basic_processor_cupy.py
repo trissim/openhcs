@@ -15,25 +15,26 @@ Doctrinal Clauses:
 - Clause 88 — No Inferred Capabilities: Explicit CuPy dependency
 - Clause 273 — Memory Backend Restrictions: GPU-only implementation
 """
-from __future__ import annotations 
+
+from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
 
 # Import decorator directly from core.memory to avoid circular imports
 from openhcs.core.memory import cupy as cupy_func
-from openhcs.core.utils import optional_import
 from openhcs.processing.backends.enhance.flatfield import FlatfieldCorrectionMode
+from openhcs.utils.import_utils import optional_import_placeholder
 
 # For type checking only
 if TYPE_CHECKING:
     import cupy as cp
 
 # Import CuPy as an optional dependency
-cp = optional_import("cupy")
+cp = optional_import_placeholder("cupy")
 cupyx_scipy = None
-if cp is not None:
-    cupyx_scipy = optional_import("cupyx.scipy")
+if cp:
+    cupyx_scipy = optional_import_placeholder("cupyx.scipy")
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,9 @@ def _validate_cupy_array(array: Any, name: str = "input") -> None:
         )
 
 
-def _low_rank_approximation(matrix: "cp.ndarray", rank: int = 3, max_memory_gb: float = 1.0) -> "cp.ndarray":
+def _low_rank_approximation(
+    matrix: "cp.ndarray", rank: int = 3, max_memory_gb: float = 1.0
+) -> "cp.ndarray":
     """
     Compute a low-rank approximation of a matrix using SVD with memory optimization.
 
@@ -87,7 +90,9 @@ def _low_rank_approximation(matrix: "cp.ndarray", rank: int = 3, max_memory_gb: 
 
     if svd_memory_estimate > max_memory_gb:
         # Use chunked processing for large matrices
-        logger.info(f"🔧 MEMORY OPTIMIZATION: Matrix too large ({svd_memory_estimate:.2f}GB > {max_memory_gb}GB), using chunked SVD")
+        logger.info(
+            f"🔧 MEMORY OPTIMIZATION: Matrix too large ({svd_memory_estimate:.2f}GB > {max_memory_gb}GB), using chunked SVD"
+        )
         return _chunked_low_rank_approximation(matrix, rank, max_memory_gb)
     else:
         # Use standard SVD for smaller matrices
@@ -102,17 +107,23 @@ def _low_rank_approximation(matrix: "cp.ndarray", rank: int = 3, max_memory_gb: 
             low_rank = (U * s) @ Vh
 
             return low_rank
-       # except (cp.cuda.memory.OutOfMemoryError, cp.cuda.cuda.CUDAError):
-        except (cp.cuda.memory.OutOfMemoryError, 
+        # except (cp.cuda.memory.OutOfMemoryError, cp.cuda.cuda.CUDAError):
+        except (
+            cp.cuda.memory.OutOfMemoryError,
             cp.cuda.runtime.CUDARuntimeError,
             cp.cuda.cusolver.CUSOLVERError,
-            cp.cuda.cublas.CUBLASError):
+            cp.cuda.cublas.CUBLASError,
+        ):
             # Fallback to chunked processing if standard SVD fails
-            logger.warning("🔧 MEMORY OPTIMIZATION: Standard SVD failed, falling back to chunked processing")
+            logger.warning(
+                "🔧 MEMORY OPTIMIZATION: Standard SVD failed, falling back to chunked processing"
+            )
             return _chunked_low_rank_approximation(matrix, rank, max_memory_gb)
 
 
-def _chunked_low_rank_approximation(matrix: "cp.ndarray", rank: int, max_memory_gb: float) -> "cp.ndarray":
+def _chunked_low_rank_approximation(
+    matrix: "cp.ndarray", rank: int, max_memory_gb: float
+) -> "cp.ndarray":
     """
     Compute low-rank approximation using adaptive dynamic chunking.
 
@@ -137,7 +148,9 @@ def _chunked_low_rank_approximation(matrix: "cp.ndarray", rank: int, max_memory_
     except Exception:
         # Fallback to conservative estimate if memory query fails
         available_gb = max_memory_gb * 0.5
-        logger.debug(f"🔧 ADAPTIVE CHUNKING: Memory query failed, using conservative {available_gb:.2f}GB")
+        logger.debug(
+            f"🔧 ADAPTIVE CHUNKING: Memory query failed, using conservative {available_gb:.2f}GB"
+        )
 
     # Calculate initial chunk size based on available memory
     bytes_per_element = matrix.dtype.itemsize
@@ -145,7 +158,9 @@ def _chunked_low_rank_approximation(matrix: "cp.ndarray", rank: int, max_memory_
 
     # Use 10% of available memory for initial chunk size
     usable_memory_gb = min(available_gb * 0.1, max_memory_gb)
-    max_elements_per_chunk = int((usable_memory_gb * 1024**3) / (bytes_per_element * svd_overhead))
+    max_elements_per_chunk = int(
+        (usable_memory_gb * 1024**3) / (bytes_per_element * svd_overhead)
+    )
     initial_chunk_size = min(YX, max_elements_per_chunk // Z)
 
     # Enforce reasonable bounds
@@ -153,7 +168,9 @@ def _chunked_low_rank_approximation(matrix: "cp.ndarray", rank: int, max_memory_
     max_chunk_size = YX // 4  # Don't make chunks larger than 25% of total
     current_chunk_size = max(min_chunk_size, min(initial_chunk_size, max_chunk_size))
 
-    logger.debug(f"🔧 ADAPTIVE CHUNKING: Starting with chunk size {current_chunk_size:,} (of {YX:,} total)")
+    logger.debug(
+        f"🔧 ADAPTIVE CHUNKING: Starting with chunk size {current_chunk_size:,} (of {YX:,} total)"
+    )
 
     # Adaptive feedback variables
     success_count = 0
@@ -186,43 +203,58 @@ def _chunked_low_rank_approximation(matrix: "cp.ndarray", rank: int, max_memory_
                 old_size = current_chunk_size
                 current_chunk_size = min(int(current_chunk_size * 1.5), max_chunk_size)
                 if current_chunk_size > old_size:
-                    logger.debug(f"🔧 ADAPTIVE CHUNKING: Growing chunk size {old_size:,} → {current_chunk_size:,}")
+                    logger.debug(
+                        f"🔧 ADAPTIVE CHUNKING: Growing chunk size {old_size:,} → {current_chunk_size:,}"
+                    )
                 success_count = 0
 
-        except (cp.cuda.memory.OutOfMemoryError,
-                cp.cuda.runtime.CUDARuntimeError,
-                cp.cuda.cusolver.CUSOLVERError,
-                cp.cuda.cublas.CUBLASError):
+        except (
+            cp.cuda.memory.OutOfMemoryError,
+            cp.cuda.runtime.CUDARuntimeError,
+            cp.cuda.cusolver.CUSOLVERError,
+            cp.cuda.cublas.CUBLASError,
+        ):
             # 🔧 FAILURE: Shrink chunk size and retry
             old_size = current_chunk_size
             current_chunk_size = max(int(current_chunk_size * 0.5), min_chunk_size)
             success_count = 0
 
             if current_chunk_size < old_size:
-                logger.info(f"🔧 ADAPTIVE CHUNKING: OOM, shrinking chunk size {old_size:,} → {current_chunk_size:,}")
+                logger.info(
+                    f"🔧 ADAPTIVE CHUNKING: OOM, shrinking chunk size {old_size:,} → {current_chunk_size:,}"
+                )
                 # Don't advance position, retry with smaller chunk
                 continue
             else:
                 # Chunk size can't be reduced further, fallback to CPU for this chunk
-                logger.warning(f"🔧 ADAPTIVE CHUNKING: Minimum chunk size reached, using CPU for chunk {current_pos}:{end_pos}")
+                logger.warning(
+                    f"🔧 ADAPTIVE CHUNKING: Minimum chunk size reached, using CPU for chunk {current_pos}:{end_pos}"
+                )
 
                 try:
                     # Process on CPU
                     chunk_cpu = chunk.get()
                     import numpy as np
+
                     U_cpu, s_cpu, Vh_cpu = np.linalg.svd(chunk_cpu, full_matrices=False)
                     s_cpu[rank:] = 0
                     low_rank_chunk_cpu = (U_cpu * s_cpu) @ Vh_cpu
                     low_rank_chunk = cp.asarray(low_rank_chunk_cpu)
                     low_rank_chunks.append(low_rank_chunk)
 
-                    logger.debug("🔧 ADAPTIVE CHUNKING: Successfully processed chunk on CPU")
+                    logger.debug(
+                        "🔧 ADAPTIVE CHUNKING: Successfully processed chunk on CPU"
+                    )
                     current_pos = end_pos
 
                 except Exception as cpu_error:
-                    logger.error(f"🔧 ADAPTIVE CHUNKING: CPU fallback failed: {cpu_error}")
+                    logger.error(
+                        f"🔧 ADAPTIVE CHUNKING: CPU fallback failed: {cpu_error}"
+                    )
                     # Last resort: use identity (no correction for this chunk)
-                    logger.warning(f"🔧 ADAPTIVE CHUNKING: Using identity matrix for chunk {current_pos}:{end_pos}")
+                    logger.warning(
+                        f"🔧 ADAPTIVE CHUNKING: Using identity matrix for chunk {current_pos}:{end_pos}"
+                    )
                     low_rank_chunk = chunk.copy()
                     low_rank_chunks.append(low_rank_chunk)
                     current_pos = end_pos
@@ -230,7 +262,9 @@ def _chunked_low_rank_approximation(matrix: "cp.ndarray", rank: int, max_memory_
     # Concatenate all processed chunks
     low_rank = cp.concatenate(low_rank_chunks, axis=1)
 
-    logger.debug(f"🔧 ADAPTIVE CHUNKING: Completed processing {len(low_rank_chunks)} chunks")
+    logger.debug(
+        f"🔧 ADAPTIVE CHUNKING: Completed processing {len(low_rank_chunks)} chunks"
+    )
     return low_rank
 
 
@@ -260,7 +294,7 @@ def basic_flatfield_correction_cupy(
     correction_mode: FlatfieldCorrectionMode = FlatfieldCorrectionMode.DIVIDE,
     normalize_output: bool = True,
     verbose: bool = False,
-    max_memory_gb: float = 1.0
+    max_memory_gb: float = 1.0,
 ) -> "cp.ndarray":
     """
     Perform BaSiC-style illumination correction on a 3D image stack using CuPy.
@@ -312,17 +346,34 @@ def basic_flatfield_correction_cupy(
     # Try GPU processing first, fallback to CPU on OOM
     try:
         return _gpu_flatfield_correction(
-            image, max_iters, lambda_sparse, lambda_lowrank, rank, tol,
-            correction_mode, normalize_output, verbose, max_memory_gb,
-            image_size_gb, estimated_peak_memory, z, y, x, orig_dtype
+            image,
+            max_iters,
+            lambda_sparse,
+            lambda_lowrank,
+            rank,
+            tol,
+            correction_mode,
+            normalize_output,
+            verbose,
+            max_memory_gb,
+            image_size_gb,
+            estimated_peak_memory,
+            z,
+            y,
+            x,
+            orig_dtype,
         )
-   # except (cp.cuda.memory.OutOfMemoryError, cp.cuda.cuda.CUDAError):
-    except (cp.cuda.memory.OutOfMemoryError,
+    # except (cp.cuda.memory.OutOfMemoryError, cp.cuda.cuda.CUDAError):
+    except (
+        cp.cuda.memory.OutOfMemoryError,
         cp.cuda.runtime.CUDARuntimeError,
         cp.cuda.cusolver.CUSOLVERError,
-        cp.cuda.cublas.CUBLASError) as oom_error:
+        cp.cuda.cublas.CUBLASError,
+    ) as oom_error:
         logger.warning(f"🔧 GPU OOM: {oom_error}")
-        logger.info(f"🔧 CPU FALLBACK: GPU processing failed, switching to CPU for {z}×{y}×{x} image")
+        logger.info(
+            f"🔧 CPU FALLBACK: GPU processing failed, switching to CPU for {z}×{y}×{x} image"
+        )
 
         # 🔧 CRITICAL: Delete ALL intermediate variables from failed GPU processing
         logger.debug("🔧 CPU FALLBACK: Cleaning up intermediate GPU variables...")
@@ -335,36 +386,63 @@ def basic_flatfield_correction_cupy(
 
             # Force garbage collection
             import gc
+
             gc.collect()
 
             # Check memory after cleanup
             free_after_cleanup, total = cp.cuda.runtime.memGetInfo()
-            logger.info(f"🔧 CPU FALLBACK: After cleanup: {free_after_cleanup / 1e9:.2f}GB free of {total / 1e9:.2f}GB total")
+            logger.info(
+                f"🔧 CPU FALLBACK: After cleanup: {free_after_cleanup / 1e9:.2f}GB free of {total / 1e9:.2f}GB total"
+            )
 
         except Exception as cleanup_error:
             logger.warning(f"🔧 CPU FALLBACK: Cleanup warning: {cleanup_error}")
 
         # Fallback to CPU processing
         return _cpu_fallback_flatfield_correction(
-            image, max_iters, lambda_sparse, lambda_lowrank, rank, tol,
-            correction_mode, normalize_output, verbose
+            image,
+            max_iters,
+            lambda_sparse,
+            lambda_lowrank,
+            rank,
+            tol,
+            correction_mode,
+            normalize_output,
+            verbose,
         )
 
 
 def _gpu_flatfield_correction(
-    image: "cp.ndarray", max_iters: int, lambda_sparse: float, lambda_lowrank: float,
-    rank: int, tol: float, correction_mode: FlatfieldCorrectionMode, normalize_output: bool, verbose: bool,
-    max_memory_gb: float, image_size_gb: float, estimated_peak_memory: float, z: int, y: int, x: int, orig_dtype
+    image: "cp.ndarray",
+    max_iters: int,
+    lambda_sparse: float,
+    lambda_lowrank: float,
+    rank: int,
+    tol: float,
+    correction_mode: FlatfieldCorrectionMode,
+    normalize_output: bool,
+    verbose: bool,
+    max_memory_gb: float,
+    image_size_gb: float,
+    estimated_peak_memory: float,
+    z: int,
+    y: int,
+    x: int,
+    orig_dtype,
 ) -> "cp.ndarray":
     """GPU-based flatfield correction implementation."""
 
     if estimated_peak_memory > max_memory_gb * 2:
-        logger.warning(f"⚠️  Large image detected: {z}×{y}×{x} ({image_size_gb:.2f}GB). "
-                      f"Estimated peak memory: {estimated_peak_memory:.2f}GB. "
-                      f"Consider reducing image size or increasing max_memory_gb parameter.")
+        logger.warning(
+            f"⚠️  Large image detected: {z}×{y}×{x} ({image_size_gb:.2f}GB). "
+            f"Estimated peak memory: {estimated_peak_memory:.2f}GB. "
+            f"Consider reducing image size or increasing max_memory_gb parameter."
+        )
 
-    logger.debug(f"🔧 MEMORY INFO: Image size {z}×{y}×{x}, {image_size_gb:.2f}GB, "
-                f"max_memory_gb={max_memory_gb}, estimated peak={estimated_peak_memory:.2f}GB")
+    logger.debug(
+        f"🔧 MEMORY INFO: Image size {z}×{y}×{x}, {image_size_gb:.2f}GB, "
+        f"max_memory_gb={max_memory_gb}, estimated peak={estimated_peak_memory:.2f}GB"
+    )
 
     # Initialize variables to None for proper cleanup
     image_float = None
@@ -387,10 +465,10 @@ def _gpu_flatfield_correction(
         S = cp.zeros_like(D)  # Sparse component (foreground/structures)
 
         # Compute initial norm for convergence check
-        norm_D = cp.linalg.norm(D, 'fro')
+        norm_D = cp.linalg.norm(D, "fro")
 
         # Track convergence for early termination
-        prev_residual = float('inf')
+        prev_residual = float("inf")
         stagnation_count = 0
         max_stagnation = 5  # Stop if no improvement for 5 iterations
 
@@ -407,14 +485,18 @@ def _gpu_flatfield_correction(
             S = _soft_threshold(D - L, lambda_sparse)
 
             # Check convergence
-            residual = cp.linalg.norm(D - L - S, 'fro') / norm_D
+            residual = cp.linalg.norm(D - L - S, "fro") / norm_D
             if verbose and (iteration % 10 == 0 or iteration == max_iters - 1):
-                logger.info(f"Iteration {iteration+1}/{max_iters}, residual: {residual:.6f}")
+                logger.info(
+                    f"Iteration {iteration+1}/{max_iters}, residual: {residual:.6f}"
+                )
 
             # Early termination conditions
             if residual < tol:
                 if verbose:
-                    logger.info(f"Converged after {iteration+1} iterations (residual < {tol})")
+                    logger.info(
+                        f"Converged after {iteration+1} iterations (residual < {tol})"
+                    )
                 break
 
             # Check for stagnation (no significant improvement)
@@ -423,7 +505,9 @@ def _gpu_flatfield_correction(
                 stagnation_count += 1
                 if stagnation_count >= max_stagnation:
                     if verbose:
-                        logger.info(f"Early termination after {iteration+1} iterations (stagnation)")
+                        logger.info(
+                            f"Early termination after {iteration+1} iterations (stagnation)"
+                        )
                     break
             else:
                 stagnation_count = 0  # Reset counter if we see improvement
@@ -458,36 +542,43 @@ def _gpu_flatfield_correction(
 
         return corrected
 
-    except (cp.cuda.memory.OutOfMemoryError,
-            cp.cuda.runtime.CUDARuntimeError,
-            cp.cuda.cusolver.CUSOLVERError,
-            cp.cuda.cublas.CUBLASError) as gpu_error:
+    except (
+        cp.cuda.memory.OutOfMemoryError,
+        cp.cuda.runtime.CUDARuntimeError,
+        cp.cuda.cusolver.CUSOLVERError,
+        cp.cuda.cublas.CUBLASError,
+    ) as gpu_error:
 
         # 🔧 CRITICAL: Clean up ALL intermediate variables before re-raising
-        logger.debug("🔧 GPU PROCESSING: Cleaning up intermediate variables after OOM...")
+        logger.debug(
+            "🔧 GPU PROCESSING: Cleaning up intermediate variables after OOM..."
+        )
         try:
             # Delete all local intermediate variables
-            if 'image_float' in locals() and image_float is not None:
+            if "image_float" in locals() and image_float is not None:
                 del image_float
-            if 'D' in locals() and D is not None:
+            if "D" in locals() and D is not None:
                 del D
-            if 'L' in locals() and L is not None:
+            if "L" in locals() and L is not None:
                 del L
-            if 'S' in locals() and S is not None:
+            if "S" in locals() and S is not None:
                 del S
-            if 'L_stack' in locals() and L_stack is not None:
+            if "L_stack" in locals() and L_stack is not None:
                 del L_stack
-            if 'corrected' in locals() and corrected is not None:
+            if "corrected" in locals() and corrected is not None:
                 del corrected
 
             # Force garbage collection
             import gc
+
             gc.collect()
 
             logger.debug("🔧 GPU PROCESSING: Intermediate variables cleaned up")
 
         except Exception as cleanup_error:
-            logger.warning(f"🔧 GPU PROCESSING: Variable cleanup warning: {cleanup_error}")
+            logger.warning(
+                f"🔧 GPU PROCESSING: Variable cleanup warning: {cleanup_error}"
+            )
 
         # Re-raise the original GPU error for the outer exception handler
         raise gpu_error
@@ -505,7 +596,7 @@ def basic_flatfield_correction_batch_cupy(
     correction_mode: FlatfieldCorrectionMode = FlatfieldCorrectionMode.DIVIDE,
     normalize_output: bool = True,
     verbose: bool = False,
-    max_memory_gb: float = 1.0
+    max_memory_gb: float = 1.0,
 ) -> "cp.ndarray":
     """
     Apply BaSiC flatfield correction to a batch of 3D image stacks.
@@ -551,7 +642,7 @@ def basic_flatfield_correction_batch_cupy(
                 correction_mode=correction_mode,
                 normalize_output=normalize_output,
                 verbose=verbose,
-                max_memory_gb=max_memory_gb
+                max_memory_gb=max_memory_gb,
             )
             result_list.append(corrected)
 
@@ -570,7 +661,7 @@ def basic_flatfield_correction_batch_cupy(
             correction_mode=correction_mode,
             normalize_output=normalize_output,
             verbose=verbose,
-            max_memory_gb=max_memory_gb
+            max_memory_gb=max_memory_gb,
         )
         result_list.append(corrected)
 
@@ -579,13 +670,22 @@ def basic_flatfield_correction_batch_cupy(
 
 
 def _cpu_fallback_flatfield_correction(
-    image: "cp.ndarray", max_iters: int, lambda_sparse: float, lambda_lowrank: float,
-    rank: int, tol: float, correction_mode: FlatfieldCorrectionMode, normalize_output: bool, verbose: bool
+    image: "cp.ndarray",
+    max_iters: int,
+    lambda_sparse: float,
+    lambda_lowrank: float,
+    rank: int,
+    tol: float,
+    correction_mode: FlatfieldCorrectionMode,
+    normalize_output: bool,
+    verbose: bool,
 ) -> "cp.ndarray":
     """CPU fallback for flatfield correction when GPU runs out of memory."""
 
     try:
-        from openhcs.processing.backends.enhance.basic_processor_numpy import basic_flatfield_correction_numpy
+        from openhcs.processing.backends.enhance.basic_processor_numpy import (
+            basic_flatfield_correction_numpy,
+        )
 
         # 🔧 AGGRESSIVE GPU CLEANUP: Free as much GPU memory as possible before CPU conversion
         logger.info("🔧 CPU FALLBACK: Clearing GPU memory before CPU conversion...")
@@ -613,7 +713,9 @@ def _cpu_fallback_flatfield_correction(
 
             except cp.cuda.memory.OutOfMemoryError:
                 # If even single slice fails, try smaller chunks
-                logger.warning(f"🔧 CPU FALLBACK: Slice {i} too large, converting in sub-chunks...")
+                logger.warning(
+                    f"🔧 CPU FALLBACK: Slice {i} too large, converting in sub-chunks..."
+                )
                 slice_chunks = []
                 chunk_size = y // 4  # Quarter the slice
 
@@ -625,14 +727,18 @@ def _cpu_fallback_flatfield_correction(
 
                 # Reassemble slice on CPU
                 import numpy as np
+
                 slice_cpu = np.concatenate(slice_chunks, axis=0)
                 image_cpu_slices.append(slice_cpu)
 
         # Reassemble full image on CPU
         import numpy as np
+
         image_cpu = np.stack(image_cpu_slices, axis=0)
 
-        logger.info(f"🔧 CPU FALLBACK: Successfully converted to CPU, processing {image_cpu.shape} image")
+        logger.info(
+            f"🔧 CPU FALLBACK: Successfully converted to CPU, processing {image_cpu.shape} image"
+        )
 
         # Process on CPU
         corrected_cpu = basic_flatfield_correction_numpy(
@@ -644,11 +750,13 @@ def _cpu_fallback_flatfield_correction(
             tol=tol,
             correction_mode=correction_mode,
             normalize_output=normalize_output,
-            verbose=verbose
+            verbose=verbose,
         )
 
         # 🔧 AGGRESSIVE GPU CLEANUP: Clear ALL intermediate data before converting result back
-        logger.info("🔧 CPU FALLBACK: Clearing all GPU memory before converting result back...")
+        logger.info(
+            "🔧 CPU FALLBACK: Clearing all GPU memory before converting result back..."
+        )
         try:
             # Clear all GPU memory pools
             cp.get_default_memory_pool().free_all_blocks()
@@ -665,9 +773,12 @@ def _cpu_fallback_flatfield_correction(
 
             # Force garbage collection
             import gc
+
             gc.collect()
 
-            logger.debug("🔧 CPU FALLBACK: GPU memory cleared, converting result back to CuPy...")
+            logger.debug(
+                "🔧 CPU FALLBACK: GPU memory cleared, converting result back to CuPy..."
+            )
 
         except Exception as cleanup_error:
             logger.warning(f"🔧 CPU FALLBACK: GPU cleanup warning: {cleanup_error}")
@@ -676,9 +787,13 @@ def _cpu_fallback_flatfield_correction(
         logger.info("🔧 CPU FALLBACK: Converting result back to CuPy...")
         corrected = cp.asarray(corrected_cpu)
 
-        logger.info("🔧 CPU FALLBACK: Successfully processed on CPU and converted back to GPU")
+        logger.info(
+            "🔧 CPU FALLBACK: Successfully processed on CPU and converted back to GPU"
+        )
         return corrected
 
     except Exception as cpu_error:
         logger.error(f"🔧 CPU FALLBACK: Failed to process on CPU: {cpu_error}")
-        raise RuntimeError(f"Both GPU and CPU processing failed. GPU OOM, CPU error: {cpu_error}") from cpu_error
+        raise RuntimeError(
+            f"Both GPU and CPU processing failed. GPU OOM, CPU error: {cpu_error}"
+        ) from cpu_error

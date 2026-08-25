@@ -9,7 +9,8 @@ Doctrinal Clauses:
 - Clause 88 — No Inferred Capabilities: Explicit CuPy dependency
 - Clause 106-A — Declared Memory Types: All methods specify CuPy arrays
 """
-from __future__ import annotations 
+
+from __future__ import annotations
 
 import logging
 import os
@@ -17,9 +18,9 @@ from abc import abstractmethod
 from typing import Any, List, Optional, Tuple
 
 from metaclass_registry import AutoRegisterMeta
+
 from openhcs.core.memory import cupy as cupy_func
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
-from openhcs.core.utils import optional_import
 from openhcs.processing.backends.processors.method_axes import (
     EdgeMagnitudeMethod,
     ScipyBoundaryMode,
@@ -27,11 +28,12 @@ from openhcs.processing.backends.processors.method_axes import (
     SpatialBinMethod,
     StackProjectionMethod,
 )
+from openhcs.utils.import_utils import optional_import_placeholder
 
 logger = logging.getLogger(__name__)
 
 # Check if we're in subprocess runner mode and should skip GPU imports
-if os.getenv('OPENHCS_SUBPROCESS_NO_GPU') == '1':
+if os.getenv("OPENHCS_SUBPROCESS_NO_GPU") == "1":
     # Subprocess runner mode - skip GPU imports
     cp = None
     ndimage = None
@@ -39,21 +41,23 @@ if os.getenv('OPENHCS_SUBPROCESS_NO_GPU') == '1':
     logger.info("Subprocess runner mode - skipping cupy import")
 else:
     # Normal mode - import CuPy as an optional dependency
-    cp = optional_import("cupy")
+    cp = optional_import_placeholder("cupy")
     ndimage = None
-    if cp is not None:
-        cupyx_scipy = optional_import("cupyx.scipy")
-        if cupyx_scipy is not None:
+    if cp:
+        cupyx_scipy = optional_import_placeholder("cupyx.scipy")
+        if cupyx_scipy:
             ndimage = cupyx_scipy.ndimage
 
     # Import CuCIM for edge detection
-    cucim_filters = optional_import("cucim.skimage.filters")
+    cucim_filters = optional_import_placeholder("cucim.skimage.filters")
 
 logger = logging.getLogger(__name__)
 
 
 @cupy_func
-def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1) -> "cp.ndarray":
+def create_linear_weight_mask(
+    height: int, width: int, margin_ratio: float = 0.1
+) -> "cp.ndarray":
     """
     Create a 2D weight mask that linearly ramps from 0 at the edges to 1 in the center.
 
@@ -108,14 +112,19 @@ def _validate_3d_array(array: Any, name: str = "input") -> None:
     # No need to check for CuPy availability here
 
     if not isinstance(array, cp.ndarray):
-        raise TypeError(f"{name} must be a CuPy array, got {type(array)}. "
-                       f"No automatic conversion is performed to maintain explicit contracts.")
+        raise TypeError(
+            f"{name} must be a CuPy array, got {type(array)}. "
+            f"No automatic conversion is performed to maintain explicit contracts."
+        )
 
     if array.ndim != 3:
         raise ValueError(f"{name} must be a 3D array, got {array.ndim}D")
 
+
 @cupy_func
-def sharpen(image: "cp.ndarray", radius: float = 1.0, amount: float = 1.0) -> "cp.ndarray":
+def sharpen(
+    image: "cp.ndarray", radius: float = 1.0, amount: float = 1.0
+) -> "cp.ndarray":
     """
     Sharpen a 3D image using unsharp masking - GPU PARALLELIZED.
 
@@ -164,11 +173,12 @@ def sharpen(image: "cp.ndarray", radius: float = 1.0, amount: float = 1.0) -> "c
     sharpened_rescaled = cp.where(
         valid_range,
         (sharpened - min_per_slice) * 65535 / range_per_slice,
-        sharpened * 65535
+        sharpened * 65535,
     )
 
     # Convert back to original dtype
     return sharpened_rescaled.astype(dtype)
+
 
 @cupy_func
 def percentile_normalize(
@@ -177,7 +187,7 @@ def percentile_normalize(
     high_percentile: float = 99.0,
     target_min: float = None,
     target_max: float = None,
-    preserve_dtype: bool = True
+    preserve_dtype: bool = True,
 ) -> "cp.ndarray":
     """
     Normalize a 3D image using percentile-based contrast stretching.
@@ -215,9 +225,12 @@ def percentile_normalize(
         percentile_func=cp.percentile,
         clip_func=cp.clip,
         ones_like_func=cp.ones_like,
-        zeros_like_func=lambda arr, dtype=None: cp.zeros_like(arr, dtype=dtype or cp.float32),
-        preserve_dtype=preserve_dtype
+        zeros_like_func=lambda arr, dtype=None: cp.zeros_like(
+            arr, dtype=dtype or cp.float32
+        ),
+        preserve_dtype=preserve_dtype,
     )
+
 
 @cupy_func
 def stack_percentile_normalize(
@@ -226,7 +239,7 @@ def stack_percentile_normalize(
     high_percentile: float = 99.0,
     target_min: float = None,
     target_max: float = None,
-    preserve_dtype: bool = True
+    preserve_dtype: bool = True,
 ) -> "cp.ndarray":
     """
     Normalize a stack using global percentile-based contrast stretching.
@@ -248,7 +261,7 @@ def stack_percentile_normalize(
     _validate_3d_array(stack)
 
     # Import shared utilities
-    from .percentile_utils import resolve_target_range, percentile_normalize_core
+    from .percentile_utils import percentile_normalize_core, resolve_target_range
 
     # Auto-detect target range based on input dtype if not specified
     target_min, target_max = resolve_target_range(stack.dtype, target_min, target_max)
@@ -263,8 +276,9 @@ def stack_percentile_normalize(
         percentile_func=lambda arr, pct: cp.percentile(arr, pct),
         clip_func=cp.clip,
         ones_like_func=cp.ones_like,
-        preserve_dtype=preserve_dtype
+        preserve_dtype=preserve_dtype,
     )
+
 
 @cupy_func
 def create_composite(
@@ -282,13 +296,20 @@ def create_composite(
     """
     # 🔄 MEMORY CONVERSION LOGGING: Log what we actually received
     import logging
+
     logger = logging.getLogger(__name__)
-    logger.info(f"🔄 CREATE_COMPOSITE: Called with stack type: {type(stack)}, shape: {getattr(stack, 'shape', 'no shape')}")
-    logger.info(f"🔄 CREATE_COMPOSITE: weights parameter - type: {type(weights)}, value: {weights}")
+    logger.info(
+        f"🔄 CREATE_COMPOSITE: Called with stack type: {type(stack)}, shape: {getattr(stack, 'shape', 'no shape')}"
+    )
+    logger.info(
+        f"🔄 CREATE_COMPOSITE: weights parameter - type: {type(weights)}, value: {weights}"
+    )
 
     # Validate input is 3D array
-    if not hasattr(stack, 'shape') or len(stack.shape) != 3:
-        raise TypeError(f"stack must be a 3D CuPy array, got shape: {getattr(stack, 'shape', 'no shape')}")
+    if not hasattr(stack, "shape") or len(stack.shape) != 3:
+        raise TypeError(
+            f"stack must be a 3D CuPy array, got shape: {getattr(stack, 'shape', 'no shape')}"
+        )
 
     n_slices, height, width = stack.shape
 
@@ -302,11 +323,17 @@ def create_composite(
         weights = list(weights)
         logger.info(f"🔄 CREATE_COMPOSITE: Using provided weights: {weights}")
         if len(weights) != n_slices:
-            raise ValueError(f"Number of weights ({len(weights)}) must match number of slices ({n_slices})")
+            raise ValueError(
+                f"Number of weights ({len(weights)}) must match number of slices ({n_slices})"
+            )
     else:
         # Log the problematic type and value for debugging
-        logger.error(f"🔄 CREATE_COMPOSITE: Invalid weights type - expected list/tuple/None, got {type(weights)}: {weights}")
-        raise TypeError(f"weights must be a list of values or None, got {type(weights)}: {weights}")
+        logger.error(
+            f"🔄 CREATE_COMPOSITE: Invalid weights type - expected list/tuple/None, got {type(weights)}: {weights}"
+        )
+        raise TypeError(
+            f"weights must be a list of values or None, got {type(weights)}: {weights}"
+        )
 
     # Normalize weights to sum to 1
     weight_sum = sum(weights)
@@ -331,6 +358,7 @@ def create_composite(
     composite_slice = composite_slice.astype(stack.dtype)
 
     return composite_slice
+
 
 @cupy_func
 def apply_mask(image: "cp.ndarray", mask: "cp.ndarray") -> "cp.ndarray":
@@ -377,8 +405,11 @@ def apply_mask(image: "cp.ndarray", mask: "cp.ndarray") -> "cp.ndarray":
     # If we get here, the mask is neither 2D nor 3D CuPy array
     raise TypeError(f"mask must be a 2D or 3D CuPy array, got {type(mask)}")
 
+
 @cupy_func
-def create_weight_mask(shape: Tuple[int, int], margin_ratio: float = 0.1) -> "cp.ndarray":
+def create_weight_mask(
+    shape: Tuple[int, int], margin_ratio: float = 0.1
+) -> "cp.ndarray":
     """
     Create a weight mask for blending images.
 
@@ -394,6 +425,7 @@ def create_weight_mask(shape: Tuple[int, int], margin_ratio: float = 0.1) -> "cp
 
     height, width = shape
     return create_linear_weight_mask(height, width, margin_ratio)
+
 
 @cupy_func
 def max_projection(stack: "cp.ndarray") -> "cp.ndarray":
@@ -411,6 +443,7 @@ def max_projection(stack: "cp.ndarray") -> "cp.ndarray":
     # Create max projection
     projection_2d = cp.max(stack, axis=0)
     return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
+
 
 @cupy_func
 def mean_projection(stack: "cp.ndarray") -> "cp.ndarray":
@@ -524,7 +557,9 @@ def spatial_bin_2d(
     new_width = width // bin_size
 
     if new_height == 0 or new_width == 0:
-        raise ValueError(f"bin_size {bin_size} is too large for image dimensions {height}x{width}")
+        raise ValueError(
+            f"bin_size {bin_size} is too large for image dimensions {height}x{width}"
+        )
 
     # Crop to make dimensions divisible by bin_size
     crop_height = new_height * bin_size
@@ -532,13 +567,14 @@ def spatial_bin_2d(
     cropped_stack = stack[:, :crop_height, :crop_width]
 
     # Reshape for binning: (Z, new_height, bin_size, new_width, bin_size)
-    reshaped = cropped_stack.reshape(z_slices, new_height, bin_size, new_width, bin_size)
-
-    result = CupySpatialBinStrategy.for_enum_member(method).apply(
-        reshaped, axis=(2, 4)
+    reshaped = cropped_stack.reshape(
+        z_slices, new_height, bin_size, new_width, bin_size
     )
 
+    result = CupySpatialBinStrategy.for_enum_member(method).apply(reshaped, axis=(2, 4))
+
     return result.astype(stack.dtype)
+
 
 @cupy_func
 def spatial_bin_3d(
@@ -573,7 +609,9 @@ def spatial_bin_3d(
     new_width = width // bin_size
 
     if new_depth == 0 or new_height == 0 or new_width == 0:
-        raise ValueError(f"bin_size {bin_size} is too large for stack dimensions {depth}x{height}x{width}")
+        raise ValueError(
+            f"bin_size {bin_size} is too large for stack dimensions {depth}x{height}x{width}"
+        )
 
     # Crop to make dimensions divisible by bin_size
     crop_depth = new_depth * bin_size
@@ -582,7 +620,9 @@ def spatial_bin_3d(
     cropped_stack = stack[:crop_depth, :crop_height, :crop_width]
 
     # Reshape for 3D binning: (new_depth, bin_size, new_height, bin_size, new_width, bin_size)
-    reshaped = cropped_stack.reshape(new_depth, bin_size, new_height, bin_size, new_width, bin_size)
+    reshaped = cropped_stack.reshape(
+        new_depth, bin_size, new_height, bin_size, new_width, bin_size
+    )
 
     result = CupySpatialBinStrategy.for_enum_member(method).apply(
         reshaped, axis=(1, 3, 5)
@@ -590,12 +630,13 @@ def spatial_bin_3d(
 
     return result.astype(stack.dtype)
 
+
 @cupy_func
 def stack_equalize_histogram(
     stack: "cp.ndarray",
     bins: int = 65536,
     range_min: float = 0.0,
-    range_max: float = 65535.0
+    range_max: float = 65535.0,
 ) -> "cp.ndarray":
     """
     Apply histogram equalization to an entire stack.
@@ -635,14 +676,19 @@ def stack_equalize_histogram(
             cdf = cdf / cdf[-1]
 
     # Use linear interpolation to map input values to equalized values - MATCH NUMPY EXACTLY
-    equalized_stack = cp.interp(stack.flatten(), bin_edges[:-1], cdf).reshape(stack.shape)
+    equalized_stack = cp.interp(stack.flatten(), bin_edges[:-1], cdf).reshape(
+        stack.shape
+    )
 
     # Convert back to input dtype
     if cp.issubdtype(input_dtype, cp.integer):
         dtype_info = cp.iinfo(input_dtype)
-        return cp.clip(equalized_stack, dtype_info.min, dtype_info.max).astype(input_dtype)
+        return cp.clip(equalized_stack, dtype_info.min, dtype_info.max).astype(
+            input_dtype
+        )
     else:
         return equalized_stack.astype(input_dtype)
+
 
 @cupy_func
 def create_projection(
@@ -672,7 +718,7 @@ def crop(
     start_z: int = 0,
     width: int = 1,
     height: int = 1,
-    depth: int = 1
+    depth: int = 1,
 ) -> "cp.ndarray":
     """
     Crop a given substack out of a given image stack.
@@ -705,10 +751,14 @@ def crop(
 
     # Validate crop parameters
     if width <= 0 or height <= 0 or depth <= 0:
-        raise ValueError(f"Crop dimensions must be positive: width={width}, height={height}, depth={depth}")
+        raise ValueError(
+            f"Crop dimensions must be positive: width={width}, height={height}, depth={depth}"
+        )
 
     if start_x < 0 or start_y < 0 or start_z < 0:
-        raise ValueError(f"Start coordinates must be non-negative: start_x={start_x}, start_y={start_y}, start_z={start_z}")
+        raise ValueError(
+            f"Start coordinates must be non-negative: start_x={start_x}, start_y={start_y}, start_z={start_z}"
+        )
 
     # Get input dimensions
     input_depth, input_height, input_width = input_image.shape
@@ -731,13 +781,20 @@ def crop(
 
     return cropped
 
+
 def _create_disk_cupy(radius: int) -> "cp.ndarray":
     """Create a disk structuring element using CuPy - MATCH NUMPY EXACTLY"""
-    y, x = cp.ogrid[-radius:radius+1, -radius:radius+1]
-    mask = x*x + y*y <= radius*radius
+    y, x = cp.ogrid[-radius : radius + 1, -radius : radius + 1]
+    mask = x * x + y * y <= radius * radius
     return mask.astype(cp.uint8)
 
-def _resize_cupy_better_match(image: "cp.ndarray", output_shape: tuple, anti_aliasing: bool = True, preserve_range: bool = True) -> "cp.ndarray":
+
+def _resize_cupy_better_match(
+    image: "cp.ndarray",
+    output_shape: tuple,
+    anti_aliasing: bool = True,
+    preserve_range: bool = True,
+) -> "cp.ndarray":
     """
     Resize image using CuPy to better match scikit-image's transform.resize behavior.
 
@@ -761,7 +818,7 @@ def _resize_cupy_better_match(image: "cp.ndarray", output_shape: tuple, anti_ali
         sigma = []
         for z in zoom_factors:
             if z < 1.0:
-                s = (1.0/z - 1.0) / 2.0
+                s = (1.0 / z - 1.0) / 2.0
                 sigma.append(max(s, 0.5))  # Minimum sigma for stability
             else:
                 sigma.append(0.0)
@@ -784,13 +841,14 @@ def _resize_cupy_better_match(image: "cp.ndarray", output_shape: tuple, anti_ali
 
     return resized
 
+
 @cupy_func
 def tophat(
     image: "cp.ndarray",
     selem_radius: int = 50,
     downsample_factor: int = 4,
     downsample_anti_aliasing: bool = True,
-    upsample_anti_aliasing: bool = False
+    upsample_anti_aliasing: bool = False,
 ) -> "cp.ndarray":
     """
     Apply white top-hat filter to a 3D image for background removal.
@@ -822,12 +880,15 @@ def tophat(
         input_dtype = image[z].dtype
 
         # 1) Downsample - IMPROVED MATCH TO NUMPY
-        target_shape = (image[z].shape[0]//downsample_factor, image[z].shape[1]//downsample_factor)
+        target_shape = (
+            image[z].shape[0] // downsample_factor,
+            image[z].shape[1] // downsample_factor,
+        )
         image_small = _resize_cupy_better_match(
             image[z],
             target_shape,
             anti_aliasing=downsample_anti_aliasing,
-            preserve_range=True
+            preserve_range=True,
         )
 
         # 2) Build structuring element for the smaller image - MATCH NUMPY EXACTLY
@@ -842,7 +903,7 @@ def tophat(
             background_small,
             image[z].shape,
             anti_aliasing=upsample_anti_aliasing,
-            preserve_range=True
+            preserve_range=True,
         )
 
         # 5) Subtract background and clip negative values - MATCH NUMPY EXACTLY
@@ -853,20 +914,22 @@ def tophat(
 
     return result
 
+
 # Lazy initialization of ElementwiseKernel to avoid import errors
 _sobel_2d_parallel = None
+
 
 def _get_sobel_2d_kernel():
     """Get or create the Sobel 2D parallel kernel."""
     global _sobel_2d_parallel
     if _sobel_2d_parallel is None:
-        if cp is None:
+        if not cp:
             raise ImportError("CuPy is required for GPU Sobel operations")
 
         _sobel_2d_parallel = cp.ElementwiseKernel(
-            'raw T input, int32 Y, int32 X, int32 mode, T cval',
-            'T output',
-            '''
+            "raw T input, int32 Y, int32 X, int32 mode, T cval",
+            "T output",
+            """
             // Calculate which slice, row, col this thread handles
             int z = i / (Y * X);
             int y = (i % (Y * X)) / X;
@@ -903,10 +966,11 @@ def _get_sobel_2d_kernel():
 
             // Calculate magnitude
             output = sqrt(gx*gx + gy*gy);
-            ''',
-            'sobel_2d_parallel'
+            """,
+            "sobel_2d_parallel",
         )
     return _sobel_2d_parallel
+
 
 @cupy_func
 def sobel_2d_vectorized(
@@ -940,6 +1004,7 @@ def sobel_2d_vectorized(
     sobel_kernel(input_float, Y, X, mode.kernel_code, cp.float32(cval), output)
 
     return output.astype(image.dtype)
+
 
 @cupy_func
 def sobel_3d_voxel(
@@ -979,14 +1044,21 @@ def _sobel_3d_voxel(
     image_float = image.astype(cp.float32)
 
     # Apply Sobel filters in all three directions - GPU PARALLELIZED
-    sobel_x = ndimage.sobel(image_float, axis=2, mode=mode, cval=cval)  # X-direction gradients
-    sobel_y = ndimage.sobel(image_float, axis=1, mode=mode, cval=cval)  # Y-direction gradients
-    sobel_z = ndimage.sobel(image_float, axis=0, mode=mode, cval=cval)  # Z-direction gradients
+    sobel_x = ndimage.sobel(
+        image_float, axis=2, mode=mode, cval=cval
+    )  # X-direction gradients
+    sobel_y = ndimage.sobel(
+        image_float, axis=1, mode=mode, cval=cval
+    )  # Y-direction gradients
+    sobel_z = ndimage.sobel(
+        image_float, axis=0, mode=mode, cval=cval
+    )  # Z-direction gradients
 
     # Calculate 3D magnitude - GPU PARALLELIZED
     magnitude = cp.sqrt(sobel_x**2 + sobel_y**2 + sobel_z**2)
 
     return magnitude.astype(image.dtype)
+
 
 @cupy_func
 def sobel_components(
@@ -1018,11 +1090,17 @@ def sobel_components(
     image_float = image.astype(cp.float32)
 
     # Apply Sobel filters - GPU PARALLELIZED
-    sobel_x = ndimage.sobel(image_float, axis=2, mode=mode.value, cval=cval).astype(image.dtype)  # X-direction
-    sobel_y = ndimage.sobel(image_float, axis=1, mode=mode.value, cval=cval).astype(image.dtype)  # Y-direction
+    sobel_x = ndimage.sobel(image_float, axis=2, mode=mode.value, cval=cval).astype(
+        image.dtype
+    )  # X-direction
+    sobel_y = ndimage.sobel(image_float, axis=1, mode=mode.value, cval=cval).astype(
+        image.dtype
+    )  # Y-direction
 
     if include_z:
-        sobel_z = ndimage.sobel(image_float, axis=0, mode=mode.value, cval=cval).astype(image.dtype)  # Z-direction
+        sobel_z = ndimage.sobel(image_float, axis=0, mode=mode.value, cval=cval).astype(
+            image.dtype
+        )  # Z-direction
         return sobel_x, sobel_y, sobel_z
     else:
         return sobel_x, sobel_y
@@ -1090,10 +1168,14 @@ def edge_magnitude(
 
 
 @cupy_func
-def sobel(image: "cp.ndarray", mask: Optional["cp.ndarray"] = None, *,
-          axis: Optional[int] = None,
-          mode: ScipyBoundaryMode = ScipyBoundaryMode.REFLECT,
-          cval: float = 0.0) -> "cp.ndarray":
+def sobel(
+    image: "cp.ndarray",
+    mask: Optional["cp.ndarray"] = None,
+    *,
+    axis: Optional[int] = None,
+    mode: ScipyBoundaryMode = ScipyBoundaryMode.REFLECT,
+    cval: float = 0.0,
+) -> "cp.ndarray":
     """
     Find edges in an image using the Sobel filter (CuCIM backend).
 
@@ -1121,8 +1203,10 @@ def sobel(image: "cp.ndarray", mask: Optional["cp.ndarray"] = None, *,
         CuCIM's sobel normalizes integer inputs to [0, 1] range and returns float64.
         This wrapper always preserves the input dtype by forcing dtype conversion.
     """
-    if cucim_filters is None:
-        raise ImportError("CuCIM is required for sobel edge detection but is not available")
+    if not cucim_filters:
+        raise ImportError(
+            "CuCIM is required for sobel edge detection but is not available"
+        )
 
     # Import here to avoid circular dependency
     from openhcs.constants.constants import MemoryType
@@ -1132,11 +1216,7 @@ def sobel(image: "cp.ndarray", mask: Optional["cp.ndarray"] = None, *,
 
     # Call CuCIM sobel
     result = cucim_filters.sobel(
-        image,
-        mask=mask,
-        axis=axis,
-        mode=mode.value,
-        cval=cval
+        image, mask=mask, axis=axis, mode=mode.value, cval=cval
     )
 
     # Always preserve input dtype (CuCIM normalizes integer inputs to [0, 1])

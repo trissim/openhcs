@@ -4,14 +4,16 @@ Borůvka's Minimum Spanning Tree Algorithm for MIST
 GPU-accelerated MST construction using parallel Borůvka's algorithm.
 """
 
-from __future__ import annotations 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
-from openhcs.core.utils import optional_import
+from openhcs.utils.import_utils import optional_import_placeholder
+
 from .gpu_kernels import (
+    launch_find_minimum_edges_kernel,
     launch_reset_flatten_kernel,
-    launch_find_minimum_edges_kernel, 
-    launch_union_components_kernel
+    launch_union_components_kernel,
 )
 
 # For type checking only
@@ -19,7 +21,7 @@ if TYPE_CHECKING:
     import cupy as cp
 
 # Import CuPy as an optional dependency
-cp = optional_import("cupy")
+cp = optional_import_placeholder("cupy")
 
 
 def _validate_cupy_array(array, name: str = "input") -> None:  # type: ignore
@@ -34,20 +36,32 @@ def _validate_mst_inputs(
     connection_dx: "cp.ndarray",  # type: ignore
     connection_dy: "cp.ndarray",  # type: ignore
     connection_quality: "cp.ndarray",  # type: ignore
-    num_nodes: int
+    num_nodes: int,
 ) -> None:
     """Validate MST input arrays."""
-    arrays = [connection_from, connection_to, connection_dx, connection_dy, connection_quality]
-    names = ["connection_from", "connection_to", "connection_dx", "connection_dy", "connection_quality"]
-    
+    arrays = [
+        connection_from,
+        connection_to,
+        connection_dx,
+        connection_dy,
+        connection_quality,
+    ]
+    names = [
+        "connection_from",
+        "connection_to",
+        "connection_dx",
+        "connection_dy",
+        "connection_quality",
+    ]
+
     for array, name in zip(arrays, names):
         _validate_cupy_array(array, name)
-    
+
     # Check all arrays have same length
     lengths = [len(arr) for arr in arrays]
     if not all(length == lengths[0] for length in lengths):
         raise ValueError(f"All connection arrays must have same length, got {lengths}")
-    
+
     # Check node indices are valid
     if len(connection_from) > 0:
         max_from = int(cp.max(connection_from))
@@ -63,7 +77,7 @@ def build_mst_gpu_boruvka(
     connection_dx: "cp.ndarray",  # type: ignore
     connection_dy: "cp.ndarray",  # type: ignore
     connection_quality: "cp.ndarray",  # type: ignore
-    num_nodes: int
+    num_nodes: int,
 ) -> dict:
     """
     Full GPU Borůvka's algorithm for minimum spanning tree.
@@ -72,13 +86,18 @@ def build_mst_gpu_boruvka(
     All operations remain on GPU with no CPU-GPU synchronization in inner loops.
     """
 
-
     # Validate inputs
-    _validate_mst_inputs(connection_from, connection_to, connection_dx,
-                        connection_dy, connection_quality, num_nodes)
+    _validate_mst_inputs(
+        connection_from,
+        connection_to,
+        connection_dx,
+        connection_dy,
+        connection_quality,
+        num_nodes,
+    )
 
     if len(connection_from) == 0:
-        return {'edges': []}
+        return {"edges": []}
 
     # Initialize GPU data structures
     num_edges = len(connection_from)
@@ -89,7 +108,9 @@ def build_mst_gpu_boruvka(
 
     # Component minimum edge tracking (use int32 for atomic operations)
     cheapest_edge_idx = cp.full(num_nodes, -1, dtype=cp.int32)
-    cheapest_edge_weight_int = cp.full(num_nodes, 2147483647, dtype=cp.int32)  # Max int32 value
+    cheapest_edge_weight_int = cp.full(
+        num_nodes, 2147483647, dtype=cp.int32
+    )  # Max int32 value
 
     # MST result storage
     mst_edges_from = cp.zeros(num_nodes - 1, dtype=cp.int32)
@@ -109,7 +130,6 @@ def build_mst_gpu_boruvka(
     # Main Borůvka's loop - O(log V) iterations
     max_iterations = int(cp.ceil(cp.log2(num_nodes))) + 1
 
-
     for iteration in range(max_iterations):
         print(f"🔥 Iteration {iteration}: Starting...")
 
@@ -122,16 +142,31 @@ def build_mst_gpu_boruvka(
         # Kernel 2: Find minimum edge per component (parallel)
         print(f"🔥 Iteration {iteration}: Launching find minimum edges kernel...")
         launch_find_minimum_edges_kernel(
-            edges_from, edges_to, edges_quality, parent,
-            cheapest_edge_idx, cheapest_edge_weight_int, num_edges
+            edges_from,
+            edges_to,
+            edges_quality,
+            parent,
+            cheapest_edge_idx,
+            cheapest_edge_weight_int,
+            num_edges,
         )
 
         # Kernel 3: Union components and update MST
         print(f"🔥 Iteration {iteration}: Launching union components kernel...")
         launch_union_components_kernel(
-            cheapest_edge_idx, edges_from, edges_to, edges_dx, edges_dy,
-            parent, rank, mst_edges_from, mst_edges_to, mst_edges_dx, mst_edges_dy,
-            mst_count, num_nodes
+            cheapest_edge_idx,
+            edges_from,
+            edges_to,
+            edges_dx,
+            edges_dy,
+            parent,
+            rank,
+            mst_edges_from,
+            mst_edges_to,
+            mst_edges_dx,
+            mst_edges_dy,
+            mst_count,
+            num_nodes,
         )
 
         print(f"🔥 Iteration {iteration}: Kernel launched (pure GPU)")
@@ -150,21 +185,25 @@ def build_mst_gpu_boruvka(
     # Bounds check to prevent crash
     max_edges = num_nodes - 1
     if final_mst_count > max_edges:
-        print(f"🔥 WARNING: MST count {final_mst_count} exceeds maximum {max_edges}, clamping")
+        print(
+            f"🔥 WARNING: MST count {final_mst_count} exceeds maximum {max_edges}, clamping"
+        )
         final_mst_count = max_edges
 
     for i in range(final_mst_count):
         edge = {
-            'from': int(mst_edges_from[i]),
-            'to': int(mst_edges_to[i]),
-            'dx': float(mst_edges_dx[i]),
-            'dy': float(mst_edges_dy[i]),
-            'quality': 0.0  # Could be stored if needed
+            "from": int(mst_edges_from[i]),
+            "to": int(mst_edges_to[i]),
+            "dx": float(mst_edges_dx[i]),
+            "dy": float(mst_edges_dy[i]),
+            "quality": 0.0,  # Could be stored if needed
         }
         selected_edges.append(edge)
 
         # Debug: Print first few edges
         if i < 3:
-            print(f"  Edge {i}: {edge['from']} -> {edge['to']}, dx={edge['dx']:.3f}, dy={edge['dy']:.3f}")
+            print(
+                f"  Edge {i}: {edge['from']} -> {edge['to']}, dx={edge['dx']:.3f}, dy={edge['dy']:.3f}"
+            )
 
-    return {'edges': selected_edges}
+    return {"edges": selected_edges}

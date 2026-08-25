@@ -6,17 +6,17 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from openhcs.runtime import zmq_execution_client
-from openhcs.runtime import zmq_execution_server_launcher
-from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
-from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 from zmqruntime import TransportMode
 from zmqruntime.messages import PongResponse, ServerRole
 from zmqruntime.startup import (
-    EndpointStartupPhase,
     EndpointStartupObserver,
+    EndpointStartupPhase,
     EndpointStartupStatusWriter,
 )
+
+from openhcs.runtime import zmq_execution_client, zmq_execution_server_launcher
+from openhcs.runtime.zmq_config import OpenHCSZMQConfig
+from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 
 
 def test_execution_server_preserves_worker_interpreter_and_background_flags(
@@ -49,6 +49,14 @@ def test_execution_server_preserves_worker_interpreter_and_background_flags(
         "BackgroundProcessLaunchPolicy",
         _LaunchPolicy,
     )
+    subprocess_environment = {"FRAMEWORK_IMPORTS": "prepared"}
+    monkeypatch.setattr(
+        zmq_execution_client,
+        "MemoryType",
+        SimpleNamespace(
+            subprocess_environment=lambda: subprocess_environment,
+        ),
+    )
 
     client = ZMQExecutionClient(port=22307, persistent=False)
     try:
@@ -66,6 +74,7 @@ def test_execution_server_preserves_worker_interpreter_and_background_flags(
     ]
     assert popen_call["creationflags"] == 73
     assert "start_new_session" not in popen_call
+    assert popen_call["env"] is subprocess_environment
 
 
 def test_execution_server_launcher_advertises_ready_after_start(monkeypatch) -> None:

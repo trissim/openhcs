@@ -5,25 +5,35 @@ Implements clean abstraction with internal library-specific logic.
 All pyclesperanto-specific details (dtype conversions, Z-parameters, etc.)
 are handled internally without leaking into the ABC.
 """
+
 from __future__ import annotations
 
 import inspect
+from typing import List, Tuple
+
 import numpy as np
-from typing import Tuple, List
+
 from openhcs.constants import MemoryType
-from openhcs.core.utils import optional_import
+from openhcs.utils.import_utils import optional_import_placeholder
+
 from .unified_registry import LibraryRegistryBase, RuntimeTestingRegistryBase
+
 
 class PyclesperantoRegistry(RuntimeTestingRegistryBase):
     """Clean pyclesperanto registry with internal library-specific logic."""
 
     # Registry name for auto-registration
-    _registry_name = 'pyclesperanto'
+    _registry_name = "pyclesperanto"
 
     # Library-specific exclusions extending common ones
     EXCLUSIONS = LibraryRegistryBase.COMMON_EXCLUSIONS | {
-        'push_zyx', 'pull_zyx', 'create_zyx', 'set_wait_for_kernel_finish',
-        'get_device', 'select_device', 'list_available_devices'
+        "push_zyx",
+        "pull_zyx",
+        "create_zyx",
+        "set_wait_for_kernel_finish",
+        "get_device",
+        "select_device",
+        "list_available_devices",
     }
 
     # Modules to scan for functions
@@ -37,11 +47,19 @@ class PyclesperantoRegistry(RuntimeTestingRegistryBase):
 
     def __init__(self):
         super().__init__("pyclesperanto")
-        self._pyclesperanto = optional_import("pyclesperanto")
+        self._pyclesperanto = optional_import_placeholder("pyclesperanto")
         # Internal constants for dtype handling
-        self._BINARY_FUNCTIONS = {'binary_infsup', 'binary_supinf'}
-        self._UINT8_FUNCTIONS = {'mode', 'mode_box', 'mode_sphere'}
-        self._IMAGE_PARAM_NAMES = {"src", "source", "image", "input", "src1", "input_image", "input_image0"}
+        self._BINARY_FUNCTIONS = {"binary_infsup", "binary_supinf"}
+        self._UINT8_FUNCTIONS = {"mode", "mode_box", "mode_sphere"}
+        self._IMAGE_PARAM_NAMES = {
+            "src",
+            "source",
+            "image",
+            "input",
+            "src1",
+            "input_image",
+            "input_image0",
+        }
 
     # ===== ESSENTIAL ABC METHODS =====
     def get_library_version(self) -> str:
@@ -55,16 +73,21 @@ class PyclesperantoRegistry(RuntimeTestingRegistryBase):
 
     def get_module_patterns(self) -> List[str]:
         """Get module patterns for pyclesperanto (includes 'cle' alternative)."""
-        return ['pyclesperanto', 'cle']
+        return ["pyclesperanto", "cle"]
 
     # ===== HOOK IMPLEMENTATIONS =====
     def _create_array(self, shape: Tuple[int, ...], dtype):
         return np.random.rand(*shape).astype(dtype)
 
     def _check_first_parameter(self, first_param, func_name: str) -> bool:
-        return (first_param.name.lower() in self._IMAGE_PARAM_NAMES and
-                first_param.kind in (inspect.Parameter.POSITIONAL_ONLY,
-                                    inspect.Parameter.POSITIONAL_OR_KEYWORD))
+        return (
+            first_param.name.lower() in self._IMAGE_PARAM_NAMES
+            and first_param.kind
+            in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+        )
 
     def _preprocess_input(self, image, func_name: str):
         return self._convert_input_dtype(image, func_name)
@@ -100,4 +123,3 @@ class PyclesperantoRegistry(RuntimeTestingRegistryBase):
     def _arrays_close(self, arr1, arr2):
         """Compare arrays using CLE."""
         return np.allclose(arr1.get(), arr2.get(), rtol=1e-5, atol=1e-8)
-

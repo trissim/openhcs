@@ -3,18 +3,19 @@ Phase Correlation Functions for MIST Algorithm
 
 GPU-accelerated phase correlation with subpixel accuracy.
 """
-from __future__ import annotations 
 
-from typing import TYPE_CHECKING, Tuple, List
+from __future__ import annotations
 
-from openhcs.core.utils import optional_import
+from typing import TYPE_CHECKING, List, Tuple
+
+from openhcs.utils.import_utils import optional_import_placeholder
 
 # For type checking only
 if TYPE_CHECKING:
     import cupy as cp
 
 # Import CuPy as an optional dependency
-cp = optional_import("cupy")
+cp = optional_import_placeholder("cupy")
 
 
 def _validate_cupy_array(array, name: str = "input") -> None:  # type: ignore
@@ -26,7 +27,7 @@ def _validate_cupy_array(array, name: str = "input") -> None:  # type: ignore
 def constrained_hill_climbing(
     correlation_surface: "cp.ndarray",  # type: ignore
     initial_peak: Tuple[int, int],
-    max_shift: int
+    max_shift: int,
 ) -> Tuple[float, float]:
     """
     Find optimal shift within constrained region using gradient ascent.
@@ -42,7 +43,9 @@ def constrained_hill_climbing(
     _validate_cupy_array(correlation_surface, "correlation_surface")
 
     if correlation_surface.ndim != 2:
-        raise ValueError(f"Correlation surface must be 2D, got {correlation_surface.ndim}D")
+        raise ValueError(
+            f"Correlation surface must be 2D, got {correlation_surface.ndim}D"
+        )
 
     h, w = correlation_surface.shape
     y_init, x_init = initial_peak
@@ -69,12 +72,15 @@ def constrained_hill_climbing(
     x_peak_global = x_min + x_peak_local
 
     # Subpixel refinement using center of mass in 3x3 neighborhood
-    if (1 <= y_peak_local < region.shape[0] - 1 and
-        1 <= x_peak_local < region.shape[1] - 1):
+    if (
+        1 <= y_peak_local < region.shape[0] - 1
+        and 1 <= x_peak_local < region.shape[1] - 1
+    ):
 
         # Extract 3x3 neighborhood around peak
-        neighborhood = region[y_peak_local-1:y_peak_local+2,
-                             x_peak_local-1:x_peak_local+2]
+        neighborhood = region[
+            y_peak_local - 1 : y_peak_local + 2, x_peak_local - 1 : x_peak_local + 2
+        ]
 
         # Compute center of mass
         total_mass = cp.sum(neighborhood)
@@ -99,11 +105,11 @@ def phase_correlation_gpu_only(
     window: bool = True,
     subpixel: bool = True,
     subpixel_radius: int = 3,
-    regularization_eps_multiplier: float = 1000.0
+    regularization_eps_multiplier: float = 1000.0,
 ) -> Tuple[float, float]:
     """
     Full GPU phase correlation with all operations on device.
-    
+
     Args:
         image1: First image (CuPy array)
         image2: Second image (CuPy array)
@@ -111,7 +117,7 @@ def phase_correlation_gpu_only(
         subpixel: Enable subpixel accuracy
         subpixel_radius: Radius for subpixel interpolation
         regularization_eps_multiplier: Multiplier for numerical stability
-    
+
     Returns:
         (dy, dx) shift values
     """
@@ -119,12 +125,14 @@ def phase_correlation_gpu_only(
     _validate_cupy_array(image2, "image2")
 
     if image1.shape != image2.shape:
-        raise ValueError(f"Images must have the same shape, got {image1.shape} and {image2.shape}")
+        raise ValueError(
+            f"Images must have the same shape, got {image1.shape} and {image2.shape}"
+        )
 
     # Ensure float32 and remove DC component (all GPU operations)
     img1 = image1.astype(cp.float32)
     img2 = image2.astype(cp.float32)
-    
+
     img1 = img1 - cp.mean(img1)
     img2 = img2 - cp.mean(img2)
 
@@ -169,14 +177,14 @@ def phase_correlation_gpu_only(
         # Convert to int for indexing
         y_peak_int = int(y_peak)
         x_peak_int = int(x_peak)
-        
+
         y_min = cp.maximum(0, y_peak_int - subpixel_radius)
         y_max = cp.minimum(h, y_peak_int + subpixel_radius + 1)
         x_min = cp.maximum(0, x_peak_int - subpixel_radius)
         x_max = cp.minimum(w, x_peak_int + subpixel_radius + 1)
 
         region = correlation[y_min:y_max, x_min:x_max]
-        
+
         total_mass = cp.sum(region)
         if total_mass > 0:
             # Create local coordinates for the region, then convert to global
@@ -203,7 +211,7 @@ def phase_correlation_nist_gpu(
     image2: "cp.ndarray",
     direction: str,
     n_peaks: int = 2,
-    use_nist_normalization: bool = True
+    use_nist_normalization: bool = True,
 ) -> Tuple[float, float, float]:
     """
     GPU-native implementation of NIST MIST phase correlation with robustness features.
@@ -277,9 +285,7 @@ def phase_correlation_nist_gpu(
 
 
 def _find_multiple_peaks_gpu(
-    correlation_matrix: "cp.ndarray",
-    n_peaks: int = 2,
-    min_distance: int = 5
+    correlation_matrix: "cp.ndarray", n_peaks: int = 2, min_distance: int = 5
 ) -> List[Tuple[int, int, float]]:
     """
     GPU-optimized multi-peak detection with minimum distance constraint.
@@ -310,7 +316,7 @@ def _find_multiple_peaks_gpu(
         # Check distance from already selected peaks
         too_close = False
         for sel_y, sel_x, _ in selected_peaks:
-            distance = cp.sqrt((y - sel_y)**2 + (x - sel_x)**2)
+            distance = cp.sqrt((y - sel_y) ** 2 + (x - sel_x) ** 2)
             if distance < min_distance:
                 too_close = True
                 break
@@ -325,10 +331,7 @@ def _find_multiple_peaks_gpu(
 
 
 def _test_fft_interpretations(
-    correlation_matrix: "cp.ndarray",
-    peak_y: int,
-    peak_x: int,
-    direction: str
+    correlation_matrix: "cp.ndarray", peak_y: int, peak_x: int, direction: str
 ) -> List[Tuple[int, int]]:
     """
     Generate FFT periodicity interpretations with directional constraints.
@@ -345,7 +348,7 @@ def _test_fft_interpretations(
     interpretations = []
 
     # NIST Algorithm 5: Test 16 interpretations with directional constraints
-    if direction == 'horizontal':
+    if direction == "horizontal":
         # Left-right pairs: test (x, ±y) with 4 FFT possibilities
         for y_sign in [1, -1]:
             for x_offset in [0, w]:  # FFT periodicity in x
@@ -354,7 +357,7 @@ def _test_fft_interpretations(
                     interp_y = (peak_y * y_sign + y_offset) % h
                     interpretations.append((interp_y, interp_x))
 
-    elif direction == 'vertical':
+    elif direction == "vertical":
         # Up-down pairs: test (±x, y) with 4 FFT possibilities
         for x_sign in [1, -1]:
             for x_offset in [0, w]:  # FFT periodicity in x
@@ -375,10 +378,7 @@ def _test_fft_interpretations(
 
 
 def _compute_interpretation_quality(
-    region1: "cp.ndarray",
-    region2: "cp.ndarray",
-    dy: float,
-    dx: float
+    region1: "cp.ndarray", region2: "cp.ndarray", dy: float, dx: float
 ) -> float:
     """
     Compute quality for a specific displacement interpretation.

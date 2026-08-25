@@ -5,20 +5,22 @@ Provides unified access to all registry implementations with automatic discovery
 Follows OpenHCS generic solution principle - automatically adapts to new registries.
 """
 
-import logging
 import inspect
+import logging
 import subprocess
 import sys
 import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Dict, Optional
 
+from arraybridge import MemoryType
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 
 from openhcs.utils.environment import OpenHCSProcessEnvironment
+
 from .unified_registry import (
-    FunctionMetadata,
     LIBRARY_REGISTRIES,
+    FunctionMetadata,
     LibraryRegistryBase,
     ProcessingContract,
 )
@@ -215,6 +217,7 @@ class RegistryService:
             check=False,
             capture_output=True,
             text=True,
+            env=MemoryType.subprocess_environment(),
             **policy.popen_arguments(),
         )
         if completed.returncode != 0:

@@ -3,19 +3,20 @@ Quality Metrics for MIST Algorithm
 
 Functions for computing correlation quality and adaptive thresholds.
 """
-from __future__ import annotations 
 
-from typing import TYPE_CHECKING, List, Tuple, Dict
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING, Dict, List, Tuple
 
-from openhcs.core.utils import optional_import
+from openhcs.utils.import_utils import optional_import_placeholder
 
 # For type checking only
 if TYPE_CHECKING:
     import cupy as cp
 
 # Import CuPy as an optional dependency
-cp = optional_import("cupy")
+cp = optional_import_placeholder("cupy")
 
 
 def _validate_cupy_array(array, name: str = "input") -> None:  # type: ignore
@@ -45,14 +46,16 @@ def compute_correlation_quality_gpu(region1: "cp.ndarray", region2: "cp.ndarray"
 
     # Correlation (GPU)
     numerator = cp.sum(r1_norm * r2_norm)
-    denom1 = cp.sqrt(cp.sum(r1_norm ** 2))
-    denom2 = cp.sqrt(cp.sum(r2_norm ** 2))
+    denom1 = cp.sqrt(cp.sum(r1_norm**2))
+    denom2 = cp.sqrt(cp.sum(r2_norm**2))
 
     # Avoid division by zero with more robust threshold (GPU)
     eps = cp.finfo(cp.float32).eps * 1000.0
-    correlation = cp.where((denom1 > eps) & (denom2 > eps),
-                          cp.abs(numerator / (denom1 * denom2)),
-                          cp.float32(0.0))
+    correlation = cp.where(
+        (denom1 > eps) & (denom2 > eps),
+        cp.abs(numerator / (denom1 * denom2)),
+        cp.float32(0.0),
+    )
 
     return float(correlation)
 
@@ -108,7 +111,12 @@ def compute_correlation_quality_gpu_aligned(region1: "cp.ndarray", region2: "cp.
         y2_end = min(h2, h1 + shift_y)
 
     # Extract aligned overlap regions
-    if x1_end <= x1_start or y1_end <= y1_start or x2_end <= x2_start or y2_end <= y2_start:
+    if (
+        x1_end <= x1_start
+        or y1_end <= y1_start
+        or x2_end <= x2_start
+        or y2_end <= y2_start
+    ):
         return 0.0
 
     aligned_region1 = region1[y1_start:y1_end, x1_start:x1_end]
@@ -161,8 +169,7 @@ def compute_adaptive_threshold(correlations: "cp.ndarray") -> float:  # type: ig
 
 
 def estimate_stage_parameters(
-    displacements: "cp.ndarray",  # type: ignore
-    expected_spacing: float
+    displacements: "cp.ndarray", expected_spacing: float  # type: ignore
 ) -> tuple[float, float]:
     """
     Estimate repeatability and backlash from measured displacements.
@@ -191,7 +198,7 @@ def estimate_stage_parameters(
 def compute_adaptive_quality_threshold(
     all_qualities: List[float],
     base_threshold: float = 0.3,
-    percentile_threshold: float = 0.25
+    percentile_threshold: float = 0.25,
 ) -> float:
     """
     Compute adaptive quality threshold based on distribution of correlation values.
@@ -222,7 +229,7 @@ def validate_translation_consistency(
     translations: List[Tuple[float, float, float]],
     expected_spacing: Tuple[float, float],
     tolerance_factor: float = 0.2,
-    min_quality: float = 0.3
+    min_quality: float = 0.3,
 ) -> List[bool]:
     """
     Validate translation consistency against expected grid spacing.
@@ -250,7 +257,7 @@ def validate_translation_consistency(
 def debug_phase_correlation_matrix(
     correlation_matrix: "cp.ndarray",
     peaks: List[Tuple[int, int, float]],
-    save_path: str = None
+    save_path: str = None,
 ) -> None:
     """
     Create visualization of phase correlation matrix with detected peaks.
@@ -258,27 +265,29 @@ def debug_phase_correlation_matrix(
     try:
         import matplotlib.pyplot as plt
     except ImportError:
-        logging.warning("matplotlib not available, skipping correlation matrix visualization")
+        logging.warning(
+            "matplotlib not available, skipping correlation matrix visualization"
+        )
         return
 
     # Convert to CPU for visualization
     corr_cpu = cp.asnumpy(correlation_matrix)
 
     plt.figure(figsize=(10, 8))
-    plt.imshow(corr_cpu, cmap='hot', interpolation='nearest')
-    plt.colorbar(label='Correlation Value')
+    plt.imshow(corr_cpu, cmap="hot", interpolation="nearest")
+    plt.colorbar(label="Correlation Value")
 
     # Mark detected peaks
     for i, (y, x, value) in enumerate(peaks):
-        plt.plot(x, y, 'bo', markersize=8, label=f'Peak {i+1}: {value:.3f}')
+        plt.plot(x, y, "bo", markersize=8, label=f"Peak {i+1}: {value:.3f}")
 
     plt.legend()
-    plt.title('Phase Correlation Matrix with Detected Peaks')
-    plt.xlabel('X Coordinate')
-    plt.ylabel('Y Coordinate')
+    plt.title("Phase Correlation Matrix with Detected Peaks")
+    plt.xlabel("X Coordinate")
+    plt.ylabel("Y Coordinate")
 
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
     else:
         plt.show()
 
@@ -286,24 +295,30 @@ def debug_phase_correlation_matrix(
 
 
 def log_coordinate_transformation(
-    original_dy: float, original_dx: float,
-    tile_dy: float, tile_dx: float,
+    original_dy: float,
+    original_dx: float,
+    tile_dy: float,
+    tile_dx: float,
     direction: str,
-    tile_index: Tuple[int, int]
+    tile_index: Tuple[int, int],
 ) -> None:
     """
     Log coordinate transformation details for debugging.
     """
     logging.info(f"Coordinate Transform - Tile {tile_index}, Direction: {direction}")
-    logging.info(f"  Original (overlap coords): dy={original_dy:.2f}, dx={original_dx:.2f}")
+    logging.info(
+        f"  Original (overlap coords): dy={original_dy:.2f}, dx={original_dx:.2f}"
+    )
     logging.info(f"  Transformed (tile coords): dy={tile_dy:.2f}, dx={tile_dx:.2f}")
-    logging.info(f"  Delta: dy_delta={tile_dy-original_dy:.2f}, dx_delta={tile_dx-original_dx:.2f}")
+    logging.info(
+        f"  Delta: dy_delta={tile_dy-original_dy:.2f}, dx_delta={tile_dx-original_dx:.2f}"
+    )
 
 
 def benchmark_phase_correlation_methods(
     test_images: List[Tuple["cp.ndarray", "cp.ndarray"]],
     methods: Dict[str, callable],
-    num_iterations: int = 10
+    num_iterations: int = 10,
 ) -> Dict[str, Dict[str, float]]:
     """
     Benchmark different phase correlation methods for performance and accuracy.
@@ -343,10 +358,14 @@ def benchmark_phase_correlation_methods(
                 accuracies.append(avg_error)
 
         results[method_name] = {
-            'avg_time': sum(times) / len(times),
-            'std_time': cp.std(cp.array(times)),
-            'avg_accuracy': sum(accuracies) / len(accuracies) if accuracies else float('inf'),
-            'std_accuracy': cp.std(cp.array(accuracies)) if len(accuracies) > 1 else 0.0
+            "avg_time": sum(times) / len(times),
+            "std_time": cp.std(cp.array(times)),
+            "avg_accuracy": (
+                sum(accuracies) / len(accuracies) if accuracies else float("inf")
+            ),
+            "std_accuracy": (
+                cp.std(cp.array(accuracies)) if len(accuracies) > 1 else 0.0
+            ),
         }
 
     return results

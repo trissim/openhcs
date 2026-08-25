@@ -3,10 +3,10 @@ from __future__ import annotations
 import ast
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -23,8 +23,7 @@ def test_declared_library_submodules_are_imported_from_the_package_authority(
     package_root.mkdir()
     (package_root / "__init__.py").write_text("", encoding="utf-8")
     (package_root / "restoration.py").write_text(
-        textwrap.dedent(
-            """
+        textwrap.dedent("""
             def _denoise(image):
                 return image
 
@@ -35,8 +34,7 @@ def test_declared_library_submodules_are_imported_from_the_package_authority(
                 if name == "denoise":
                     return _denoise
                 raise AttributeError(name)
-            """
-        ),
+            """),
         encoding="utf-8",
     )
     monkeypatch.syspath_prepend(str(tmp_path))
@@ -339,6 +337,14 @@ def test_registry_preparation_uses_background_process_policy(monkeypatch) -> Non
         "current",
         classmethod(lambda cls, *, detached=False: policy),
     )
+    subprocess_environment = {"FRAMEWORK_IMPORTS": "prepared"}
+    monkeypatch.setattr(
+        registry_service,
+        "MemoryType",
+        SimpleNamespace(
+            subprocess_environment=lambda: subprocess_environment,
+        ),
+    )
 
     def run(command, **kwargs):
         calls.append((tuple(command), kwargs))
@@ -355,6 +361,7 @@ def test_registry_preparation_uses_background_process_policy(monkeypatch) -> Non
         "--prepare-capabilities",
     )
     assert calls[0][1]["creationflags"] == 73
+    assert calls[0][1]["env"] is subprocess_environment
 
 
 def test_library_registry_discovery_is_stable_across_fresh_worker_processes(
@@ -371,8 +378,7 @@ def test_library_registry_discovery_is_stable_across_fresh_worker_processes(
             "XDG_DATA_HOME": str(tmp_path / "data"),
         }
     )
-    script = textwrap.dedent(
-        """
+    script = textwrap.dedent("""
         import importlib
         import json
 
@@ -396,8 +402,7 @@ def test_library_registry_discovery_is_stable_across_fresh_worker_processes(
         assert config.discovery_package == "openhcs.processing.backends.lib_registry"
         assert config.discovery_recursive is False
         print(json.dumps(declarations, sort_keys=True))
-        """
-    )
+        """)
 
     projections = []
     for _ in range(2):
@@ -432,8 +437,7 @@ def test_cpu_only_registry_inventory_does_not_import_gpu_runtimes(
             "XDG_DATA_HOME": str(tmp_path / "data"),
         }
     )
-    script = textwrap.dedent(
-        """
+    script = textwrap.dedent("""
         import json
         import sys
 
@@ -455,8 +459,7 @@ def test_cpu_only_registry_inventory_does_not_import_gpu_runtimes(
             "gpu_modules": gpu_modules,
             "registries": [instance.library_name for instance in instances],
         }))
-        """
-    )
+        """)
 
     completed = subprocess.run(
         (sys.executable, "-c", script),
@@ -488,8 +491,7 @@ def test_cold_execution_server_catalog_request_discovers_library_roots(
             "XDG_DATA_HOME": str(tmp_path / "data"),
         }
     )
-    script = textwrap.dedent(
-        """
+    script = textwrap.dedent("""
         import importlib
         import json
         import socket
@@ -558,8 +560,7 @@ def test_cold_execution_server_catalog_request_discovers_library_roots(
                 sort_keys=True,
             )
         )
-        """
-    )
+        """)
 
     completed = subprocess.run(
         (sys.executable, "-c", script),

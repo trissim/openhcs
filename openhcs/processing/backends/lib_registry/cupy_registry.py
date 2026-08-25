@@ -5,28 +5,41 @@ Implements clean abstraction with internal library-specific logic.
 All CuPy-specific details (GPU handling, CuCIM integration, etc.)
 are handled internally without leaking into the ABC.
 """
+
 from __future__ import annotations
 
+from typing import List, Tuple
+
 import numpy as np
-from typing import Tuple, List
 
 from openhcs.constants import MemoryType
-from openhcs.core.utils import optional_import
+from openhcs.utils.import_utils import optional_import_placeholder
+
 from .unified_registry import LibraryRegistryBase, RuntimeTestingRegistryBase
+
 
 class CupyRegistry(RuntimeTestingRegistryBase):
     """Clean CuPy registry with internal GPU handling logic."""
 
     # Registry name for auto-registration
-    _registry_name = 'cupy'
+    _registry_name = "cupy"
 
     # Library-specific exclusions (uses common ones)
     EXCLUSIONS = LibraryRegistryBase.COMMON_EXCLUSIONS
 
     # Modules to scan for functions
-    MODULES_TO_SCAN = ['filters', 'morphology', 'measure', 'segmentation',
-                       'feature', 'restoration', 'transform', 'exposure',
-                       'color', 'util']
+    MODULES_TO_SCAN = [
+        "filters",
+        "morphology",
+        "measure",
+        "segmentation",
+        "feature",
+        "restoration",
+        "transform",
+        "exposure",
+        "color",
+        "util",
+    ]
 
     # Memory type for this registry
     MEMORY_TYPE = MemoryType.CUPY.value
@@ -36,9 +49,9 @@ class CupyRegistry(RuntimeTestingRegistryBase):
 
     def __init__(self):
         super().__init__("cupy")
-        self._cupy = optional_import("cupy")
-        self._cucim = optional_import("cucim")
-        self._cucim_skimage = optional_import("cucim.skimage")
+        self._cupy = optional_import_placeholder("cupy")
+        self._cucim = optional_import_placeholder("cucim")
+        self._cucim_skimage = optional_import_placeholder("cucim.skimage")
 
     # ===== ESSENTIAL ABC METHODS =====
     def get_library_version(self) -> str:
@@ -52,11 +65,11 @@ class CupyRegistry(RuntimeTestingRegistryBase):
 
     def get_module_patterns(self) -> List[str]:
         """Get module patterns for CuPy (includes cucim patterns)."""
-        return ['cupy', 'cucim']
+        return ["cupy", "cucim"]
 
     def get_display_name(self) -> str:
         """Get proper display name for CuPy."""
-        return 'CuPy'
+        return "CuPy"
 
     def _warmup_library(self) -> None:
         """
@@ -80,10 +93,12 @@ class CupyRegistry(RuntimeTestingRegistryBase):
             return self._cupy.random.rand(*shape).astype(dtype)
         except Exception as e:
             # If CUDA initialization fails, raise a more descriptive error
-            raise RuntimeError(f"CUDA initialization failed during CuPy array creation: {e}") from e
+            raise RuntimeError(
+                f"CUDA initialization failed during CuPy array creation: {e}"
+            ) from e
 
     def _check_first_parameter(self, first_param, func_name: str) -> bool:
-        return first_param.name.lower() in {'image', 'input', 'array', 'img'}
+        return first_param.name.lower() in {"image", "input", "array", "img"}
 
     def _preprocess_input(self, image, func_name: str):
         return image  # No preprocessing needed for CuPy
@@ -95,7 +110,7 @@ class CupyRegistry(RuntimeTestingRegistryBase):
     # ===== LIBRARY-SPECIFIC IMPLEMENTATIONS =====
     def _generate_function_name(self, name: str, module_name: str) -> str:
         """Generate function name - original for filters, prefixed for others."""
-        return name if module_name == 'filters' else f"{module_name}_{name}"
+        return name if module_name == "filters" else f"{module_name}_{name}"
 
     def _generate_tags(self, func_name: str) -> List[str]:
         """Generate tags with GPU tag."""

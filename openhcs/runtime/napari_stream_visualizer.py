@@ -29,10 +29,10 @@ from openhcs.runtime.viewer_protocol import (
     DetachedViewerServerEntrypointSpec,
     ManagedViewerLifecycleMixin,
 )
-from openhcs.utils.import_utils import optional_import
+from openhcs.utils.import_utils import optional_import_or_none
 
 # Optional napari import - this module should only be imported if napari is available
-napari = optional_import("napari")
+napari = optional_import_or_none("napari")
 if napari is None:
     raise ImportError(
         "napari is required for NapariStreamVisualizer. "

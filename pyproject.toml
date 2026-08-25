@@ -96,8 +96,8 @@ dependencies = [
     "pycodify>=0.1.3",
     "objectstate>=1.1.4",
     "python-introspect>=0.1.11",
-    "metaclass-registry>=0.2.0,<0.3",
-    "arraybridge>=0.3.2",
+    "metaclass-registry>=0.2.1,<0.3",
+    "arraybridge>=0.3.3",
     "polystore>=0.2.3",
     "pyqt-reactive>=0.3.13,<0.4",
 ]

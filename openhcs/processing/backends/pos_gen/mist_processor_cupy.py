@@ -4,19 +4,20 @@ MIST (Microscopy Image Stitching Tool) GPU Implementation
 This module provides GPU-accelerated MIST implementation using CuPy.
 All legacy functions have been moved to the modular implementation in the mist/ subfolder.
 """
-from __future__ import annotations 
+
+from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Tuple
 
-from openhcs.core.utils import optional_import
+from openhcs.utils.import_utils import optional_import_placeholder
 
 # For type checking only
 if TYPE_CHECKING:
     import cupy as cp
 
 # Import CuPy as an optional dependency
-cp = optional_import("cupy")
+cp = optional_import_placeholder("cupy")
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +35,11 @@ def phase_correlation_gpu_only(
     window: bool = True,
     subpixel: bool = True,
     subpixel_radius: int = 3,
-    regularization_eps_multiplier: float = 1000.0
+    regularization_eps_multiplier: float = 1000.0,
 ) -> Tuple[float, float]:
     """
     Full GPU phase correlation with all operations on device.
-    
+
     Args:
         image1: First image (CuPy array)
         image2: Second image (CuPy array)
@@ -46,7 +47,7 @@ def phase_correlation_gpu_only(
         subpixel: Enable subpixel accuracy
         subpixel_radius: Radius for subpixel interpolation
         regularization_eps_multiplier: Multiplier for numerical stability
-    
+
     Returns:
         (dy, dx) shift values
     """
@@ -54,12 +55,14 @@ def phase_correlation_gpu_only(
     _validate_cupy_array(image2, "image2")
 
     if image1.shape != image2.shape:
-        raise ValueError(f"Images must have the same shape, got {image1.shape} and {image2.shape}")
+        raise ValueError(
+            f"Images must have the same shape, got {image1.shape} and {image2.shape}"
+        )
 
     # Ensure float32 and remove DC component (all GPU operations)
     img1 = image1.astype(cp.float32)
     img2 = image2.astype(cp.float32)
-    
+
     img1 = img1 - cp.mean(img1)
     img2 = img2 - cp.mean(img2)
 
@@ -100,20 +103,20 @@ def phase_correlation_gpu_only(
         # Convert to int for indexing
         y_peak_int = int(y_peak)
         x_peak_int = int(x_peak)
-        
+
         y_min = cp.maximum(0, y_peak_int - subpixel_radius)
         y_max = cp.minimum(h, y_peak_int + subpixel_radius + 1)
         x_min = cp.maximum(0, x_peak_int - subpixel_radius)
         x_max = cp.minimum(w, x_peak_int + subpixel_radius + 1)
 
         region = correlation[y_min:y_max, x_min:x_max]
-        
+
         total_mass = cp.sum(region)
         if total_mass > 0:
             y_coords, x_coords = cp.mgrid[y_min:y_max, x_min:x_max]
             y_com = cp.sum(y_coords * region) / total_mass
             x_com = cp.sum(x_coords * region) / total_mass
-            
+
             dy = cp.where(y_com <= h // 2, y_com, y_com - h)
             dx = cp.where(x_com <= w // 2, x_com, x_com - w)
 
@@ -124,4 +127,4 @@ def phase_correlation_gpu_only(
 from .mist.mist_main import mist_compute_tile_positions
 
 # Re-export for backward compatibility
-__all__ = ['mist_compute_tile_positions', 'phase_correlation_gpu_only']
+__all__ = ["mist_compute_tile_positions", "phase_correlation_gpu_only"]

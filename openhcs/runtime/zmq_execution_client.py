@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeAlias
 
+from arraybridge import MemoryType
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 from typing_extensions import override
 from zmqruntime import (
@@ -793,9 +794,7 @@ class ZMQExecutionClient(
 
     @override
     def _spawn_server_process(self):
-        import glob
         import logging
-        import os
 
         log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -840,30 +839,11 @@ class ZMQExecutionClient(
 
         cmd.extend(["--log-level", log_level_name])
 
-        env = os.environ.copy()
-        site_packages = (
-            Path(sys.executable).parent.parent
-            / "lib"
-            / f"python{sys.version_info.major}.{sys.version_info.minor}"
-            / "site-packages"
-        )
-        nvidia_lib_pattern = str(site_packages / "nvidia" / "*" / "lib")
-        venv_nvidia_libs = [
-            p for p in glob.glob(nvidia_lib_pattern) if os.path.isdir(p)
-        ]
-
-        if venv_nvidia_libs:
-            nvidia_paths = ":".join(venv_nvidia_libs)
-            if "LD_LIBRARY_PATH" in env and env["LD_LIBRARY_PATH"]:
-                env["LD_LIBRARY_PATH"] = f"{nvidia_paths}:{env['LD_LIBRARY_PATH']}"
-            else:
-                env["LD_LIBRARY_PATH"] = nvidia_paths
-
         return subprocess.Popen(
             cmd,
             stdout=open(log_file_path, "w"),
             stderr=subprocess.STDOUT,
-            env=env,
+            env=MemoryType.subprocess_environment(),
             **launch_policy.popen_arguments(),
         )
 

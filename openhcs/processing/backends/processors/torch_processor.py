@@ -9,7 +9,8 @@ Doctrinal Clauses:
 - Clause 88 — No Inferred Capabilities: Explicit PyTorch dependency
 - Clause 106-A — Declared Memory Types: All methods specify PyTorch tensors
 """
-from __future__ import annotations 
+
+from __future__ import annotations
 
 import logging
 import os
@@ -17,17 +18,18 @@ from abc import abstractmethod
 from typing import Any, List, Optional, Tuple
 
 from metaclass_registry import AutoRegisterMeta
-from openhcs.core.utils import optional_import
+
 from openhcs.core.memory import torch as torch_func
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.processing.backends.processors.method_axes import (
     StackProjectionMethod,
 )
+from openhcs.utils.import_utils import optional_import_placeholder
 
 logger = logging.getLogger(__name__)
 
 # Check if we're in subprocess runner mode and should skip GPU imports
-if os.getenv('OPENHCS_SUBPROCESS_NO_GPU') == '1':
+if os.getenv("OPENHCS_SUBPROCESS_NO_GPU") == "1":
     # Subprocess runner mode - skip GPU imports
     torch = None
     F = None
@@ -35,12 +37,14 @@ if os.getenv('OPENHCS_SUBPROCESS_NO_GPU') == '1':
     logger.info("Subprocess runner mode - skipping torch import")
 else:
     # Normal mode - import PyTorch as an optional dependency
-    torch = optional_import("torch")
-    F = optional_import("torch.nn.functional") if torch is not None else None
-    HAS_TORCH = torch is not None
+    torch = optional_import_placeholder("torch")
+    F = optional_import_placeholder("torch.nn.functional") if torch else None
+    HAS_TORCH = bool(torch)
 
 
-def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1) -> "torch.Tensor":
+def create_linear_weight_mask(
+    height: int, width: int, margin_ratio: float = 0.1
+) -> "torch.Tensor":
     """
     Create a 2D weight mask that linearly ramps from 0 at the edges to 1 in the center.
 
@@ -52,7 +56,7 @@ def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1
     Returns:
         2D PyTorch weight mask of shape (height, width)
     """
-    if torch is None:
+    if not torch:
         raise ImportError("PyTorch is required for TorchImageProcessor")
 
     margin_y = int(torch.floor(torch.tensor(height * margin_ratio)))
@@ -91,15 +95,18 @@ def _validate_3d_array(array: Any, name: str = "input") -> None:
         ValueError: If the array is not 3D
         ImportError: If PyTorch is not available
     """
-    if torch is None:
+    if not torch:
         raise ImportError("PyTorch is required for TorchImageProcessor")
 
     if not isinstance(array, torch.Tensor):
-        raise TypeError(f"{name} must be a PyTorch tensor, got {type(array)}. "
-                       f"No automatic conversion is performed to maintain explicit contracts.")
+        raise TypeError(
+            f"{name} must be a PyTorch tensor, got {type(array)}. "
+            f"No automatic conversion is performed to maintain explicit contracts."
+        )
 
     if array.ndim != 3:
         raise ValueError(f"{name} must be a 3D tensor, got {array.ndim}D")
+
 
 def _gaussian_blur(image: "torch.Tensor", sigma: float) -> "torch.Tensor":
     """
@@ -133,14 +140,17 @@ def _gaussian_blur(image: "torch.Tensor", sigma: float) -> "torch.Tensor":
     img = image.unsqueeze(0).unsqueeze(0)
 
     # Apply separable convolution
-    blurred = F.conv2d(img, kernel_x, padding=(kernel_size//2, 0))
-    blurred = F.conv2d(blurred, kernel_y, padding=(0, kernel_size//2))
+    blurred = F.conv2d(img, kernel_x, padding=(kernel_size // 2, 0))
+    blurred = F.conv2d(blurred, kernel_y, padding=(0, kernel_size // 2))
 
     # Remove batch and channel dimensions
     return blurred.squeeze(0).squeeze(0)
 
+
 @torch_func
-def sharpen(image: "torch.Tensor", radius: float = 1.0, amount: float = 1.0) -> "torch.Tensor":
+def sharpen(
+    image: "torch.Tensor", radius: float = 1.0, amount: float = 1.0
+) -> "torch.Tensor":
     """
     Sharpen a 3D image using unsharp masking.
 
@@ -192,13 +202,14 @@ def sharpen(image: "torch.Tensor", radius: float = 1.0, amount: float = 1.0) -> 
 
     return result
 
+
 @torch_func
 def percentile_normalize(
     image: "torch.Tensor",
     low_percentile: float = 1.0,
     high_percentile: float = 99.0,
     target_min: float = 0.0,
-    target_max: float = 65535.0
+    target_max: float = 65535.0,
 ) -> "torch.Tensor":
     """
     Normalize a 3D image using percentile-based contrast stretching.
@@ -227,18 +238,26 @@ def percentile_normalize(
         slice_elements = slice_float.numel()
 
         # PyTorch quantile() fails on very large tensors, so we use sampling for large slices
-        max_elements_for_quantile = 10_000_000  # ~10M elements, conservative limit for quantile()
+        max_elements_for_quantile = (
+            10_000_000  # ~10M elements, conservative limit for quantile()
+        )
 
-        logger.debug(f"🔥 QUANTILE DEBUG: percentile_normalize slice {z} shape {image[z].shape}, {slice_elements:,} elements")
+        logger.debug(
+            f"🔥 QUANTILE DEBUG: percentile_normalize slice {z} shape {image[z].shape}, {slice_elements:,} elements"
+        )
 
         if slice_elements > max_elements_for_quantile:
             # Use random sampling for large slices to estimate percentiles
-            sample_size = min(max_elements_for_quantile, slice_elements // 10)  # Sample 10% or max size
+            sample_size = min(
+                max_elements_for_quantile, slice_elements // 10
+            )  # Sample 10% or max size
             flat_slice = slice_float.flatten()
 
             # Generate random indices for sampling (memory efficient)
             # Use torch.randint instead of torch.randperm to avoid creating huge tensors
-            indices = torch.randint(0, slice_elements, (sample_size,), device=image.device)
+            indices = torch.randint(
+                0, slice_elements, (sample_size,), device=image.device
+            )
             sampled_values = flat_slice[indices]
 
             p_low = torch.quantile(sampled_values, low_percentile / 100.0)
@@ -264,13 +283,14 @@ def percentile_normalize(
 
     return result
 
+
 @torch_func
 def stack_percentile_normalize(
     stack: "torch.Tensor",
     low_percentile: float = 1.0,
     high_percentile: float = 99.0,
     target_min: float = 0.0,
-    target_max: float = 65535.0
+    target_max: float = 65535.0,
 ) -> "torch.Tensor":
     """
     Normalize a stack using global percentile-based contrast stretching.
@@ -296,13 +316,19 @@ def stack_percentile_normalize(
     total_elements = stack_float.numel()
 
     # PyTorch quantile() fails on very large tensors, so we use sampling for large stacks
-    max_elements_for_quantile = 10_000_000  # ~10M elements, conservative limit for quantile()
+    max_elements_for_quantile = (
+        10_000_000  # ~10M elements, conservative limit for quantile()
+    )
 
-    logger.debug(f"🔥 QUANTILE DEBUG: stack_percentile_normalize called with tensor shape {stack.shape}, {total_elements:,} elements")
+    logger.debug(
+        f"🔥 QUANTILE DEBUG: stack_percentile_normalize called with tensor shape {stack.shape}, {total_elements:,} elements"
+    )
 
     if total_elements > max_elements_for_quantile:
         # Use random sampling for large tensors to estimate percentiles
-        sample_size = min(max_elements_for_quantile, total_elements // 10)  # Sample 10% or max size
+        sample_size = min(
+            max_elements_for_quantile, total_elements // 10
+        )  # Sample 10% or max size
         flat_stack = stack_float.flatten()
 
         # Generate random indices for sampling (memory efficient)
@@ -313,7 +339,9 @@ def stack_percentile_normalize(
         p_low = torch.quantile(sampled_values, low_percentile / 100.0)
         p_high = torch.quantile(sampled_values, high_percentile / 100.0)
 
-        logger.debug(f"Used sampling ({sample_size:,} of {total_elements:,} elements) for percentile calculation due to large tensor size")
+        logger.debug(
+            f"Used sampling ({sample_size:,} of {total_elements:,} elements) for percentile calculation due to large tensor size"
+        )
     else:
         # Use full tensor for smaller stacks
         p_low = torch.quantile(stack_float, low_percentile / 100.0)
@@ -325,10 +353,13 @@ def stack_percentile_normalize(
 
     # Clip and normalize to target range (match NumPy implementation exactly)
     clipped = torch.clamp(stack, p_low, p_high)
-    normalized = (clipped - p_low) * (target_max - target_min) / (p_high - p_low) + target_min
+    normalized = (clipped - p_low) * (target_max - target_min) / (
+        p_high - p_low
+    ) + target_min
     normalized = normalized.to(torch.uint16)
 
     return normalized
+
 
 @torch_func
 def create_composite(
@@ -385,7 +416,15 @@ def create_composite(
         composite /= total_weight
 
     # Convert back to original dtype (usually uint16)
-    if dtype in [torch.uint8, torch.uint16, torch.uint32, torch.int8, torch.int16, torch.int32, torch.int64]:
+    if dtype in [
+        torch.uint8,
+        torch.uint16,
+        torch.uint32,
+        torch.int8,
+        torch.int16,
+        torch.int32,
+        torch.int64,
+    ]:
         # Get the maximum value for the specific integer dtype
         if dtype == torch.uint8:
             max_val = 255
@@ -408,6 +447,7 @@ def create_composite(
 
     # Return as 3D tensor with shape (1, Y, X)
     return composite.reshape(1, height, width)
+
 
 @torch_func
 def apply_mask(image: "torch.Tensor", mask: "torch.Tensor") -> "torch.Tensor":
@@ -454,6 +494,7 @@ def apply_mask(image: "torch.Tensor", mask: "torch.Tensor") -> "torch.Tensor":
     # If we get here, the mask is neither 2D nor 3D PyTorch tensor
     raise TypeError(f"mask must be a 2D or 3D PyTorch tensor, got {type(mask)}")
 
+
 @torch_func
 def create_weight_mask(
     shape: Tuple[int, int], margin_ratio: float = 0.1
@@ -473,6 +514,7 @@ def create_weight_mask(
 
     height, width = shape
     return create_linear_weight_mask(height, width, margin_ratio)
+
 
 @torch_func
 def max_projection(stack: "torch.Tensor") -> "torch.Tensor":
@@ -503,6 +545,7 @@ def max_projection(stack: "torch.Tensor") -> "torch.Tensor":
     projection_2d = projection_2d.to(original_dtype)
 
     return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
+
 
 @torch_func
 def mean_projection(stack: "torch.Tensor") -> "torch.Tensor":
@@ -537,7 +580,7 @@ def stack_equalize_histogram(
     stack: "torch.Tensor",
     bins: int = 65536,
     range_min: float = 0.0,
-    range_max: float = 65535.0
+    range_max: float = 65535.0,
 ) -> "torch.Tensor":
     """
     Apply histogram equalization to an entire stack.
@@ -570,10 +613,14 @@ def stack_equalize_histogram(
     if flat_stack.numel() > max_elements_for_histogram:
         # Use random sampling for histogram computation
         sample_size = max_elements_for_histogram
-        indices = torch.randint(0, flat_stack.numel(), (sample_size,), device=stack.device)
+        indices = torch.randint(
+            0, flat_stack.numel(), (sample_size,), device=stack.device
+        )
         sampled_stack = flat_stack[indices]
         hist = torch.histc(sampled_stack, bins=bins, min=range_min, max=range_max)
-        logger.debug(f"Used sampling ({sample_size:,} of {flat_stack.numel():,} elements) for histogram computation")
+        logger.debug(
+            f"Used sampling ({sample_size:,} of {flat_stack.numel():,} elements) for histogram computation"
+        )
     else:
         # Use full stack for smaller stacks
         hist = torch.histc(flat_stack, bins=bins, min=range_min, max=range_max)
@@ -586,7 +633,15 @@ def stack_equalize_histogram(
     # Normalize the CDF to the input dtype range
     # Avoid division by zero
     if cdf[-1] > 0:
-        if input_dtype in [torch.uint8, torch.uint16, torch.uint32, torch.int8, torch.int16, torch.int32, torch.int64]:
+        if input_dtype in [
+            torch.uint8,
+            torch.uint16,
+            torch.uint32,
+            torch.int8,
+            torch.int16,
+            torch.int32,
+            torch.int64,
+        ]:
             dtype_info = torch.iinfo(input_dtype)
             cdf = dtype_info.max * cdf / cdf[-1]
         else:
@@ -599,7 +654,8 @@ def stack_equalize_histogram(
     # Scale input values to bin indices
     indices = torch.clamp(
         ((flat_stack - range_min) / (range_max - range_min) * (bins - 1)).long(),
-        0, bins - 1
+        0,
+        bins - 1,
     )
 
     # Look up CDF values
@@ -609,11 +665,22 @@ def stack_equalize_histogram(
     equalized_stack = equalized_flat.reshape(stack.shape)
 
     # Convert back to input dtype
-    if input_dtype in [torch.uint8, torch.uint16, torch.uint32, torch.int8, torch.int16, torch.int32, torch.int64]:
+    if input_dtype in [
+        torch.uint8,
+        torch.uint16,
+        torch.uint32,
+        torch.int8,
+        torch.int16,
+        torch.int32,
+        torch.int64,
+    ]:
         dtype_info = torch.iinfo(input_dtype)
-        return torch.clamp(equalized_stack, dtype_info.min, dtype_info.max).to(input_dtype)
+        return torch.clamp(equalized_stack, dtype_info.min, dtype_info.max).to(
+            input_dtype
+        )
     else:
         return equalized_stack.to(input_dtype)
+
 
 class TorchStackProjectionStrategy(
     EnumKeyedStrategyMixin[StackProjectionMethod],
@@ -661,11 +728,10 @@ def create_projection(
 
     return TorchStackProjectionStrategy.for_enum_member(method).apply(stack)
 
+
 @torch_func
 def tophat(
-    image: "torch.Tensor",
-    selem_radius: int = 50,
-    downsample_factor: int = 4
+    image: "torch.Tensor", selem_radius: int = 50, downsample_factor: int = 4
 ) -> "torch.Tensor":
     """
     Apply white top-hat filter to a 3D image for background removal.
@@ -704,12 +770,13 @@ def tophat(
         new_w = image[z].shape[1] // downsample_factor
 
         # Resize using PyTorch's interpolate function
-        image_small = F.interpolate(
-            img_4d,
-            size=(new_h, new_w),
-            mode='bilinear',
-            align_corners=False
-        ).squeeze(0).squeeze(0)
+        image_small = (
+            F.interpolate(
+                img_4d, size=(new_h, new_w), mode="bilinear", align_corners=False
+            )
+            .squeeze(0)
+            .squeeze(0)
+        )
 
         # 2) Resize the structuring element to match the downsampled image
         small_selem_radius = max(1, selem_radius // downsample_factor)
@@ -717,9 +784,11 @@ def tophat(
         small_grid_y, small_grid_x = torch.meshgrid(
             torch.arange(small_grid_size, device=device) - small_selem_radius,
             torch.arange(small_grid_size, device=device) - small_selem_radius,
-            indexing='ij'
+            indexing="ij",
         )
-        small_mask = (small_grid_x.pow(2) + small_grid_y.pow(2)) <= small_selem_radius**2
+        small_mask = (
+            small_grid_x.pow(2) + small_grid_y.pow(2)
+        ) <= small_selem_radius**2
         small_selem = small_mask.float()
 
         # 3) Apply white top-hat using PyTorch's convolution operations
@@ -732,7 +801,7 @@ def tophat(
         padded = F.pad(
             image_small.unsqueeze(0).unsqueeze(0),
             (pad_size, pad_size, pad_size, pad_size),
-            mode='reflect'
+            mode="reflect",
         )
 
         # Unfold the padded image into patches
@@ -747,8 +816,7 @@ def tophat(
 
         # Perform erosion (min pooling)
         eroded = torch.min(
-            masked_patches + (1 - small_selem.reshape(-1, 1, 1)) * 1e9,
-            dim=1
+            masked_patches + (1 - small_selem.reshape(-1, 1, 1)) * 1e9, dim=1
         )[0]
 
         # Implement dilation using max pooling with custom kernel
@@ -756,7 +824,7 @@ def tophat(
         padded_eroded = F.pad(
             eroded.unsqueeze(0).unsqueeze(0),
             (pad_size, pad_size, pad_size, pad_size),
-            mode='reflect'
+            mode="reflect",
         )
 
         # Unfold the padded eroded image into patches
@@ -780,12 +848,13 @@ def tophat(
 
         # 5) Upscale background to original size
         background_4d = background_small.unsqueeze(0).unsqueeze(0)
-        background_large = F.interpolate(
-            background_4d,
-            size=image[z].shape,
-            mode='bilinear',
-            align_corners=False
-        ).squeeze(0).squeeze(0)
+        background_large = (
+            F.interpolate(
+                background_4d, size=image[z].shape, mode="bilinear", align_corners=False
+            )
+            .squeeze(0)
+            .squeeze(0)
+        )
 
         # 6) Subtract background and clip negative values
         slice_result = torch.clamp(image[z].float() - background_large, min=0.0)

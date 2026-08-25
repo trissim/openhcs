@@ -1,10 +1,9 @@
-from __future__ import annotations 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING, List, Optional
 
 from openhcs.core.memory import torch as torch_func
-from openhcs.utils.import_utils import optional_import, create_placeholder_class
-
-
+from openhcs.utils.import_utils import create_placeholder_class, optional_import_or_none
 
 # For type checking only
 if TYPE_CHECKING:
@@ -14,14 +13,16 @@ if TYPE_CHECKING:
 
 # Import torch modules using optional_import
 from openhcs.core.lazy_gpu_imports import torch
-nn = optional_import("torch.nn") if torch else None
-F = optional_import("torch.nn.functional") if torch else None
+
+nn = optional_import_or_none("torch.nn") if torch else None
+F = optional_import_or_none("torch.nn.functional") if torch else None
 
 nnModule = create_placeholder_class(
-    "Module", # Name for the placeholder if generated
+    "Module",  # Name for the placeholder if generated
     base_class=nn.Module if nn else None,
-    required_library="PyTorch"
+    required_library="PyTorch",
 )
+
 
 # Helper for sharpness loss
 def laplacian_filter_torch(image_batch: "torch.Tensor") -> "torch.Tensor":
@@ -30,9 +31,13 @@ def laplacian_filter_torch(image_batch: "torch.Tensor") -> "torch.Tensor":
     Input: (N, 1, H, W)
     Output: (N, 1, H, W)
     """
-    kernel = torch.tensor([[1, 1, 1], [1, -8, 1], [1, 1, 1]],
-                          dtype=image_batch.dtype, device=image_batch.device).reshape(1, 1, 3, 3)
+    kernel = torch.tensor(
+        [[1, 1, 1], [1, -8, 1], [1, 1, 1]],
+        dtype=image_batch.dtype,
+        device=image_batch.device,
+    ).reshape(1, 1, 3, 3)
     return F.conv2d(image_batch, kernel, padding=1)
+
 
 def extract_patches_2d_from_3d_stack(
     stack_3d: "torch.Tensor", patch_size: int, stride: int
@@ -49,13 +54,14 @@ def extract_patches_2d_from_3d_stack(
     patches = patches.reshape(-1, Z, patch_size, patch_size)
     return patches
 
+
 def blend_patches_to_2d_image(
     patch_outputs: List["torch.Tensor"],  # List of [1, patch_size, patch_size]
     target_h: int,
     target_w: int,
     patch_size: int,
     stride: int,
-    device: torch.device
+    device: torch.device,
 ) -> torch.Tensor:
     """
     Blends 2D fused patches back into a single 2D image.
@@ -75,7 +81,9 @@ def blend_patches_to_2d_image(
                 # This case should ideally not be reached if inputs are consistent
                 break
 
-            patch_content = patch_outputs[patch_idx].squeeze(0) # [patch_size, patch_size]
+            patch_content = patch_outputs[patch_idx].squeeze(
+                0
+            )  # [patch_size, patch_size]
 
             h_start = i * stride
             w_start = j * stride
@@ -84,11 +92,12 @@ def blend_patches_to_2d_image(
             w_end = w_start + patch_size
 
             fused_image[h_start:h_end, w_start:w_end] += patch_content
-            count_map[h_start:h_end, w_start:w_end] += 1.0 # Use float for count_map
+            count_map[h_start:h_end, w_start:w_end] += 1.0  # Use float for count_map
             patch_idx += 1
 
     fused_image /= count_map.clamp(min=1.0)
     return fused_image.unsqueeze(0)
+
 
 class UNetLite(nnModule):
     def __init__(self, in_channels_z: int, model_config_depth: int):
@@ -114,14 +123,19 @@ class UNetLite(nnModule):
         out = self.sigmoid(self.conv_out(x3))
         return out
 
+
 def sharpness_loss_fn(fused_patch: "torch.Tensor") -> "torch.Tensor":
     laplacian_response = laplacian_filter_torch(fused_patch)
     return -torch.var(laplacian_response, dim=(-1, -2), unbiased=False).mean()
 
-def consistency_loss_fn(fused_patch: "torch.Tensor", input_patch_stack: "torch.Tensor") -> "torch.Tensor":
-    diff_sq = (fused_patch - input_patch_stack)**2
+
+def consistency_loss_fn(
+    fused_patch: "torch.Tensor", input_patch_stack: "torch.Tensor"
+) -> "torch.Tensor":
+    diff_sq = (fused_patch - input_patch_stack) ** 2
     min_diff_sq_over_z = torch.min(diff_sq, dim=1)[0]
     return torch.mean(min_diff_sq_over_z)
+
 
 @torch_func
 def dl_edof_unsupervised(
@@ -143,9 +157,11 @@ def dl_edof_unsupervised(
     """
     if torch is None:
         raise ImportError("PyTorch is required for this function")
-    if not (image_stack.ndim == 3 and str(image_stack.device.type) == 'cuda'):
-        raise ValueError("Input image_stack must be a 3D CUDA tensor [Z, H, W]. "
-                         f"Got {image_stack.ndim}D tensor on {image_stack.device.type}.")
+    if not (image_stack.ndim == 3 and str(image_stack.device.type) == "cuda"):
+        raise ValueError(
+            "Input image_stack must be a 3D CUDA tensor [Z, H, W]. "
+            f"Got {image_stack.ndim}D tensor on {image_stack.device.type}."
+        )
 
     Z_orig, H_orig, W_orig = image_stack.shape
     device = image_stack.device
@@ -155,9 +171,12 @@ def dl_edof_unsupervised(
     total_elements = Z_orig * H_orig * W_orig
     if total_elements > 100_000_000:  # 100M elements
         import logging
+
         logger = logging.getLogger(__name__)
-        logger.warning(f"⚠️  Large image stack ({total_elements:,} elements) may cause high memory usage in deep learning EDoF. "
-                      f"Consider using smaller patch sizes or processing smaller regions.")
+        logger.warning(
+            f"⚠️  Large image stack ({total_elements:,} elements) may cause high memory usage in deep learning EDoF. "
+            f"Consider using smaller patch sizes or processing smaller regions."
+        )
         logger.warning(f"Current image size: {Z_orig}×{H_orig}×{W_orig}")
 
     # Estimate patch memory usage
@@ -169,25 +188,27 @@ def dl_edof_unsupervised(
 
     if total_patches > 1000:
         import logging
+
         logger = logging.getLogger(__name__)
-        logger.warning(f"⚠️  Large number of patches ({total_patches:,}) may cause high memory usage. "
-                      f"Consider increasing stride or reducing patch size.")
+        logger.warning(
+            f"⚠️  Large number of patches ({total_patches:,}) may cause high memory usage. "
+            f"Consider increasing stride or reducing patch size."
+        )
 
     current_patch_size = patch_size
     if current_patch_size is None:
         current_patch_size = max(H_orig, W_orig) // 8
 
-    current_patch_size = max(current_patch_size, 16) # Min patch size
-    if current_patch_size % 2 != 0: # Ensure even for CNN
-        current_patch_size +=1
+    current_patch_size = max(current_patch_size, 16)  # Min patch size
+    if current_patch_size % 2 != 0:  # Ensure even for CNN
+        current_patch_size += 1
     current_patch_size = min(current_patch_size, H_orig, W_orig)
-
 
     current_stride = stride
     if current_stride is None:
         current_stride = current_patch_size // 2
-    if current_stride <=0: current_stride = 1
-
+    if current_stride <= 0:
+        current_stride = 1
 
     current_model_depth_config = model_depth
     if current_model_depth_config is None:
@@ -200,10 +221,14 @@ def dl_edof_unsupervised(
 
     if denoise:
         stack_to_blur = stack_f32.unsqueeze(1)
-        blurred_stack = F.gaussian_blur(stack_to_blur, kernel_size=(3,3), sigma=(0.5,0.5))
+        blurred_stack = F.gaussian_blur(
+            stack_to_blur, kernel_size=(3, 3), sigma=(0.5, 0.5)
+        )
         stack_f32 = blurred_stack.squeeze(1)
 
-    patches = extract_patches_2d_from_3d_stack(stack_f32, current_patch_size, current_stride)
+    patches = extract_patches_2d_from_3d_stack(
+        stack_f32, current_patch_size, current_stride
+    )
 
     fused_patch_outputs = []
     num_epochs_per_patch = 10
@@ -213,7 +238,9 @@ def dl_edof_unsupervised(
         model_input = patch_stack_z.unsqueeze(0).to(device)
         Z_patch = model_input.shape[1]
 
-        model = UNetLite(in_channels_z=Z_patch, model_config_depth=current_model_depth_config).to(device)
+        model = UNetLite(
+            in_channels_z=Z_patch, model_config_depth=current_model_depth_config
+        ).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
         for epoch in range(num_epochs_per_patch):

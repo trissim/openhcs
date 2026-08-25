@@ -11,15 +11,16 @@ Doctrinal Clauses:
 - Clause 88 — No Inferred Capabilities: Explicit JAX dependency via BaSiCPy
 - Clause 273 — Memory Backend Restrictions: JAX-only implementation
 """
-from __future__ import annotations 
+
+from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 # Import decorator directly from core.memory to avoid circular imports
 from openhcs.core.memory import jax as jax_func
-from openhcs.core.utils import optional_import
 from openhcs.processing.backends.enhance.flatfield import BasicFittingMode
+from openhcs.utils.import_utils import optional_import_placeholder
 
 # For type checking only
 if TYPE_CHECKING:
@@ -32,8 +33,8 @@ except ImportError:
     jnp = None
 
 # Import BaSiCPy as an optional dependency
-basicpy = optional_import("basicpy")
-if basicpy is not None:
+basicpy = optional_import_placeholder("basicpy")
+if basicpy:
     BaSiC = basicpy.BaSiC
 else:
     BaSiC = None
@@ -53,13 +54,13 @@ def _validate_jax_array(array: Any, name: str = "input") -> None:
         ImportError: If BaSiCPy is not available
         ValueError: If the array is not compatible
     """
-    if basicpy is None or BaSiC is None:
+    if not basicpy or BaSiC is None:
         raise ImportError(
             "BaSiCPy is not available. Please install BaSiCPy for BaSiC correction. "
             "Install with: pip install basicpy"
         )
 
-    if not hasattr(array, 'shape') or not hasattr(array, 'dtype'):
+    if not hasattr(array, "shape") or not hasattr(array, "dtype"):
         raise ValueError(
             f"{name} must be an array-like object with shape and dtype attributes, "
             f"got {type(array)}."
@@ -79,7 +80,7 @@ def basic_flatfield_correction_jax(
     get_darkfield: bool = False,
     fitting_mode: BasicFittingMode = BasicFittingMode.LADMAP,
     working_size: Optional[Union[int, list]] = 128,
-    verbose: bool = False
+    verbose: bool = False,
 ) -> "jnp.ndarray":
     """
     Perform BaSiC-style illumination correction on a 3D image stack using JAX via BaSiCPy.
@@ -122,6 +123,7 @@ def basic_flatfield_correction_jax(
     try:
         # Convert JAX array to numpy for BaSiCPy (it handles JAX internally)
         import numpy as np
+
         image_np = np.asarray(image)
 
         # Create BaSiC instance with parameters
@@ -135,13 +137,11 @@ def basic_flatfield_correction_jax(
             get_darkfield=get_darkfield,
             fitting_mode=fitting_mode.value,
             working_size=working_size,
-            
             # Optimization parameters
             optimization_tol=1e-3,
             optimization_tol_diff=1e-2,
             reweighting_tol=1e-2,
             max_reweight_iterations=10,
-            
             # Memory and performance
             resize_mode="jax",
             sort_intensity=False,
@@ -153,6 +153,7 @@ def basic_flatfield_correction_jax(
 
         # Convert back to JAX array
         import jax.numpy as jnp
+
         corrected = jnp.asarray(corrected_np)
 
         logger.debug(f"BaSiC correction completed: {corrected.shape}")
@@ -178,7 +179,7 @@ def basic_flatfield_correction_batch_jax(
     get_darkfield: bool = False,
     fitting_mode: BasicFittingMode = BasicFittingMode.LADMAP,
     working_size: Optional[Union[int, list]] = 128,
-    verbose: bool = False
+    verbose: bool = False,
 ) -> "jnp.ndarray":
     """
     Apply BaSiC flatfield correction to a batch of 3D image stacks.
@@ -234,12 +235,13 @@ def basic_flatfield_correction_batch_jax(
                 get_darkfield=get_darkfield,
                 fitting_mode=fitting_mode,
                 working_size=working_size,
-                verbose=verbose
+                verbose=verbose,
             )
             result_list.append(corrected)
 
         # Stack along batch dimension
         import jax.numpy as jnp
+
         return jnp.stack(result_list, axis=0)
 
     # Batch is organized as (Z, B, Y, X)
@@ -256,10 +258,11 @@ def basic_flatfield_correction_batch_jax(
             get_darkfield=get_darkfield,
             fitting_mode=fitting_mode,
             working_size=working_size,
-            verbose=verbose
+            verbose=verbose,
         )
         result_list.append(corrected)
 
     # Stack along batch dimension
     import jax.numpy as jnp
+
     return jnp.stack(result_list, axis=1)

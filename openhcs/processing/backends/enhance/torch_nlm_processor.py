@@ -21,15 +21,14 @@ from __future__ import annotations
 import logging
 from enum import Enum
 
-from openhcs.core.memory import torch as torch_func
-from openhcs.utils.import_utils import optional_import
-
 # Import torch modules as optional dependencies
 from openhcs.core.lazy_gpu_imports import torch
+from openhcs.core.memory import torch as torch_func
+from openhcs.utils.import_utils import optional_import_or_none
 
 # Import torch_nlm as optional dependency
 # Note: The PyPI package is named 'nlm-torch' but imports as 'torch_nlm'
-torch_nlm = optional_import("torch_nlm")
+torch_nlm = optional_import_or_none("torch_nlm")
 if torch_nlm is not None:
     nlm2d = torch_nlm.nlm2d
     nlm3d = torch_nlm.nlm3d

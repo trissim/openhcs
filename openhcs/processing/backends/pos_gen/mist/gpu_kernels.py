@@ -3,19 +3,20 @@ GPU JIT Kernels for Borůvka's MST Algorithm
 
 All CUDA kernels for parallel MST construction using CuPy JIT.
 """
-from __future__ import annotations 
+
+from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from openhcs.core.utils import optional_import
+from openhcs.utils.import_utils import optional_import_placeholder
 
-jit = optional_import("cupyx.jit")
+jit = optional_import_placeholder("cupyx.jit")
 # For type checking only
 if TYPE_CHECKING:
     import cupy as cp
 
 # Import CuPy as an optional dependency
-cp = optional_import("cupy")
+cp = optional_import_placeholder("cupy")
 
 
 @jit.rawkernel() if jit else lambda f: f
@@ -42,8 +43,13 @@ def _reset_and_flatten_kernel(
 
 @jit.rawkernel() if jit else lambda f: f
 def _find_minimum_edges_kernel(
-    edges_from, edges_to, edges_quality, parent,
-    cheapest_edge_idx, cheapest_edge_weight_int, num_edges
+    edges_from,
+    edges_to,
+    edges_quality,
+    parent,
+    cheapest_edge_idx,
+    cheapest_edge_weight_int,
+    num_edges,
 ):
     """
     Kernel 2: Find minimum weight edge for each component (using int32 for atomics).
@@ -78,8 +84,19 @@ def _find_minimum_edges_kernel(
 
 @jit.rawkernel() if jit else lambda f: f
 def _union_components_kernel(
-    cheapest_edge_idx, edges_from, edges_to, edges_dx, edges_dy,
-    parent, rank, mst_from, mst_to, mst_dx, mst_dy, mst_count, num_nodes
+    cheapest_edge_idx,
+    edges_from,
+    edges_to,
+    edges_dx,
+    edges_dy,
+    parent,
+    rank,
+    mst_from,
+    mst_to,
+    mst_dx,
+    mst_dy,
+    mst_count,
+    num_nodes,
 ):
     """
     Kernel 3: Union components (no return statements).
@@ -109,11 +126,11 @@ def _union_components_kernel(
                 if rank1 < rank2:
                     # Make to_root the parent of from_root
                     old_parent = jit.atomic_cas(parent, from_root, from_root, to_root)
-                    union_success = (old_parent == from_root)
+                    union_success = old_parent == from_root
                 elif rank1 > rank2:
                     # Make from_root the parent of to_root
                     old_parent = jit.atomic_cas(parent, to_root, to_root, from_root)
-                    union_success = (old_parent == to_root)
+                    union_success = old_parent == to_root
                 else:
                     # Equal ranks: make from_root parent and increment its rank
                     old_parent = jit.atomic_cas(parent, to_root, to_root, from_root)
@@ -136,7 +153,7 @@ def launch_reset_flatten_kernel(
     rank: "cp.ndarray",  # type: ignore
     cheapest_edge_idx: "cp.ndarray",  # type: ignore
     cheapest_edge_weight_int: "cp.ndarray",  # type: ignore
-    num_nodes: int
+    num_nodes: int,
 ) -> None:
     """
     Launch the reset and flatten kernel with appropriate grid/block dimensions.
@@ -145,8 +162,9 @@ def launch_reset_flatten_kernel(
     blocks_per_grid = (num_nodes + threads_per_block - 1) // threads_per_block
 
     _reset_and_flatten_kernel(
-        (blocks_per_grid,), (threads_per_block,),
-        (parent, rank, cheapest_edge_idx, cheapest_edge_weight_int, num_nodes)
+        (blocks_per_grid,),
+        (threads_per_block,),
+        (parent, rank, cheapest_edge_idx, cheapest_edge_weight_int, num_nodes),
     )
 
 
@@ -157,7 +175,7 @@ def launch_find_minimum_edges_kernel(
     parent: "cp.ndarray",  # type: ignore
     cheapest_edge_idx: "cp.ndarray",  # type: ignore
     cheapest_edge_weight_int: "cp.ndarray",  # type: ignore
-    num_edges: int
+    num_edges: int,
 ) -> None:
     """
     Launch the minimum edge finding kernel with appropriate dimensions.
@@ -166,9 +184,17 @@ def launch_find_minimum_edges_kernel(
     blocks_per_grid = (num_edges + threads_per_block - 1) // threads_per_block
 
     _find_minimum_edges_kernel(
-        (blocks_per_grid,), (threads_per_block,),
-        (edges_from, edges_to, edges_quality, parent,
-         cheapest_edge_idx, cheapest_edge_weight_int, num_edges)
+        (blocks_per_grid,),
+        (threads_per_block,),
+        (
+            edges_from,
+            edges_to,
+            edges_quality,
+            parent,
+            cheapest_edge_idx,
+            cheapest_edge_weight_int,
+            num_edges,
+        ),
     )
 
 
@@ -185,7 +211,7 @@ def launch_union_components_kernel(
     mst_dx: "cp.ndarray",  # type: ignore
     mst_dy: "cp.ndarray",  # type: ignore
     mst_count: "cp.ndarray",  # type: ignore
-    num_nodes: int
+    num_nodes: int,
 ) -> None:
     """
     Launch the union components kernel - pure GPU, no CPU sync.
@@ -195,9 +221,23 @@ def launch_union_components_kernel(
     blocks_per_grid = (num_nodes + threads_per_block - 1) // threads_per_block
 
     _union_components_kernel(
-        (blocks_per_grid,), (threads_per_block,),
-        (cheapest_edge_idx, edges_from, edges_to, edges_dx, edges_dy,
-         parent, rank, mst_from, mst_to, mst_dx, mst_dy, mst_count, num_nodes)
+        (blocks_per_grid,),
+        (threads_per_block,),
+        (
+            cheapest_edge_idx,
+            edges_from,
+            edges_to,
+            edges_dx,
+            edges_dy,
+            parent,
+            rank,
+            mst_from,
+            mst_to,
+            mst_dx,
+            mst_dy,
+            mst_count,
+            num_nodes,
+        ),
     )
 
 
@@ -207,5 +247,5 @@ def gpu_component_count(parent: "cp.ndarray") -> "cp.ndarray":  # type: ignore
     Returns GPU array, no CPU sync.
     """
     # After flattening, roots are nodes where parent[i] == i
-    roots = (parent == cp.arange(len(parent)))
+    roots = parent == cp.arange(len(parent))
     return cp.sum(roots)  # Return GPU array, not CPU int

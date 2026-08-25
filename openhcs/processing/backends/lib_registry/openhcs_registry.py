@@ -6,29 +6,33 @@ explicit contract declarations, allowing them to skip runtime testing
 while producing the same FunctionMetadata format as external libraries.
 """
 
-import logging
-import numpy as np
-from pathlib import Path
-from abc import ABC, abstractmethod
-from collections.abc import Callable
-from types import ModuleType
-from typing import ClassVar, Dict, List, Tuple, Any
 import ast
 import importlib
 import inspect
+import logging
+from abc import ABC, abstractmethod
+from collections.abc import Callable
 from functools import lru_cache
+from pathlib import Path
 from threading import RLock
+from types import ModuleType
+from typing import Any, ClassVar, Dict, List, Tuple
 from weakref import WeakKeyDictionary
 
-from openhcs.constants import MemoryType, VALID_MEMORY_TYPES
+import numpy as np
+from metaclass_registry import import_module_preserving_root_logging
+
+from openhcs.constants import VALID_MEMORY_TYPES, MemoryType
 from openhcs.core.callable_contract import (
     CallableContract,
     FunctionStepExecutionScope,
 )
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
+from openhcs.core.public_api import is_declared_public_name
 from openhcs.processing.backends.lib_registry.unified_registry import (
     FunctionMetadata,
     LibraryRegistryBase,
+    ProcessingContract,
 )
 from openhcs.utils.environment import OpenHCSProcessEnvironment
 
@@ -292,8 +296,8 @@ class OpenHCSRegistry(LibraryRegistryBase):
 
     def _get_openhcs_modules(self) -> List[str]:
         """Get list of OpenHCS processing modules to scan using automatic discovery."""
-        import pkgutil
         import os
+        import pkgutil
 
         modules = []
 
@@ -337,7 +341,7 @@ class OpenHCSRegistry(LibraryRegistryBase):
                 )
                 continue
             try:
-                module = importlib.import_module(module_name)
+                module = import_module_preserving_root_logging(module_name)
                 modules.append((module_name, module))
             except Exception as e:
                 logger.warning(f"Could not import OpenHCS module {module_name}: {e}")
@@ -451,10 +455,6 @@ class OpenHCSRegistry(LibraryRegistryBase):
 
     def discover_functions(self) -> Dict[str, FunctionMetadata]:
         """Discover OpenHCS functions with memory type decorators and assign default contracts."""
-        from openhcs.processing.backends.lib_registry.unified_registry import (
-            ProcessingContract,
-        )
-
         functions = {}
         modules = self.get_modules_to_scan()
         catalog_functions = {
@@ -479,11 +479,10 @@ class OpenHCSRegistry(LibraryRegistryBase):
 
             if isinstance(module, OpenHCSFunctionCatalogModule):
                 for func in catalog_functions[module_name]:
-                    metadata = self._metadata_for_function(
+                    metadata = self._catalog_metadata_for_function(
                         func.__name__,
                         func,
                         module_name,
-                        ProcessingContract,
                     )
                     if metadata is None:
                         continue
@@ -509,11 +508,10 @@ class OpenHCSRegistry(LibraryRegistryBase):
                     )
                     continue
 
-                metadata = self._metadata_for_function(
+                metadata = self._catalog_metadata_for_function(
                     name,
                     func,
                     module_name,
-                    ProcessingContract,
                 )
                 if metadata is None:
                     continue
@@ -539,7 +537,6 @@ class OpenHCSRegistry(LibraryRegistryBase):
         name: str,
         func,
         module_name: str,
-        ProcessingContract,
     ) -> FunctionMetadata | None:
         declared = inspect.unwrap(func)
         if not inspect.isfunction(declared):
@@ -582,7 +579,6 @@ class OpenHCSRegistry(LibraryRegistryBase):
 
         contract = self._processing_contract_for_function(
             callable_contract,
-            ProcessingContract,
         )
 
         if not plate_scoped:
@@ -616,6 +612,27 @@ class OpenHCSRegistry(LibraryRegistryBase):
             memory_type=input_type,
         )
 
+    def _catalog_metadata_for_function(
+        self,
+        name: str,
+        func: Callable[..., Any],
+        module_name: str,
+    ) -> FunctionMetadata | None:
+        """Project metadata only for declarations on the public module surface."""
+
+        declared = inspect.unwrap(func)
+        if not is_declared_public_name(
+            declared.__module__,
+            name,
+            declared,
+        ):
+            return None
+        return self._metadata_for_function(
+            name,
+            func,
+            module_name,
+        )
+
     @classmethod
     def metadata_for_declared_callable(
         cls,
@@ -635,15 +652,10 @@ class OpenHCSRegistry(LibraryRegistryBase):
         if not inspect.isfunction(declared):
             return None
 
-        from openhcs.processing.backends.lib_registry.unified_registry import (
-            ProcessingContract,
-        )
-
         return cls()._metadata_for_function(
             func.__name__,
             func,
             _registry_catalog_module_for_callable(func),
-            ProcessingContract,
         )
 
     def reconstruct_cached_callable(
@@ -662,7 +674,10 @@ class OpenHCSRegistry(LibraryRegistryBase):
             self._registered_callables[declared] = wrapped_func
             return wrapped_func
 
-    def _processing_contract_for_function(self, callable_contract, ProcessingContract):
+    def _processing_contract_for_function(
+        self,
+        callable_contract: CallableContract,
+    ) -> ProcessingContract:
         """Return the function's declared contract, defaulting to FLEXIBLE."""
         declared_contract = callable_contract.processing_contract
         if isinstance(declared_contract, ProcessingContract):

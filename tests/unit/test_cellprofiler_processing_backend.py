@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import inspect
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -12,12 +13,10 @@ from python_introspect import Enableable, is_enableable
 from openhcs.constants.constants import MemoryType
 from openhcs.core.callable_contract import CallableContract, FunctionStepExecutionScope
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
+from openhcs.core.memory import numpy as numpy_function
 from openhcs.core.pipeline.function_contracts import execution_scope
-from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
-from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.utils.environment import OpenHCSProcessEnvironment
 from openhcs.core.runtime_object_labels import ObjectLabelVariantData
+from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 from openhcs.processing.backends.cellprofiler.morphology import (
     resize_objects,
     resize_objects_3d,
@@ -25,10 +24,18 @@ from openhcs.processing.backends.cellprofiler.morphology import (
 from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
     export_to_spreadsheet,
 )
+from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 
 def _processing_contract(function):
     return vars(function)[FunctionContractAttribute.processing_contract]
+
+
+@numpy_function
+def _private_registry_helper(image):
+    return image
 
 
 def test_openhcs_product_code_does_not_import_benchmark_package() -> None:
@@ -271,11 +278,11 @@ def test_resize_objects_replaces_source_spatial_domain(
     function,
     shape: tuple[int, ...],
 ) -> None:
+    from openhcs.core.runtime_object_label_domains import ObjectLabelDomain
     from openhcs.core.runtime_object_labels import (
         ObjectLabelPayload,
         object_label_dense_array,
     )
-    from openhcs.core.runtime_object_label_domains import ObjectLabelDomain
     from openhcs.core.source_spatial_domain import SourceSpatialDomain
 
     labels = np.zeros(shape, dtype=np.int32)
@@ -407,6 +414,24 @@ def test_openhcs_registry_discovers_cellprofiler_backend_contracts() -> None:
     assert (
         Enableable.require_parameter_name()
         in inspect.signature(spreadsheet.func).parameters
+    )
+
+
+def test_openhcs_registry_catalog_excludes_private_decorated_helpers(
+    monkeypatch,
+) -> None:
+    registry = OpenHCSRegistry()
+    monkeypatch.setattr(
+        registry,
+        "get_modules_to_scan",
+        lambda: [(__name__, sys.modules[__name__])],
+    )
+
+    functions = registry.discover_functions()
+
+    assert all(
+        metadata.original_name != _private_registry_helper.__name__
+        for metadata in functions.values()
     )
 
 
@@ -764,14 +789,8 @@ def test_cellprofiler_uint8_normalization_is_source_format_blind(
 
 def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
     from openhcs.processing.backends.cellprofiler._backend import (
-        CellProfilerBackendProvider,
         CellProfilerBackendAuthority,
-    )
-    from openhcs.processing.backends.cellprofiler.morphology import (
-        CentrosomeNumpyMorphologyBackendStrategy,
-        MorphologyBackendStrategy,
-        NumbaNumpyMorphologyBackendStrategy,
-        NumpyMorphologyBackendStrategy,
+        CellProfilerBackendProvider,
     )
     from openhcs.processing.backends.cellprofiler.intensity import (
         NumbaNumpyObjectIntensityBackendStrategy,
@@ -781,6 +800,12 @@ def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
         NativeNumpyRadialDistributionBackendStrategy,
         NumbaNumpyRadialDistributionBackendStrategy,
         RadialDistributionBackendStrategy,
+    )
+    from openhcs.processing.backends.cellprofiler.morphology import (
+        CentrosomeNumpyMorphologyBackendStrategy,
+        MorphologyBackendStrategy,
+        NumbaNumpyMorphologyBackendStrategy,
+        NumpyMorphologyBackendStrategy,
     )
     from openhcs.processing.backends.cellprofiler.neighbors import (
         NeighborTopologyBackendStrategy,
@@ -793,8 +818,8 @@ def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
     )
     from openhcs.processing.backends.cellprofiler.thresholding import (
         CentrosomeNumpyThresholdPrimitiveBackendStrategy,
-        NumbaNumpyThresholdPrimitiveBackendStrategy,
         NumbaNumpyThresholdDiagnosticsBackendStrategy,
+        NumbaNumpyThresholdPrimitiveBackendStrategy,
         NumbaNumpyThresholdSmoothingBackendStrategy,
         ThresholdDiagnosticsBackendStrategy,
         ThresholdPrimitiveBackendStrategy,
@@ -972,6 +997,7 @@ def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
 
 def test_watershed_sparse_peak_markers_match_mahotas_dense_connectivity() -> None:
     import mahotas
+
     from openhcs.processing.backends.cellprofiler.watershed import (
         _sparse_connected_peak_markers_3d,
     )
@@ -1840,14 +1866,14 @@ def test_cellprofiler_backend_selection_does_not_silently_fallback() -> None:
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
     )
-    from openhcs.processing.backends.cellprofiler.morphology import (
-        MorphologyBackendStrategy,
-    )
     from openhcs.processing.backends.cellprofiler.intensity import (
         ObjectIntensityBackendStrategy,
     )
     from openhcs.processing.backends.cellprofiler.intensity_distribution import (
         RadialDistributionBackendStrategy,
+    )
+    from openhcs.processing.backends.cellprofiler.morphology import (
+        MorphologyBackendStrategy,
     )
     from openhcs.processing.backends.cellprofiler.neighbors import (
         NeighborTopologyBackendStrategy,
@@ -1915,6 +1941,7 @@ def test_cellprofiler_backend_selection_does_not_silently_fallback() -> None:
 
 def test_object_intensity_inner_edges_match_cellprofiler_boundary_semantics() -> None:
     from skimage.segmentation import find_boundaries
+
     from openhcs.core.runtime_object_label_domains import ObjectLabelDomain
     from openhcs.core.runtime_object_labels import (
         ObjectLabelPayload,
@@ -2608,8 +2635,8 @@ def test_measure_object_size_shape_callable_defaults_are_declared_on_module() ->
 
 def test_measure_object_size_shape_orientation_matches_cp_numerical_profile() -> None:
     from openhcs.processing.backends.analysis.region_properties import (
-        AnalysisBackendProvider,
         _NUMPY_124_SVML_POW_AVAILABLE,
+        AnalysisBackendProvider,
     )
     from openhcs.processing.backends.cellprofiler.shape import (
         MeasureObjectSizeShapeModule,
@@ -2647,8 +2674,8 @@ def test_measure_object_size_shape_orientation_matches_cp_numerical_profile() ->
 
 def test_measure_object_size_shape_orientation_uses_explicit_second_moments() -> None:
     from openhcs.processing.backends.analysis.region_properties import (
-        AnalysisBackendProvider,
         _NUMPY_124_SVML_POW_AVAILABLE,
+        AnalysisBackendProvider,
     )
     from openhcs.processing.backends.cellprofiler.shape import (
         MeasureObjectSizeShapeModule,
@@ -2774,8 +2801,8 @@ def test_measure_object_size_shape_orientation_preserves_cp4281_tie_geometries(
     expected_portable_orientation: float,
 ) -> None:
     from openhcs.processing.backends.analysis.region_properties import (
-        AnalysisBackendProvider,
         _NUMPY_124_SVML_POW_AVAILABLE,
+        AnalysisBackendProvider,
     )
     from openhcs.processing.backends.cellprofiler.shape import (
         MeasureObjectSizeShapeModule,
@@ -2863,8 +2890,8 @@ def test_measure_object_size_shape_orientation_matches_exact_case_matrix(
     expected_portable_orientation: float,
 ) -> None:
     from openhcs.processing.backends.analysis.region_properties import (
-        AnalysisBackendProvider,
         _NUMPY_124_SVML_POW_AVAILABLE,
+        AnalysisBackendProvider,
     )
     from openhcs.processing.backends.cellprofiler.shape import (
         MeasureObjectSizeShapeModule,
@@ -3025,12 +3052,12 @@ def test_native_intensity_zernike_matches_cellprofiler_4281_source_loop() -> Non
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
     )
+    from openhcs.processing.backends.cellprofiler.label_geometry import (
+        minimum_enclosing_circle_from_labels,
+    )
     from openhcs.processing.backends.cellprofiler.zernike import (
         _construct_cellprofiler_4281_zernike_polynomials,
         intensity_zernike_moments,
-    )
-    from openhcs.processing.backends.cellprofiler.label_geometry import (
-        minimum_enclosing_circle_from_labels,
     )
 
     labels = np.zeros((14, 16), dtype=np.int32)

@@ -5,26 +5,29 @@ Array-based EdgeAligner implementation that works directly with CuPy arrays
 instead of file-based readers. This is the complete Ashlar algorithm modified
 to accept arrays directly and run on GPU.
 """
+
 from __future__ import annotations
+
 import logging
 import sys
-from typing import TYPE_CHECKING, Tuple, List
-import numpy as np
+from typing import TYPE_CHECKING, List, Tuple
+
 import networkx as nx
+import numpy as np
+import pandas as pd
 import scipy.spatial.distance
 import sklearn.linear_model
-import pandas as pd
 
-from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs
 from openhcs.core.memory import cupy as cupy_func
-from openhcs.core.utils import optional_import
+from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs
 from openhcs.processing.backends.pos_gen.ashlar_config import (
     AshlarAlignmentConfig,
     AshlarPositionRequest,
 )
+from openhcs.utils.import_utils import optional_import_placeholder
 
 # Import CuPy using the established optional import pattern
-cp = optional_import("cupy")
+cp = optional_import_placeholder("cupy")
 
 import warnings
 
@@ -36,12 +39,13 @@ logger = logging.getLogger(__name__)
 
 def _is_cupy_array(value) -> bool:
     """Return whether value is a CuPy array for real and optional-import modules."""
-    ndarray_type = getattr(cp, "ndarray", None) if cp is not None else None
+    ndarray_type = getattr(cp, "ndarray", None) if cp else None
     return isinstance(ndarray_type, type) and isinstance(value, ndarray_type)
 
 
 class DataWarning(Warning):
     """Warnings about the content of user-provided image data."""
+
     pass
 
 
@@ -79,7 +83,7 @@ class IntersectionGPU:
 
 def _get_window(shape):
     """Build a 2D Hann window (from Ashlar utils.get_window) on GPU."""
-    if cp is None:
+    if not cp:
         raise ImportError("CuPy is required for GPU window functions")
     # Build a 2D Hann window by taking the outer product of two 1-D windows.
     wy = cp.hanning(shape[0]).astype(cp.float32)
@@ -96,7 +100,9 @@ def _get_laplace_kernel_gpu():
     """Allocate the Laplacian kernel after a CUDA device is available."""
     global _laplace_kernel_gpu
     if _laplace_kernel_gpu is None:
-        _laplace_kernel_gpu = cp.array([[0, -1, 0], [-1, 4, -1], [0, -1, 0]], dtype=cp.float32)
+        _laplace_kernel_gpu = cp.array(
+            [[0, -1, 0], [-1, 4, -1], [0, -1, 0]], dtype=cp.float32
+        )
     return _laplace_kernel_gpu
 
 
@@ -124,11 +130,13 @@ def whiten_gpu(img, sigma):
         # Pure Laplacian convolution (high-pass filter)
         # Equivalent to scipy.ndimage.convolve(img, _laplace_kernel)
         from cupyx.scipy import ndimage as cp_ndimage
-        output = cp_ndimage.convolve(img, _get_laplace_kernel_gpu(), mode='reflect')
+
+        output = cp_ndimage.convolve(img, _get_laplace_kernel_gpu(), mode="reflect")
     else:
         # Gaussian-Laplacian (LoG filter)
         # Equivalent to scipy.ndimage.gaussian_laplace(img, sigma)
         from cupyx.scipy import ndimage as cp_ndimage
+
         output = cp_ndimage.gaussian_laplace(img, sigma)
 
     return output
@@ -154,13 +162,17 @@ def whiten_gpu_vectorized(img_stack, sigma):
     if sigma == 0:
         # Vectorized Laplacian convolution for entire stack
         from cupyx.scipy import ndimage as cp_ndimage
+
         # Process each image in the stack
         output_stack = cp.empty_like(img_stack)
         for i in range(img_stack.shape[0]):
-            output_stack[i] = cp_ndimage.convolve(img_stack[i], _laplace_kernel_gpu, mode='reflect')
+            output_stack[i] = cp_ndimage.convolve(
+                img_stack[i], _laplace_kernel_gpu, mode="reflect"
+            )
     else:
         # Vectorized Gaussian-Laplacian for entire stack
         from cupyx.scipy import ndimage as cp_ndimage
+
         output_stack = cp.empty_like(img_stack)
         for i in range(img_stack.shape[0]):
             output_stack[i] = cp_ndimage.gaussian_laplace(img_stack[i], sigma)
@@ -220,8 +232,12 @@ def ashlar_register_gpu(img1, img2, upsample=10):
 
         # Only log high errors to avoid spam
         if error > 1.0:  # High error threshold for Ashlar
-            logger.warning(f"Ashlar GPU: HIGH CORRELATION ERROR - Error={error:.4f}, Shift=({shift[0]:.2f}, {shift[1]:.2f})")
-            logger.warning("  This indicates poor overlap or image quality between tiles")
+            logger.warning(
+                f"Ashlar GPU: HIGH CORRELATION ERROR - Error={error:.4f}, Shift=({shift[0]:.2f}, {shift[1]:.2f})"
+            )
+            logger.warning(
+                "  This indicates poor overlap or image quality between tiles"
+            )
 
     except Exception as e:
         # Fallback if correlation fails
@@ -231,9 +247,6 @@ def ashlar_register_gpu(img1, img2, upsample=10):
         error = cp.inf
 
     return shift, error
-
-
-
 
 
 def ashlar_nccw_no_preprocessing_gpu(img1, img2):
@@ -265,10 +278,14 @@ def ashlar_nccw_no_preprocessing_gpu(img1, img2):
             error = 0
         else:
             # Instead of raising error, return a large but finite error
-            logger.warning(f"Ashlar GPU: NCCW numerical precision issue - diff={diff:.6f}, using error=100.0")
+            logger.warning(
+                f"Ashlar GPU: NCCW numerical precision issue - diff={diff:.6f}, using error=100.0"
+            )
             error = 100.0  # Large error but not infinite
     else:
-        logger.warning(f"Ashlar GPU: NCCW invalid correlation - correlation={correlation:.6f}, total_amplitude={total_amplitude:.6f}")
+        logger.warning(
+            f"Ashlar GPU: NCCW invalid correlation - correlation={correlation:.6f}, total_amplitude={total_amplitude:.6f}"
+        )
         error = cp.inf
 
     # Log all NCCW results at INFO level for user visibility
@@ -280,9 +297,6 @@ def ashlar_nccw_no_preprocessing_gpu(img1, img2):
         logger.info(f"Ashlar GPU: NCCW - Error={error_float:.4f}")
 
     return error_float
-
-
-
 
 
 def ashlar_crop_gpu(img, offset, shape):
@@ -317,13 +331,12 @@ def ashlar_crop_gpu(img, offset, shape):
         # Recalculate shape after clipping
         new_shape = end - start
         if cp.any(new_shape <= 0):
-            raise ValueError(f"Invalid crop region after bounds checking: start={start}, end={end}, img_shape={img_shape}")
+            raise ValueError(
+                f"Invalid crop region after bounds checking: start={start}, end={end}, img_shape={img_shape}"
+            )
 
-    img = img[start[0]:end[0], start[1]:end[1]]
+    img = img[start[0] : end[0], start[1] : end[1]]
     return img
-
-
-
 
 
 class ArrayEdgeAlignerGPU:
@@ -385,14 +398,13 @@ class ArrayEdgeAlignerGPU:
         positions_cpu = cp.asnumpy(self.positions)
         tile_size_cpu = cp.asnumpy(self.tile_size)
 
-        pdist = scipy.spatial.distance.pdist(positions_cpu, metric='cityblock')
+        pdist = scipy.spatial.distance.pdist(positions_cpu, metric="cityblock")
         sp = scipy.spatial.distance.squareform(pdist)
         max_distance = tile_size_cpu.max() + 1
         edges = zip(*np.nonzero((sp > 0) & (sp < max_distance)))
         graph = nx.from_edgelist(edges)
         graph.add_nodes_from(range(len(positions_cpu)))
         return graph
-
 
     def run(self):
         """Run the complete Ashlar algorithm."""
@@ -448,7 +460,11 @@ class ArrayEdgeAlignerGPU:
         num_distant_pairs = num_tiles * (num_tiles - 1) // 2 - len(edges)
 
         # Reduce permutation count for small datasets
-        n = self.permutation_samples if num_distant_pairs > 8 else (num_distant_pairs + 1) * self.min_permutation_samples
+        n = (
+            self.permutation_samples
+            if num_distant_pairs > 8
+            else (num_distant_pairs + 1) * self.min_permutation_samples
+        )
         pairs = np.empty((n, 2), dtype=int)  # Keep on CPU for random generation
         offsets = np.empty((n, 2), dtype=int)  # Keep on CPU for random generation
 
@@ -479,8 +495,10 @@ class ArrayEdgeAlignerGPU:
                     ioff1, ioff2 = its.offsets[:, 0]
                     if (
                         its.shape[0] > its.shape[1]
-                        or o1 < ioff1 - w or o1 > ioff1 + w
-                        or o2 < ioff2 - w or o2 > ioff2 + w
+                        or o1 < ioff1 - w
+                        or o1 > ioff1 + w
+                        or o2 < ioff2 - w
+                        or o2 > ioff2 + w
                     ):
                         break
             else:
@@ -492,23 +510,24 @@ class ArrayEdgeAlignerGPU:
         errors = cp.empty(n)
         for i, ((t1, t2), (offset1, offset2)) in enumerate(zip(pairs, offsets)):
             if self.verbose and (i % 10 == 9 or i == n - 1):
-                sys.stdout.write(f'\r    quantifying alignment error {i + 1}/{n}')
+                sys.stdout.write(f"\r    quantifying alignment error {i + 1}/{n}")
                 sys.stdout.flush()
-            img1 = self.image_stack[t1][offset1:offset1+w, :]
-            img2 = self.image_stack[t2][offset2:offset2+w, :]
-            _, errors[i] = ashlar_register_gpu(img1, img2, upsample=self.permutation_upsample)
+            img1 = self.image_stack[t1][offset1 : offset1 + w, :]
+            img2 = self.image_stack[t2][offset2 : offset2 + w, :]
+            _, errors[i] = ashlar_register_gpu(
+                img1, img2, upsample=self.permutation_upsample
+            )
         if self.verbose:
             print()
         self.errors_negative_sampled = errors
         self.max_error = float(cp.percentile(errors, self.alpha * 100))
-
 
     def register_all(self):
         """Register all neighboring tile pairs."""
         n = self.neighbors_graph.size()
         for i, (t1, t2) in enumerate(self.neighbors_graph.edges, 1):
             if self.verbose:
-                sys.stdout.write(f'\r    aligning edge {i}/{n}')
+                sys.stdout.write(f"\r    aligning edge {i}/{n}")
                 sys.stdout.flush()
             self.register_pair(t1, t2)
         if self.verbose:
@@ -518,7 +537,9 @@ class ArrayEdgeAlignerGPU:
         # Set error values above the threshold to infinity
         for k, v in self._cache.items():
             shift_array = cp.array(v[0]) if not isinstance(v[0], cp.ndarray) else v[0]
-            if v[1] > self.max_error or cp.any(cp.abs(shift_array) > self.max_shift_pixels):
+            if v[1] > self.max_error or cp.any(
+                cp.abs(shift_array) > self.max_shift_pixels
+            ):
                 self._cache[k] = (v[0], cp.inf)
 
     def register_pair(self, t1, t2):
@@ -593,7 +614,9 @@ class ArrayEdgeAlignerGPU:
             # Validate that we got valid images
             if img1.size == 0 or img2.size == 0:
                 if self.verbose:
-                    print(f"    empty images for tiles {t1}, {t2} with min_size {min_size}")
+                    print(
+                        f"    empty images for tiles {t1}, {t2} with min_size {min_size}"
+                    )
                 return None
 
             # Account for padding, flipping the sign depending on the direction
@@ -602,14 +625,15 @@ class ArrayEdgeAlignerGPU:
             sx = 1 if p1[1] >= p2[1] else -1
             sy = 1 if p1[0] >= p2[0] else -1
             padding = cp.array(its.padding) * cp.array([sy, sx])
-            shift, error = ashlar_register_gpu(img1, img2, upsample=self.upsample_factor)
+            shift, error = ashlar_register_gpu(
+                img1, img2, upsample=self.upsample_factor
+            )
             shift = cp.array(shift) + padding
             return shift.get(), error
         except Exception as e:
             if self.verbose:
                 print(f"    _register failed for tiles {t1}, {t2}: {e}")
             return None
-
 
     def intersection(self, t1, t2, min_size=0, shift=None):
         """Calculate intersection region between two tiles."""
@@ -632,23 +656,27 @@ class ArrayEdgeAlignerGPU:
 
         # Validate intersection shape before cropping
         if cp.any(its.shape <= 0):
-            raise ValueError(f"Invalid intersection shape {its.shape} for tiles {t1}, {t2}")
+            raise ValueError(
+                f"Invalid intersection shape {its.shape} for tiles {t1}, {t2}"
+            )
 
         img1 = self.crop(t1, its.offsets[0], its.shape)
         img2 = self.crop(t2, its.offsets[1], its.shape)
         return its, img1, img2
 
-
-
-
-
     def build_spanning_tree(self):
         """Build minimum spanning tree using GPU Boruvka algorithm."""
         # Import the Boruvka MST implementation
-        from openhcs.processing.backends.pos_gen.mist.boruvka_mst import build_mst_gpu_boruvka
+        from openhcs.processing.backends.pos_gen.mist.boruvka_mst import (
+            build_mst_gpu_boruvka,
+        )
 
         # Convert cache to Boruvka format
-        valid_edges = [(t1, t2, shift, error) for (t1, t2), (shift, error) in self._cache.items() if cp.isfinite(error)]
+        valid_edges = [
+            (t1, t2, shift, error)
+            for (t1, t2), (shift, error) in self._cache.items()
+            if cp.isfinite(error)
+        ]
 
         if len(valid_edges) == 0:
             # No valid edges - create empty graph with all nodes
@@ -657,30 +685,44 @@ class ArrayEdgeAlignerGPU:
             return
 
         # Prepare arrays for Boruvka MST
-        connection_from = cp.array([t1 for t1, t2, shift, error in valid_edges], dtype=cp.int32)
-        connection_to = cp.array([t2 for t1, t2, shift, error in valid_edges], dtype=cp.int32)
-        connection_dx = cp.array([shift[1] for t1, t2, shift, error in valid_edges], dtype=cp.float32)  # x shift
-        connection_dy = cp.array([shift[0] for t1, t2, shift, error in valid_edges], dtype=cp.float32)  # y shift
+        connection_from = cp.array(
+            [t1 for t1, t2, shift, error in valid_edges], dtype=cp.int32
+        )
+        connection_to = cp.array(
+            [t2 for t1, t2, shift, error in valid_edges], dtype=cp.int32
+        )
+        connection_dx = cp.array(
+            [shift[1] for t1, t2, shift, error in valid_edges], dtype=cp.float32
+        )  # x shift
+        connection_dy = cp.array(
+            [shift[0] for t1, t2, shift, error in valid_edges], dtype=cp.float32
+        )  # y shift
         # Use negative error as quality (higher quality = lower error)
-        connection_quality = cp.array([-error for t1, t2, shift, error in valid_edges], dtype=cp.float32)
+        connection_quality = cp.array(
+            [-error for t1, t2, shift, error in valid_edges], dtype=cp.float32
+        )
 
         num_nodes = len(self.positions)
 
         try:
             # Run GPU Boruvka MST
             mst_result = build_mst_gpu_boruvka(
-                connection_from, connection_to, connection_dx, connection_dy,
-                connection_quality, num_nodes
+                connection_from,
+                connection_to,
+                connection_dx,
+                connection_dy,
+                connection_quality,
+                num_nodes,
             )
 
             # Convert back to NetworkX format for compatibility with rest of algorithm
             self.spanning_tree = nx.Graph()
             self.spanning_tree.add_nodes_from(range(num_nodes))
 
-            for edge in mst_result['edges']:
-                t1, t2 = edge['from'], edge['to']
+            for edge in mst_result["edges"]:
+                t1, t2 = edge["from"], edge["to"]
                 # Reconstruct error from quality
-                error = -edge['quality'] if 'quality' in edge else 0.0
+                error = -edge["quality"] if "quality" in edge else 0.0
                 self.spanning_tree.add_edge(t1, t2, weight=error)
 
         except Exception as e:
@@ -723,12 +765,10 @@ class ArrayEdgeAlignerGPU:
             # TODO: fill in shifts and positions with 0x2 arrays
             raise NotImplementedError("No images")
 
-
     def fit_model(self):
         """Fit linear model to handle disconnected components."""
         components = sorted(
-            nx.connected_components(self.spanning_tree),
-            key=len, reverse=True
+            nx.connected_components(self.spanning_tree), key=len, reverse=True
         )
         # Fit LR model on positions of largest connected component
         cc0 = list(components[0])
@@ -770,7 +810,9 @@ class ArrayEdgeAlignerGPU:
         self.lr.intercept_ -= cp.asnumpy(self.origin)
 
 
-def _calculate_initial_positions_gpu(image_stack, grid_dims: tuple, overlap_ratio: float):
+def _calculate_initial_positions_gpu(
+    image_stack, grid_dims: tuple, overlap_ratio: float
+):
     """Calculate initial grid positions based on overlap ratio (GPU version)."""
     grid_rows, grid_cols = grid_dims
 
@@ -794,7 +836,9 @@ def _calculate_initial_positions_gpu(image_stack, grid_dims: tuple, overlap_rati
     return cp.array(positions, dtype=cp.float64)
 
 
-def _convert_ashlar_positions_to_openhcs_gpu(ashlar_positions) -> List[Tuple[float, float]]:
+def _convert_ashlar_positions_to_openhcs_gpu(
+    ashlar_positions,
+) -> List[Tuple[float, float]]:
     """Convert Ashlar positions to OpenHCS format (GPU version)."""
     # Convert to CPU if needed
     if isinstance(ashlar_positions, cp.ndarray):
@@ -825,7 +869,7 @@ def ashlar_compute_tile_positions_gpu(
     permutation_samples: int = 1000,
     min_permutation_samples: int = 10,
     max_permutation_tries: int = 100,
-    window_size_factor: float = 0.15
+    window_size_factor: float = 0.15,
 ) -> Tuple[np.ndarray, List[Tuple[float, float]]]:
     """
     Compute tile positions using the Ashlar algorithm on GPU - matches CPU version.
@@ -967,7 +1011,9 @@ def ashlar_compute_tile_positions_gpu(
     grid_rows, grid_cols = request.grid_dimensions
 
     if verbose:
-        logger.info(f"Ashlar GPU: Processing {grid_rows}x{grid_cols} grid with {len(image_stack)} tiles")
+        logger.info(
+            f"Ashlar GPU: Processing {grid_rows}x{grid_cols} grid with {len(image_stack)} tiles"
+        )
 
     try:
         # Convert to CuPy array if needed
@@ -1041,40 +1087,42 @@ def ashlar_compute_tile_positions_gpu(
     return result_image_stack, positions
 
 
-def materialize_ashlar_gpu_positions(data: List[Tuple[float, float]], path: str, filemanager) -> str:
+def materialize_ashlar_gpu_positions(
+    data: List[Tuple[float, float]], path: str, filemanager
+) -> str:
     """Materialize Ashlar GPU tile positions as scientific CSV with grid metadata."""
-    csv_path = path.replace('.pkl', '_ashlar_positions_gpu.csv')
+    csv_path = path.replace(".pkl", "_ashlar_positions_gpu.csv")
 
-    df = pd.DataFrame(data, columns=['x_position_um', 'y_position_um'])
-    df['tile_id'] = range(len(df))
+    df = pd.DataFrame(data, columns=["x_position_um", "y_position_um"])
+    df["tile_id"] = range(len(df))
 
     # Estimate grid dimensions from position layout
-    unique_x = sorted(df['x_position_um'].unique())
-    unique_y = sorted(df['y_position_um'].unique())
+    unique_x = sorted(df["x_position_um"].unique())
+    unique_y = sorted(df["y_position_um"].unique())
 
     grid_cols = len(unique_x)
     grid_rows = len(unique_y)
 
     # Add grid coordinates
-    df['grid_row'] = df.index // grid_cols
-    df['grid_col'] = df.index % grid_cols
+    df["grid_row"] = df.index // grid_cols
+    df["grid_col"] = df.index % grid_cols
 
     # Add spacing information
     if len(unique_x) > 1:
         x_spacing = unique_x[1] - unique_x[0]
-        df['x_spacing_um'] = x_spacing
+        df["x_spacing_um"] = x_spacing
     else:
-        df['x_spacing_um'] = 0
+        df["x_spacing_um"] = 0
 
     if len(unique_y) > 1:
         y_spacing = unique_y[1] - unique_y[0]
-        df['y_spacing_um'] = y_spacing
+        df["y_spacing_um"] = y_spacing
     else:
-        df['y_spacing_um'] = 0
+        df["y_spacing_um"] = 0
 
     # Add metadata
-    df['algorithm'] = 'ashlar_gpu'
-    df['grid_dimensions'] = f"{grid_rows}x{grid_cols}"
+    df["algorithm"] = "ashlar_gpu"
+    df["grid_dimensions"] = f"{grid_rows}x{grid_cols}"
 
     csv_content = df.to_csv(index=False)
     filemanager.save(csv_content, csv_path, "disk")

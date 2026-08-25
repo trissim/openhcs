@@ -23,13 +23,12 @@ import logging
 from enum import Enum
 from typing import Optional
 
-from openhcs.utils.import_utils import optional_import
-from openhcs.core.memory import jax as jax_func
-
 # Import JAX modules as optional dependencies
 from openhcs.core.lazy_gpu_imports import jax
+from openhcs.core.memory import jax as jax_func
+from openhcs.utils.import_utils import optional_import_or_none
 
-jnp = optional_import("jax.numpy") if jax else None
+jnp = optional_import_or_none("jax.numpy") if jax else None
 lax = jax.lax if jax else None
 tree_util = jax.tree_util if jax else None
 
