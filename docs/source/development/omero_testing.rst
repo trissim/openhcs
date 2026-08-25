@@ -16,6 +16,12 @@ must own extension, MIME type, and parser behaviour; table tests must drive the
 reported service-readiness states; and image batches must prove plane shape,
 dtype, padding, and Z/C/T order without a live server.
 
+Address tests must exercise ``OMEROWellAddress`` and ``OMEROPlaneAddress``
+directly, including multi-letter rows, Windows-style virtual paths, result
+suffixes, sparse site identities, and rejection of string-keyed coordinate
+bags. OpenHCS tests only the nominal projection from PolyStore components into
+``FilenameParseResult``.
+
 Integration tests
 -----------------
 
@@ -33,6 +39,10 @@ service manager.
 Keep credentials in the test environment, never in pipeline declarations or
 fixtures committed to the repository. Always close gateway connections and
 stop only server instances owned by the test harness.
+
+Include a native plate without OpenHCS parser annotations and a derived plate
+whose persisted image name carries a non-contiguous site identity. Listing and
+loading must preserve that site rather than replacing it with WellSample order.
 
 Exercise both direct and ZMQ execution against the same live plate. Verify the
 created images and tables, consolidated summaries, connection cleanup, and a

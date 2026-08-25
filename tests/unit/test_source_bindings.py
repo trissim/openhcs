@@ -899,7 +899,7 @@ def test_alias_only_step_bindings_filter_and_order_workspace_projections() -> No
     )
     source_projections = {
         virtual_path: SourcePlaneProjection(
-            address=OpenHCSPlaneAddress(
+            address=OpenHCSPlaneAddress.from_values(
                 well="R04C09",
                 site="11",
                 channel=channel,
@@ -1226,7 +1226,7 @@ def test_virtual_workspace_source_matching_uses_declared_filter_identity():
 
 
 def test_virtual_workspace_source_matching_requires_exact_projection_binding():
-    address = OpenHCSPlaneAddress(
+    address = OpenHCSPlaneAddress.from_values(
         well="A01",
         site="1",
         channel="1",

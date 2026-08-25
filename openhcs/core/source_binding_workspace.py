@@ -526,7 +526,7 @@ class PrimaryPlaneBindingProjection(SourceBindingProjectionStrategy):
         declared_channels = binding.component_values(AllComponents.CHANNEL)
         if len(declared_channels) == 1 and source_metadata_values_equal(
             declared_channels[0],
-            address.channel,
+            address.value_for(AllComponents.CHANNEL),
         ):
             component_labels[AllComponents.CHANNEL.value] = binding.alias
         return SourcePlaneProjection(
@@ -1138,7 +1138,7 @@ class SourceBindingWorkspaceProjector:
                 ):
                     address = candidate.declared_address
                 else:
-                    address = OpenHCSPlaneAddress(
+                    address = OpenHCSPlaneAddress.from_values(
                         well=well,
                         site=SourceComponentProjectionStrategy.project_component(
                             AllComponents.SITE,
@@ -1253,32 +1253,16 @@ class SourceBindingWorkspaceProjector:
         return tuple(
             SourcePlaneProjection(
                 address=candidate.declared_address
-                or OpenHCSPlaneAddress(
-                    well=SourceComponentProjectionStrategy.project_component(
-                        AllComponents.WELL,
-                        candidate.metadata,
-                        index,
-                    ),
-                    site=SourceComponentProjectionStrategy.project_component(
-                        AllComponents.SITE,
-                        candidate.metadata,
-                        index,
-                    ),
-                    channel=SourceComponentProjectionStrategy.project_component(
-                        AllComponents.CHANNEL,
-                        candidate.metadata,
-                        index,
-                    ),
-                    z_index=SourceComponentProjectionStrategy.project_component(
-                        AllComponents.Z_INDEX,
-                        candidate.metadata,
-                        index,
-                    ),
-                    timepoint=SourceComponentProjectionStrategy.project_component(
-                        AllComponents.TIMEPOINT,
-                        candidate.metadata,
-                        index,
-                    ),
+                or OpenHCSPlaneAddress.from_component_values(
+                    (
+                        component,
+                        SourceComponentProjectionStrategy.project_component(
+                            component,
+                            candidate.metadata,
+                            index,
+                        ),
+                    )
+                    for component in AllComponents
                 ),
                 ref=candidate.source_ref,
                 source_metadata=_workspace_source_metadata(candidate),

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Union, Type, TYPE_CHECKING
 
 # Import constants
-from openhcs.constants.constants import Backend, Microscope
+from openhcs.constants.constants import AllComponents, Backend, Microscope
 from openhcs.core.source_metadata import source_metadata_dict
 
 # Import generic metaclass infrastructure from external package
@@ -371,7 +371,7 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
                 for virtual_path, source_ref in workspace_mapping.items()
             },
             FIELDS.SOURCE_METADATA: {
-                virtual_path: source_metadata_dict(parsed)
+                virtual_path: source_metadata_dict(parsed.wire_mapping())
                 for virtual_path in workspace_mapping
                 if (parsed := self.parser.parse_filename(Path(virtual_path).name))
                 is not None
@@ -570,22 +570,24 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
                 continue
 
             # Validate required components
-            if metadata["site"] is None:
+            site = metadata.value_for(AllComponents.SITE)
+            if site is None:
                 logger.warning(
                     "Missing 'site' component in filename: %s", original_name
                 )
                 continue
 
-            if metadata["channel"] is None:
+            channel = metadata.value_for(AllComponents.CHANNEL)
+            if channel is None:
                 logger.warning(
                     "Missing 'channel' component in filename: %s", original_name
                 )
                 continue
 
             # z_index is optional - default to 1 if not present
-            site = metadata["site"]
-            channel = metadata["channel"]
-            z_index = metadata["z_index"] if metadata["z_index"] is not None else 1
+            z_index = metadata.value_for(AllComponents.Z_INDEX)
+            if z_index is None:
+                z_index = 1
 
             # Log the components for debugging
             logger.debug(
@@ -597,10 +599,9 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
             )
 
             # Reconstruct the filename with proper padding
-            metadata["site"] = site
-            metadata["channel"] = channel
-            metadata["z_index"] = z_index
-            new_name = parser.construct_filename(**metadata)
+            new_name = parser.construct_filename(
+                metadata.with_value(AllComponents.Z_INDEX, z_index)
+            )
 
             # Add to rename map if different
             if original_name != new_name:
@@ -684,11 +685,10 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
         """Delegate to parser."""
         return self.parser.parse_filename(filename)
 
-    def construct_filename(self, extension: str = ".tif", **component_values) -> str:
-        """
-        Delegate to parser using pure generic interface.
-        """
-        return self.parser.construct_filename(extension=extension, **component_values)
+    def construct_filename(self, components: FilenameParseResult) -> str:
+        """Delegate nominal filename construction to the parser."""
+
+        return self.parser.construct_filename(components)
 
     def auto_detect_patterns(
         self,

@@ -28,6 +28,7 @@ from benchmark.contracts.comparison_manifest import ComparisonManifest
 from benchmark.metrics.memory import MemoryMetric
 from objectstate.lazy_factory import ensure_global_config_context
 from openhcs.constants.constants import AllComponents
+from openhcs.core.components.parser_metaprogramming import FilenameParseResult
 from openhcs.core.config import (
     AnalysisConsolidationConfig,
     GlobalPipelineConfig,
@@ -50,7 +51,6 @@ from openhcs.interop.cellprofiler.plate_workspace import (
 )
 from openhcs.microscopes.openhcs import FIELDS
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
-
 
 WELL_THROUGHPUT_ROWS_CSV = "well_throughput.csv"
 WELL_THROUGHPUT_EVENTS_CSV = "well_throughput_progress_events.csv"
@@ -166,7 +166,9 @@ class WellThroughputBenchmarkPlan:
     def __post_init__(self) -> None:
         modes = tuple(self.modes)
         if not modes:
-            raise ValueError("Well throughput benchmark plan requires at least one mode.")
+            raise ValueError(
+                "Well throughput benchmark plan requires at least one mode."
+            )
         object.__setattr__(self, "modes", modes)
 
     @classmethod
@@ -184,7 +186,9 @@ class WellThroughputBenchmarkPlan:
                 worker_count=worker_count,
             )
             for well_count in tuple(sorted(set(int(value) for value in well_counts)))
-            for worker_count in tuple(sorted(set(int(value) for value in worker_counts)))
+            for worker_count in tuple(
+                sorted(set(int(value) for value in worker_counts))
+            )
         )
         return cls(modes)
 
@@ -277,7 +281,9 @@ class ModuleAbstractionCoverageKind(StrEnum):
         }[self]
 
     @classmethod
-    def from_family_coverage(cls, family_coverage: str) -> "ModuleAbstractionCoverageKind":
+    def from_family_coverage(
+        cls, family_coverage: str
+    ) -> "ModuleAbstractionCoverageKind":
         """Map compatibility-matrix family coverage to presentation coverage."""
         if family_coverage == "direct_supported":
             return cls.EXPLICIT
@@ -345,7 +351,9 @@ class ModuleAbstractionCoverageTable:
 
     def grouped_rows(
         self,
-    ) -> Mapping[ModuleAbstractionCoverageKind, tuple[ModuleAbstractionCoverageRow, ...]]:
+    ) -> Mapping[
+        ModuleAbstractionCoverageKind, tuple[ModuleAbstractionCoverageRow, ...]
+    ]:
         """Return rows grouped by presentation coverage kind."""
         return {
             coverage: tuple(row for row in self.rows if row.coverage is coverage)
@@ -364,7 +372,9 @@ class PresentationAxisBand:
         if self.lower < 0.0:
             raise ValueError("Presentation axis bands cannot start below zero.")
         if self.upper <= self.lower:
-            raise ValueError("Presentation axis band upper bound must exceed lower bound.")
+            raise ValueError(
+                "Presentation axis band upper bound must exceed lower bound."
+            )
 
     def contains(self, value: float) -> bool:
         """Return whether the band displays the given y-value."""
@@ -385,7 +395,9 @@ class PresentationAxisBandPolicy:
     lower_padding: float = 0.92
     upper_padding: float = 1.16
 
-    def bands_for(self, values: Sequence[float | None]) -> tuple[PresentationAxisBand, ...]:
+    def bands_for(
+        self, values: Sequence[float | None]
+    ) -> tuple[PresentationAxisBand, ...]:
         """Return low-to-high display bands for finite positive values."""
         present = tuple(
             sorted(
@@ -452,7 +464,9 @@ class WellThroughputPresentationReport:
         outputs.extend(self.write_source_index())
         outputs.extend(self.generate_parity_figures(summary_rows))
         outputs.extend(self.generate_core_scaling_figures(core_rows, summary_rows))
-        outputs.extend(self.generate_wells_per_core_figures(core_rows, wells_per_core_rows))
+        outputs.extend(
+            self.generate_wells_per_core_figures(core_rows, wells_per_core_rows)
+        )
         outputs.extend(self.generate_module_coverage_figures())
         return tuple(outputs)
 
@@ -471,7 +485,10 @@ class WellThroughputPresentationReport:
 
     def wells_per_core_rows(self) -> tuple[WellThroughputResult, ...]:
         """Return successful rows for the variable wells/core sweep."""
-        paths = (self.sources.wells_per_core_csv, *self.sources.additional_wells_per_core_csvs)
+        paths = (
+            self.sources.wells_per_core_csv,
+            *self.sources.additional_wells_per_core_csvs,
+        )
         return tuple(
             row
             for path in paths
@@ -484,10 +501,14 @@ class WellThroughputPresentationReport:
         path = self.output_dir / "presentation_figure_index.md"
         module_coverage_lines = (
             (
-                "- Module coverage: "
-                f"`{self.sources.module_coverage_semantic_families_csv}`"
-            ),
-        ) if self.sources.module_coverage_semantic_families_csv is not None else ()
+                (
+                    "- Module coverage: "
+                    f"`{self.sources.module_coverage_semantic_families_csv}`"
+                ),
+            )
+            if self.sources.module_coverage_semantic_families_csv is not None
+            else ()
+        )
         module_coverage_figure_lines = (
             ("- `06_module_coverage_by_abstraction.*`",)
             if self.sources.module_coverage_semantic_families_csv is not None
@@ -717,9 +738,7 @@ class WellThroughputPresentationReport:
         with FIGURE_STYLE.context():
             axis_row_specs: list[tuple[int | None, int | None, float]] = []
             for panel_index, bands in enumerate(panel_bands):
-                for band_index, ratio in enumerate(
-                    (1.0,) * (len(bands) - 1) + (3.0,)
-                ):
+                for band_index, ratio in enumerate((1.0,) * (len(bands) - 1) + (3.0,)):
                     axis_row_specs.append((panel_index, band_index, ratio))
                 if panel_index < len(panels) - 1:
                     axis_row_specs.append((None, None, 0.35))
@@ -737,7 +756,9 @@ class WellThroughputPresentationReport:
                 height_ratios=[row_spec[2] for row_spec in axis_row_specs],
             )
             axes_by_panel: list[list[Any]] = [[] for _panel in panels]
-            for row_index_, (panel_index, _band_index, _ratio) in enumerate(axis_row_specs):
+            for row_index_, (panel_index, _band_index, _ratio) in enumerate(
+                axis_row_specs
+            ):
                 axis = fig.add_subplot(grid[row_index_, 0])
                 if panel_index is None:
                     axis.set_axis_off()
@@ -750,21 +771,29 @@ class WellThroughputPresentationReport:
                 panel_axes = tuple(axes_by_panel[panel_index])
                 x_positions = tuple(range(len(panel)))
                 visible_bands = tuple(reversed(bands))
-                for band_index, (axis, band) in enumerate(zip(panel_axes, visible_bands, strict=True)):
+                for band_index, (axis, band) in enumerate(
+                    zip(panel_axes, visible_bands, strict=True)
+                ):
                     for method_index, method in enumerate(methods):
                         values = tuple(
                             (
                                 row.speedup
-                                if (row := row_index.get((pipeline_name, method))) is not None
+                                if (row := row_index.get((pipeline_name, method)))
+                                is not None
                                 else None
                             )
                             for pipeline_name in panel
                         )
                         axis.bar(
                             [x + offsets[method_index] for x in x_positions],
-                            [value if value is not None else float("nan") for value in values],
+                            [
+                                value if value is not None else float("nan")
+                                for value in values
+                            ],
                             width=width,
-                            label=method if panel_index == 0 and band_index == 0 else None,
+                            label=(
+                                method if panel_index == 0 and band_index == 0 else None
+                            ),
                             color=FIGURE_STYLE.color_for_method(method_index),
                             edgecolor=FIGURE_STYLE.background,
                             linewidth=0.55,
@@ -807,7 +836,7 @@ class WellThroughputPresentationReport:
                             rotation=42,
                             ha="right",
                             fontsize=PIPELINE_LABEL_FONT_SIZE,
-                    )
+                        )
                     if band_index > 0:
                         LINEAR_AXIS_BREAK_POLICY.mark(panel_axes[band_index - 1], axis)
                     if panel_index == 0 and band_index == 0:
@@ -845,14 +874,18 @@ class WellThroughputPresentationReport:
                     values = tuple(
                         (
                             row.speedup
-                            if (row := row_index.get((pipeline_name, method))) is not None
+                            if (row := row_index.get((pipeline_name, method)))
+                            is not None
                             else None
                         )
                         for pipeline_name in panel
                     )
                     axis.bar(
                         [x + offsets[method_index] for x in x_positions],
-                        [value if value is not None else float("nan") for value in values],
+                        [
+                            value if value is not None else float("nan")
+                            for value in values
+                        ],
                         width=width,
                         label=method if panel_index == 0 else None,
                         color=FIGURE_STYLE.color_for_method(method_index),
@@ -871,7 +904,9 @@ class WellThroughputPresentationReport:
                     linestyle="--",
                     alpha=0.86,
                 )
-                axis.grid(axis="y", color=FIGURE_STYLE.grid_color, linewidth=0.8, alpha=0.8)
+                axis.grid(
+                    axis="y", color=FIGURE_STYLE.grid_color, linewidth=0.8, alpha=0.8
+                )
                 axis.set_axisbelow(True)
                 axis.spines["top"].set_visible(False)
                 axis.spines["right"].set_visible(False)
@@ -966,11 +1001,7 @@ class WellThroughputPresentationReport:
                 continue
             lines.extend(
                 f"- `{row.module_name}`"
-                + (
-                    f" via `{row.abstraction_family}`"
-                    if row.abstraction_family
-                    else ""
-                )
+                + (f" via `{row.abstraction_family}`" if row.abstraction_family else "")
                 + (
                     f" from {row.evidence_text}"
                     if row.coverage is ModuleAbstractionCoverageKind.SHARED_ABSTRACTION
@@ -995,7 +1026,9 @@ class WellThroughputPresentationReport:
 
         grouped_rows = table.grouped_rows()
         labels = tuple(coverage.label for coverage in ModuleAbstractionCoverageKind)
-        counts = tuple(len(grouped_rows[coverage]) for coverage in ModuleAbstractionCoverageKind)
+        counts = tuple(
+            len(grouped_rows[coverage]) for coverage in ModuleAbstractionCoverageKind
+        )
         total = sum(counts)
         if total == 0:
             return ()
@@ -1308,7 +1341,9 @@ class WellThroughputPresentationReport:
                     accuracy_fraction=None,
                     raw_seconds=_mean_present(row.raw_seconds for row in mode_rows),
                     speedup=_mean_present(row.speedup for row in mode_rows),
-                    peak_memory_mb=_mean_present(row.peak_memory_mb for row in mode_rows),
+                    peak_memory_mb=_mean_present(
+                        row.peak_memory_mb for row in mode_rows
+                    ),
                 )
             )
         return tuple(average_rows)
@@ -1347,7 +1382,11 @@ class WellThroughputPresentationReport:
             )
             for method in methods
         )
-        values = tuple(value for _method, method_values_ in method_values for value in method_values_)
+        values = tuple(
+            value
+            for _method, method_values_ in method_values
+            for value in method_values_
+        )
         if not values:
             return ()
         value_suffix = " MB" if value_key == "peak_memory_mb" else "x"
@@ -1500,9 +1539,11 @@ class WellThroughputPresentationReport:
                         adjusted_pixels.append(
                             max(
                                 original_pixels,
-                                adjusted_pixels[-1] + min_gap_pixels
-                                if adjusted_pixels
-                                else axis_min,
+                                (
+                                    adjusted_pixels[-1] + min_gap_pixels
+                                    if adjusted_pixels
+                                    else axis_min
+                                ),
                             )
                         )
                     if adjusted_pixels[-1] > axis_max:
@@ -1521,10 +1562,14 @@ class WellThroughputPresentationReport:
                     return tuple(
                         (
                             label,
-                            axis.transData.inverted().transform((0.0, adjusted_pixels[index]))[1],
+                            axis.transData.inverted().transform(
+                                (0.0, adjusted_pixels[index])
+                            )[1],
                             weight,
                         )
-                        for index, (label, _value, weight, _pixels) in enumerate(positioned)
+                        for index, (label, _value, weight, _pixels) in enumerate(
+                            positioned
+                        )
                     )
 
                 def annotate_stat_labels(
@@ -1555,7 +1600,9 @@ class WellThroughputPresentationReport:
                                 weight=weight,
                             )
 
-                stat_label_groups: list[tuple[int, str, tuple[tuple[str, float, str], ...]]] = []
+                stat_label_groups: list[
+                    tuple[int, str, tuple[tuple[str, float, str], ...]]
+                ] = []
                 for method_index, (_method, values_) in enumerate(method_values):
                     if not values_:
                         continue
@@ -1626,9 +1673,13 @@ class WellThroughputPresentationReport:
                 for axis in axes:
                     axis.set_xlim(-0.80, len(method_values) - 0.48)
                 label_axis.set_xticks(list(x_positions))
-                label_axis.set_xticklabels([method for method, _values in method_values])
+                label_axis.set_xticklabels(
+                    [method for method, _values in method_values]
+                )
                 label_axis.set_ylabel(ylabel)
-                axes[0].set_title(title + (" (log)" if log_y else ""), loc="left", pad=10)
+                axes[0].set_title(
+                    title + (" (log)" if log_y else ""), loc="left", pad=10
+                )
                 axes[0].legend(frameon=False, loc="upper left")
                 fig.canvas.draw()
                 for method_index, color, stats in stat_label_groups:
@@ -1639,7 +1690,9 @@ class WellThroughputPresentationReport:
                     )
                 suffix = "_log" if log_y else ""
                 for output_format in self.output_formats:
-                    output_path = self.output_dir / f"{filename_stem}{suffix}.{output_format}"
+                    output_path = (
+                        self.output_dir / f"{filename_stem}{suffix}.{output_format}"
+                    )
                     FIGURE_STYLE.save(fig, output_path)
                     outputs.append(output_path)
                 plt.close(fig)
@@ -1978,10 +2031,13 @@ def run_well_throughput_suite(
     worker_counts: Sequence[int],
     start_method: MultiprocessingStartMethod = MultiprocessingStartMethod.FORK,
     plan: WellThroughputBenchmarkPlan | None = None,
-    native_execution_baselines: Mapping[
-        str,
-        NativeCellProfilerExecutionBaseline,
-    ] | None = None,
+    native_execution_baselines: (
+        Mapping[
+            str,
+            NativeCellProfilerExecutionBaseline,
+        ]
+        | None
+    ) = None,
     existing_results: Sequence[WellThroughputResult] = (),
     skipped_observations: Sequence[WellThroughputObservationKey] = (),
     rerun_missing_memory: bool = False,
@@ -1999,10 +2055,7 @@ def run_well_throughput_suite(
         result
         for result in existing_results
         if result.is_successful()
-        and not (
-            rerun_missing_memory
-            and result.peak_memory_mb is None
-        )
+        and not (rerun_missing_memory and result.peak_memory_mb is None)
     ]
     completed = {
         WellThroughputObservationKey(result.case_name, result.mode_name)
@@ -2058,8 +2111,7 @@ def run_case_well_throughput(
             selected_path=dataset_path,
             selected_pipeline_path=cppipe_path,
             workspace_root=(
-                output_root
-                / f"{dataset_path.name}_{cppipe_path.stem}_source_workspace"
+                output_root / f"{dataset_path.name}_{cppipe_path.stem}_source_workspace"
             ),
             generated_source_path=generated_module_path,
         )
@@ -2131,9 +2183,7 @@ def run_case_well_throughput(
         include_children=True,
         max_memory_mb=max_memory_mb,
         on_limit_exceeded=(
-            ChildProcessTerminator()
-            if max_memory_mb is not None
-            else None
+            ChildProcessTerminator() if max_memory_mb is not None else None
         ),
     ) as memory_metric:
         try:
@@ -2230,14 +2280,10 @@ def run_case_well_throughput(
             peak_memory_mb=peak_memory_mb,
             memory_limit_mb=max_memory_mb,
             native_execution_baseline=native_execution_baseline,
-            error_message=(
-                f"Process-tree RSS exceeded {max_memory_mb:.1f} MB."
-            ),
+            error_message=(f"Process-tree RSS exceeded {max_memory_mb:.1f} MB."),
         )
     successful_wells = sum(
-        1
-        for result in execution_results.values()
-        if result.is_success()
+        1 for result in execution_results.values() if result.is_success()
     )
     _write_progress_diagnostics(
         output_root,
@@ -2346,7 +2392,9 @@ def generate_well_throughput_figures(
     output_formats: Sequence[str] = ("png", "svg"),
 ) -> tuple[Path, ...]:
     """Generate well-throughput speedup figures from ``well_throughput.csv``."""
-    rows = tuple(row for row in read_well_throughput_csv(csv_path) if row.is_successful())
+    rows = tuple(
+        row for row in read_well_throughput_csv(csv_path) if row.is_successful()
+    )
     if not rows:
         return ()
 
@@ -2448,7 +2496,9 @@ def generate_well_throughput_figures(
         label_axis.set_xticklabels(case_names, rotation=42, ha="right", fontsize=7.2)
         label_axis.set_ylabel("Projected speedup vs CP (x)")
         plot_axes[0].set_title("OpenHCS well-throughput scaling", loc="left", pad=10)
-        plot_axes[0].legend(frameon=False, ncol=min(len(mode_names), 4), loc="upper left")
+        plot_axes[0].legend(
+            frameon=False, ncol=min(len(mode_names), 4), loc="upper left"
+        )
 
         for output_format in output_formats:
             output_path = output_dir / f"well_throughput_speedup.{output_format}"
@@ -2630,7 +2680,8 @@ def _write_well_throughput_average_speedup_csv(
         mode_name: tuple(
             row
             for row in rows
-            if row.mode_name == mode_name and row.projected_execution_speedup is not None
+            if row.mode_name == mode_name
+            and row.projected_execution_speedup is not None
         )
         for mode_name in mode_names
     }
@@ -2727,7 +2778,9 @@ def _plot_well_throughput_average_speedup_points(
         for mode_index, (mode_name, rows_) in enumerate(mode_rows):
             speedups = tuple(float(row.projected_execution_speedup) for row in rows_)
             mean_speedup = sum(speedups) / len(speedups)
-            standard_deviation = statistics.stdev(speedups) if len(speedups) > 1 else 0.0
+            standard_deviation = (
+                statistics.stdev(speedups) if len(speedups) > 1 else 0.0
+            )
             ci95 = 1.96 * standard_deviation / math.sqrt(len(speedups))
             color = FIGURE_STYLE.color_for_method(mode_index + 1)
             point_x = [
@@ -2766,7 +2819,9 @@ def _plot_well_throughput_average_speedup_points(
                     linestyle="--",
                     alpha=0.86,
                 )
-                axis.grid(axis="y", color=FIGURE_STYLE.grid_color, linewidth=0.8, alpha=0.8)
+                axis.grid(
+                    axis="y", color=FIGURE_STYLE.grid_color, linewidth=0.8, alpha=0.8
+                )
                 axis.set_axisbelow(True)
                 axis.spines["top"].set_visible(False)
                 axis.spines["right"].set_visible(False)
@@ -2783,7 +2838,9 @@ def _plot_well_throughput_average_speedup_points(
 
         outputs: list[Path] = []
         for output_format in output_formats:
-            output_path = output_dir / f"well_throughput_average_speedup_points.{output_format}"
+            output_path = (
+                output_dir / f"well_throughput_average_speedup_points.{output_format}"
+            )
             fig.savefig(output_path, dpi=360, bbox_inches="tight")
             outputs.append(output_path)
         plt.close(fig)
@@ -2799,7 +2856,9 @@ def _plot_well_throughput_average_speedup_points(
         for mode_index, (mode_name, rows_) in enumerate(mode_rows):
             speedups = tuple(float(row.projected_execution_speedup) for row in rows_)
             mean_speedup = sum(speedups) / len(speedups)
-            standard_deviation = statistics.stdev(speedups) if len(speedups) > 1 else 0.0
+            standard_deviation = (
+                statistics.stdev(speedups) if len(speedups) > 1 else 0.0
+            )
             ci95 = 1.96 * standard_deviation / math.sqrt(len(speedups))
             color = FIGURE_STYLE.color_for_method(mode_index + 1)
             point_x = [
@@ -2855,7 +2914,10 @@ def _plot_well_throughput_average_speedup_points(
         axis.set_title("Average well-throughput speedup (log)", loc="left", pad=10)
         axis.legend(frameon=False, loc="upper left")
         for output_format in output_formats:
-            output_path = output_dir / f"well_throughput_average_speedup_points_log.{output_format}"
+            output_path = (
+                output_dir
+                / f"well_throughput_average_speedup_points_log.{output_format}"
+            )
             fig.savefig(output_path, dpi=360, bbox_inches="tight")
             outputs.append(output_path)
         plt.close(fig)
@@ -2933,8 +2995,12 @@ def _plot_well_throughput_ram(
         label_axis.set_xticks(list(x_positions))
         label_axis.set_xticklabels(case_names, rotation=42, ha="right", fontsize=7.2)
         label_axis.set_ylabel("Peak process-tree RSS (MB)")
-        plot_axes[0].set_title("OpenHCS well-throughput RAM by core mode", loc="left", pad=10)
-        plot_axes[0].legend(frameon=False, ncol=min(len(mode_names), 4), loc="upper left")
+        plot_axes[0].set_title(
+            "OpenHCS well-throughput RAM by core mode", loc="left", pad=10
+        )
+        plot_axes[0].legend(
+            frameon=False, ncol=min(len(mode_names), 4), loc="upper left"
+        )
         for output_format in output_formats:
             output_path = output_dir / f"well_throughput_peak_memory.{output_format}"
             fig.savefig(output_path, dpi=360, bbox_inches="tight")
@@ -2973,13 +3039,17 @@ def _plot_well_throughput_ram(
         axis.set_axisbelow(True)
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
-        axis.set_title("OpenHCS well-throughput RAM by core mode (log)", loc="left", pad=10)
+        axis.set_title(
+            "OpenHCS well-throughput RAM by core mode (log)", loc="left", pad=10
+        )
         axis.set_ylabel("Peak process-tree RSS (MB)")
         axis.set_xticks(list(x_positions))
         axis.set_xticklabels(case_names, rotation=42, ha="right", fontsize=7.2)
         axis.legend(frameon=False, ncol=min(len(mode_names), 4), loc="upper left")
         for output_format in output_formats:
-            output_path = output_dir / f"well_throughput_peak_memory_log.{output_format}"
+            output_path = (
+                output_dir / f"well_throughput_peak_memory_log.{output_format}"
+            )
             fig.savefig(output_path, dpi=360, bbox_inches="tight")
             outputs.append(output_path)
         plt.close(fig)
@@ -3010,7 +3080,9 @@ def _replicate_source_binding_workspace_wells(
         raise ValueError(f"OpenHCS metadata lacks subdirectories: {metadata_path}")
     main_metadata = subdirectories.get(FIELDS.DEFAULT_SUBDIRECTORY)
     if not isinstance(main_metadata, dict):
-        raise ValueError(f"OpenHCS metadata lacks its main source workspace: {metadata_path}")
+        raise ValueError(
+            f"OpenHCS metadata lacks its main source workspace: {metadata_path}"
+        )
     workspace_mapping = main_metadata.get(FIELDS.WORKSPACE_MAPPING)
     if not isinstance(workspace_mapping, dict) or not workspace_mapping:
         raise ValueError(f"OpenHCS metadata lacks source mappings: {metadata_path}")
@@ -3030,7 +3102,7 @@ def _replicate_source_binding_workspace_wells(
         if not isinstance(path_metadata, dict):
             raise ValueError(f"Source metadata for {virtual_path!r} is not a mapping.")
         for well_id in target_wells:
-            site = parsed["site"]
+            site = parsed.required_value(AllComponents.SITE)
             expanded_path = _synthetic_well_virtual_path(
                 parser,
                 str(virtual_path),
@@ -3069,17 +3141,17 @@ def _replicate_source_binding_workspace_wells(
 def _synthetic_well_virtual_path(
     parser: SourceSchemaFilenameParser,
     virtual_path: str,
-    parsed: Mapping[str, object],
+    parsed: FilenameParseResult,
     well_id: str,
-    site: object,
+    site: str | int | float | bool,
 ) -> str:
     filename = parser.construct_filename(
-        well=well_id,
-        site=site,
-        channel=parsed["channel"],
-        z_index=parsed["z_index"],
-        timepoint=parsed["timepoint"],
-        extension=str(parsed["extension"]),
+        parsed.with_values(
+            (
+                (AllComponents.WELL, well_id),
+                (AllComponents.SITE, site),
+            )
+        )
     )
     return str(Path(virtual_path).with_name(filename))
 

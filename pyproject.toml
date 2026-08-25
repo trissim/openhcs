@@ -98,7 +98,7 @@ dependencies = [
     "python-introspect>=0.1.11",
     "metaclass-registry>=0.2.1,<0.3",
     "arraybridge>=0.3.3",
-    "polystore>=0.2.4",
+    "polystore>=0.2.7",
     "pyqt-reactive>=0.3.13,<0.4",
 ]
 
@@ -154,8 +154,7 @@ napari = [
 
 # Fiji/ImageJ integration
 fiji = [
-    "pyimagej>=1.4.1",
-    "scyjava>=1.12.0",
+    "polystore[bioformats]",
 ]
 
 # Model Context Protocol server
@@ -172,16 +171,14 @@ mcp-http = [
 
 # Bio-Formats HCS reader integration
 bioformats = [
-    "pyimagej>=1.4.1",
-    "scyjava>=1.12.0",
+    "polystore[bioformats]",
 ]
 
 # All visualization tools (napari + fiji)
 viz = [
     "napari>=0.7.1",
     "napari-crop>=0.1.12",
-    "pyimagej>=1.4.1",
-    "scyjava>=1.12.0",
+    "polystore[bioformats]",
 ]
 
 # OMERO integration dependencies
@@ -271,8 +268,7 @@ all = [
     # Viz
     "napari>=0.7.1",
     "napari-crop>=0.1.12",
-    "pyimagej>=1.4.1",
-    "scyjava>=1.12.0",
+    "polystore[bioformats]",
 
     # MCP
     # Keep this aligned with the dedicated mcp extra above.

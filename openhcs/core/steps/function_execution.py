@@ -625,9 +625,12 @@ def _filter_patterns_by_component(
         pattern_list: Sequence[SourceCandidatePath],
     ) -> list[SourceCandidatePath]:
         filtered: list[SourceCandidatePath] = []
+        component_declaration = parser.component_for_name(component)
         for pattern in pattern_list:
             metadata = parser.parse_filename(str(pattern))
-            if metadata and str(metadata.get(component)) == str(target_value):
+            if metadata and str(metadata.value_for(component_declaration)) == str(
+                target_value
+            ):
                 filtered.append(pattern)
         return filtered
 

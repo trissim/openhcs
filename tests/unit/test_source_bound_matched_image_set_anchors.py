@@ -473,7 +473,7 @@ def test_alias_only_step_binding_uses_virtual_projection_for_template_anchor(
     aliases = ("Hoechst", "SMI312")
     projections = {
         path: SourcePlaneProjection(
-            address=OpenHCSPlaneAddress(
+            address=OpenHCSPlaneAddress.from_values(
                 well="A01",
                 site="1",
                 channel=channel,
@@ -593,7 +593,7 @@ def test_complete_source_set_templates_preserve_each_execution_group_anchor(
     aliases = ("OrigStain1", "OrigStain2") * 2
     projections = {
         path: SourcePlaneProjection(
-            address=OpenHCSPlaneAddress(
+            address=OpenHCSPlaneAddress.from_values(
                 well="A01",
                 site=str(site),
                 channel=str(channel),
@@ -721,7 +721,7 @@ def test_static_site_groups_do_not_cross_project_natural_source_set_templates(
     )
     projections = {
         path: SourcePlaneProjection(
-            address=OpenHCSPlaneAddress(
+            address=OpenHCSPlaneAddress.from_values(
                 well="A01",
                 site=str(site),
                 channel=str(channel),

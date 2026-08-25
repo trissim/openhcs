@@ -35,13 +35,14 @@ from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 if TYPE_CHECKING:
+    from polystore.filemanager import FileManager
+
     from openhcs.core.config import StreamingConfig
     from openhcs.microscopes.microscope_base import MicroscopeHandler
     from openhcs.runtime.viewer_protocol import (
         ManagedViewerLifecycleMixin,
         ViewerLaunchContext,
     )
-    from polystore.filemanager import FileManager
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,7 @@ class StreamingViewerLifecycle:
     ) -> ManagedViewerLifecycleMixin:
         from zmqruntime import ViewerStateManager, get_or_create_viewer
         from zmqruntime.queue_tracker import GlobalQueueTrackerRegistry
+
         from openhcs.runtime.viewer_protocol import (
             ViewerGraphicalSessionUnavailableError,
             ViewerLaunchContext,
@@ -278,7 +280,7 @@ class ViewerStreamingSource(ViewerStreamSourceIdentity):
         metadata_by_path: dict[str, ViewerWireMapping] = {}
 
         for path in paths:
-            parsed: ViewerWireMapping | None = None
+            parsed = None
             for candidate in candidate_names_for_path(path):
                 parsed = parser.parse_filename(candidate)
                 if parsed is not None:
@@ -290,7 +292,7 @@ class ViewerStreamingSource(ViewerStreamSourceIdentity):
                     f"{artifact_label} {path!r}; streaming requires explicit "
                     "component metadata."
                 )
-            metadata_by_path[path] = dict(parsed)
+            metadata_by_path[path] = dict(parsed.component_wire_mapping())
 
         return metadata_by_path
 

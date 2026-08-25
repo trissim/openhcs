@@ -11,7 +11,8 @@ OMERO support crosses three ownership boundaries:
 PolyStore
   Owns generic storage backends, virtual paths, source references, and ROI
   persistence primitives. Its OMERO declarations own text formats and MIME
-  types, table parsing and service readiness, and image-plane batching.
+  types, table parsing and service readiness, image-plane batching, and the
+  canonical OMERO well and plane addresses.
 
 OpenHCS
   Owns microscope/source selection, source bindings, compilation, processing,
@@ -21,11 +22,10 @@ OpenHCS
   reports readiness; a responsive Blitz gateway alone is not the complete
   storage contract.
 
-The current PolyStore ``OMEROLocalBackend`` still imports the OpenHCS
-``FilenameParser`` registry while building its virtual source projection. This
-is documented transitional coupling, not a pattern to extend. The generic
-boundary is complete only when that parser/source projection is injected through
-a nominal ABC.
+``OMEROLocalBackend`` generates and parses virtual image identities through its
+own ``OMEROPlaneAddress`` declaration. OpenHCS's ``OMEROFilenameParser`` projects
+that declaration into ``FilenameParseResult``; neither package copies the
+filename grammar or imports the other's registry.
 
 Deployment maturity belongs to the packaged ``openhcs/omero`` bundle; web-client
 application behaviour belongs to ``omero_openhcs``. Treat a web entry point as
@@ -49,10 +49,9 @@ Durable artifact materialization
 
 OpenHCS asks the selected PolyStore ``DataSink`` for contextual save arguments;
 generic materialization code does not branch on OMERO or name its metadata
-fields. ``OMEROLocalBackend`` resolves the base plate represented by the virtual
-``images_dir`` and projects the parser and microscope declarations from its
-cached ``PlateStructure``. Its own ``save_batch()`` then uses that context when
-creating or updating a derived output plate.
+fields. ``OMEROLocalBackend`` projects the virtual ``images_dir`` used to link
+related artifacts. Its own ``save_batch()`` resolves image-plane coordinates
+through ``OMEROPlaneAddress`` when creating or updating a derived output plate.
 
 Analysis consolidation consumes CSV content from the execution ledger and asks
 FileManager to write summaries through the compiled backend. It does not reopen
@@ -64,6 +63,8 @@ table.
 The ``/omero/plate_<id>/...`` namespace is a virtual POSIX namespace, not a host
 filesystem path. PolyStore normalizes it with ``PurePosixPath`` before parsing,
 which preserves the same plate/output identity on Linux, macOS, and Windows.
+``OMEROWellAddress`` also supports multi-letter row labels used by plate formats
+beyond 26 rows.
 
 Compiler contract
 -----------------

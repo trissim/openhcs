@@ -28,8 +28,8 @@ configuration files and inherited primary or extra package-index overrides.
 
 Open the downloaded installer and follow the prompts. When installation
 finishes, launch **OpenHCS** from the created shortcut. The first Fiji launch
-downloads and caches its Java components, so it takes longer than later
-launches.
+materializes and caches the checksummed Fiji, JDK, and Python bridge runtime, so
+it takes longer than later launches.
 
 .. important::
 

@@ -30,7 +30,10 @@ from openhcs.microscopes.microscope_base import (
     MicroscopeHandler,
     register_metadata_handler,
 )
-from openhcs.microscopes.microscope_interfaces import MetadataHandler
+from openhcs.microscopes.microscope_interfaces import (
+    MetadataComponentValueSet,
+    MetadataHandler,
+)
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
 
@@ -117,35 +120,18 @@ class BioFormatsMetadataHandler(MetadataHandler):
     def get_pixel_size(self, plate_path: Union[str, Path]) -> float:
         return self.source_dataset(plate_path).pixel_size
 
-    def get_channel_values(
+    def component_value_set(
         self,
         plate_path: Union[str, Path],
-    ) -> Optional[Dict[str, Optional[str]]]:
-        return self._component_values(plate_path, AllComponents.CHANNEL)
+    ) -> MetadataComponentValueSet:
+        """Derive all component labels from exact store plane declarations."""
 
-    def get_well_values(
-        self,
-        plate_path: Union[str, Path],
-    ) -> Optional[Dict[str, Optional[str]]]:
-        return self._component_values(plate_path, AllComponents.WELL)
-
-    def get_site_values(
-        self,
-        plate_path: Union[str, Path],
-    ) -> Optional[Dict[str, Optional[str]]]:
-        return self._component_values(plate_path, AllComponents.SITE)
-
-    def get_z_index_values(
-        self,
-        plate_path: Union[str, Path],
-    ) -> Optional[Dict[str, Optional[str]]]:
-        return self._component_values(plate_path, AllComponents.Z_INDEX)
-
-    def get_timepoint_values(
-        self,
-        plate_path: Union[str, Path],
-    ) -> Optional[Dict[str, Optional[str]]]:
-        return self._component_values(plate_path, AllComponents.TIMEPOINT)
+        return MetadataComponentValueSet(
+            (
+                (component, self._component_values(plate_path, component))
+                for component in AllComponents
+            )
+        )
 
     def get_image_files(
         self,
@@ -156,7 +142,9 @@ class BioFormatsMetadataHandler(MetadataHandler):
         parser = BioFormatsFilenameParser()
         return [
             parser.construct_filename(
-                **candidate.declared_address.as_component_metadata(),
+                parser.bind_declared_values(
+                    candidate.declared_address.parsed_component_values()
+                )
             )
             for candidate in self.source_dataset(plate_path).candidates
             if candidate.declared_address is not None

@@ -17,19 +17,14 @@ from benchmark.contracts.dataset import (
 )
 from benchmark.datasets.acquire import acquire_dataset
 from benchmark.datasets.registry import DATASET_REGISTRY
+from openhcs.constants import AllComponents
+from openhcs.core.components.component_values import OpenHCSComponentValues
+from openhcs.core.virtual_workspace_metadata import component_metadata_field
 from openhcs.microscopes import create_microscope_handler
 from openhcs.microscopes.bioformats import BioFormatsHandler
 
-
 BIOFORMATS_HCS_VALIDATION_CSV = "bioformats_hcs_validation.csv"
 BIOFORMATS_HCS_VALIDATION_JSON = "bioformats_hcs_validation.json"
-BIOFORMATS_HCS_COMPONENT_FIELDS = (
-    "wells",
-    "sites",
-    "channels",
-    "z_indexes",
-    "timepoints",
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,11 +151,19 @@ def validate_acquired_bioformats_hcs_dataset(
     load_seconds = time.perf_counter() - load_start
 
     metadata_handler = handler.metadata_handler
-    wells = _component_keys(metadata_handler.get_well_values(acquired.path))
-    sites = _component_keys(metadata_handler.get_site_values(acquired.path))
-    channels = _component_keys(metadata_handler.get_channel_values(acquired.path))
-    z_indexes = _component_keys(metadata_handler.get_z_index_values(acquired.path))
-    timepoints = _component_keys(metadata_handler.get_timepoint_values(acquired.path))
+    component_values = metadata_handler.component_value_set(acquired.path)
+    component_keys = OpenHCSComponentValues(
+        (
+            component,
+            _component_keys(component_values.values_for(component)),
+        )
+        for component in AllComponents
+    )
+    wells = component_keys[AllComponents.WELL]
+    sites = component_keys[AllComponents.SITE]
+    channels = component_keys[AllComponents.CHANNEL]
+    z_indexes = component_keys[AllComponents.Z_INDEX]
+    timepoints = component_keys[AllComponents.TIMEPOINT]
     grid_dimensions = metadata_handler.get_grid_dimensions(acquired.path)
 
     return BioFormatsHcsValidationResult(
@@ -292,7 +295,8 @@ def _result_fieldnames() -> tuple[str, ...]:
 
 def _csv_row(result: BioFormatsHcsValidationResult) -> dict[str, object]:
     row = asdict(result)
-    for field_name in BIOFORMATS_HCS_COMPONENT_FIELDS:
+    for component in AllComponents:
+        field_name = component_metadata_field(component)
         row[field_name] = ";".join(row[field_name])
     row["grid_dimensions"] = (
         "" if result.grid_dimensions is None else _shape_label(result.grid_dimensions)
@@ -304,7 +308,8 @@ def _csv_row(result: BioFormatsHcsValidationResult) -> dict[str, object]:
 
 def _json_row(result: BioFormatsHcsValidationResult) -> dict[str, object]:
     row = asdict(result)
-    for field_name in BIOFORMATS_HCS_COMPONENT_FIELDS:
+    for component in AllComponents:
+        field_name = component_metadata_field(component)
         row[field_name] = list(row[field_name])
     row["grid_dimensions"] = (
         None if result.grid_dimensions is None else list(result.grid_dimensions)

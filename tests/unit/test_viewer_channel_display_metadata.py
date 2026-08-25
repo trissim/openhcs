@@ -2,7 +2,10 @@ from types import SimpleNamespace
 
 import pytest
 from polystore.virtual_workspace import SourcePixelRef
-from zmqruntime.viewer_protocol import ViewerComponentMetadataPayload, ViewerComponentMode
+from zmqruntime.viewer_protocol import (
+    ViewerComponentMetadataPayload,
+    ViewerComponentMode,
+)
 
 from openhcs.constants.constants import AllComponents
 from openhcs.core.source_binding_workspace import PrimaryPlaneBindingProjection
@@ -29,7 +32,7 @@ from openhcs.runtime.viewer_component_system import (
 
 
 def _address(channel: str = "1") -> OpenHCSPlaneAddress:
-    return OpenHCSPlaneAddress(
+    return OpenHCSPlaneAddress.from_values(
         well="A01",
         site="1",
         channel=channel,
@@ -67,7 +70,7 @@ def test_primary_plane_projection_preserves_exact_binding_alias_as_channel_label
         address,
     )
 
-    assert projection.address.channel == "1"
+    assert projection.address.value_for(AllComponents.CHANNEL) == "1"
     assert dict(projection.component_labels) == {"channel": "DNA"}
     metadata = SourceProjectionSet((projection,)).metadata_dict(
         parser=SourceSchemaFilenameParser(),

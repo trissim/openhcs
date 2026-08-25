@@ -35,6 +35,7 @@ from openhcs.core.compiled_step_plan import (
     CompiledStepPlan,
     RuntimeArtifactMaterializationPlan,
 )
+from openhcs.core.components.parser_metaprogramming import FilenameParseResult
 from openhcs.core.component_group_scope import (
     ComponentGroupScope,
     RuntimeExecutionAxisScope,
@@ -211,6 +212,13 @@ class MetadataHandlerStub:
 
 
 class FilenameParserStub:
+    def bind_component_values(self, metadata, *, extension=None):
+        metadata = {"timepoint": 1, **metadata}
+        return FilenameParseResult.from_wire_mapping(
+            metadata,
+            extension=extension or ".tif",
+        )
+
     def parse_filename(self, filename):
         import re
 
@@ -227,7 +235,11 @@ class FilenameParserStub:
             }
             parsed.setdefault("z_index", "1")
             parsed.setdefault("timepoint", "1")
-            return parsed
+            extension = str(parsed.pop("extension", ".tif"))
+            return FilenameParseResult.from_wire_mapping(
+                parsed,
+                extension=extension,
+            )
 
         match = re.match(
             r"(?P<well>[A-Z]\d{2})_s(?P<site>\d+)_w(?P<channel>\d+)"
@@ -242,18 +254,19 @@ class FilenameParserStub:
         }
         parsed.setdefault("z_index", "1")
         parsed.setdefault("timepoint", "1")
-        return parsed
+        extension = str(parsed.pop("extension", ".tif"))
+        return FilenameParseResult.from_wire_mapping(parsed, extension=extension)
 
     def construct_filename(
         self,
-        *,
-        well,
-        site,
-        channel,
-        z_index=1,
-        timepoint=1,
-        extension=".tif",
+        components,
     ):
+        well = components.value_for(AllComponents.WELL)
+        site = components.value_for(AllComponents.SITE)
+        channel = components.value_for(AllComponents.CHANNEL)
+        z_index = components.value_for(AllComponents.Z_INDEX)
+        timepoint = components.value_for(AllComponents.TIMEPOINT)
+        extension = components.extension
         if str(site).startswith("POS"):
             return f"{well}_{site}_{channel}{extension}"
         return (

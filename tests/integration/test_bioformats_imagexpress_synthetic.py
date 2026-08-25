@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from openhcs.constants.constants import AllComponents
 from openhcs.microscopes.bioformats import BioFormatsHandler
 from openhcs.microscopes.bioformats_adapter import (
     SourcePlaneStoreAdapter,
@@ -21,9 +22,10 @@ def test_bioformats_detects_synthetic_imagexpress_plate(tmp_path: Path) -> None:
     dataset = SourcePlaneStoreAdapter.discover_dataset(plate)
     assert dataset.identity.value == "Plate:0"
     assert len(dataset.candidates) == 8
-    assert {candidate.declared_address.well for candidate in dataset.candidates} == {
-        "A01"
-    }
+    assert {
+        candidate.declared_address.value_for(AllComponents.WELL)
+        for candidate in dataset.candidates
+    } == {"A01"}
 
     ensure_storage_registry()
     filemanager = FileManager(dict(storage_registry))

@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import tifffile
 
-from openhcs.constants.constants import Backend
+from openhcs.constants.constants import AllComponents, Backend
 from openhcs.microscopes.bioformats_adapter import (
     BioFormatsContainerOpenError,
     BioFormatsDatasetAmbiguityError,
@@ -677,13 +677,17 @@ def test_java_adapter_projects_one_czi_ome_spw_metadata(
 
     assert dataset.identity.value == "Plate:0"
     assert dataset.pixel_size == 0.65
-    assert [candidate.declared_address.channel for candidate in dataset.candidates] == [
+    assert [
+        candidate.declared_address.value_for(AllComponents.CHANNEL)
+        for candidate in dataset.candidates
+    ] == [
         "1",
         "2",
     ]
-    assert {candidate.declared_address.well for candidate in dataset.candidates} == {
-        "A01"
-    }
+    assert {
+        candidate.declared_address.value_for(AllComponents.WELL)
+        for candidate in dataset.candidates
+    } == {"A01"}
     assert [
         candidate.component_labels["channel"] for candidate in dataset.candidates
     ] == ["DAPI", "GFP"]
@@ -754,7 +758,10 @@ def test_java_adapter_aggregates_independent_czi_containers_with_one_plate_id(
 
     assert dataset.identity.value == "Plate:0"
     assert len(dataset.candidates) == 4
-    assert {candidate.declared_address.well for candidate in dataset.candidates} == {
+    assert {
+        candidate.declared_address.value_for(AllComponents.WELL)
+        for candidate in dataset.candidates
+    } == {
         "A01",
         "A02",
     }
@@ -799,13 +806,17 @@ def test_java_adapter_aggregates_multiple_nonplate_czi_by_container_identity(
     dataset = SourcePlaneStoreAdapter.discover_dataset(tmp_path)
 
     assert dataset.identity.value == tmp_path.resolve().as_uri()
-    assert {candidate.declared_address.well for candidate in dataset.candidates} == {
+    assert {
+        candidate.declared_address.value_for(AllComponents.WELL)
+        for candidate in dataset.candidates
+    } == {
         "sample-a.czi",
         "sample-b.czi",
     }
-    assert {candidate.declared_address.site for candidate in dataset.candidates} == {
-        "1"
-    }
+    assert {
+        candidate.declared_address.value_for(AllComponents.SITE)
+        for candidate in dataset.candidates
+    } == {"1"}
     assert {
         path.name
         for candidate in dataset.candidates

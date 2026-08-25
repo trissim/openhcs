@@ -252,10 +252,12 @@ def test_neuroncyto_declared_identity_replaces_loose_tiff_store_coordinates(
     assert projection is not None
     source_projections = tuple(projection.source_projections_by_virtual_path.values())
     assert {
-        source_projection.address.well for source_projection in source_projections
+        source_projection.address.value_for(AllComponents.WELL)
+        for source_projection in source_projections
     } == {inputs.image_id}
     assert {
-        source_projection.address.channel for source_projection in source_projections
+        source_projection.address.value_for(AllComponents.CHANNEL)
+        for source_projection in source_projections
     } == {"1", "2"}
     assert {
         source_projection.ref.backend_address

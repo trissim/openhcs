@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from polystore.disk import DiskStorageBackend
 from polystore.filemanager import FileManager
 from openhcs.constants.constants import FileFormat
+from openhcs.core.components.parser_metaprogramming import FilenameParseResult
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.pipeline.path_planner import PathPlannerPathAuthority
 from openhcs.core.plate_image_inventory import (
@@ -114,8 +115,11 @@ class _ResultOnlyOrchestrator:
 class _InventoryParser:
     def parse_filename(self, filename: str):
         if "A01" not in filename:
-            return {}
-        return {"well": "A01"}
+            return None
+        return FilenameParseResult.from_wire_mapping(
+            {"well": "A01"},
+            extension=".tif",
+        )
 
 
 class _InventoryMetadataHandler:

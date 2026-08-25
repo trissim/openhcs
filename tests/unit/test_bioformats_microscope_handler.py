@@ -6,7 +6,7 @@ import pytest
 from polystore.virtual_workspace import SourcePixelRef
 
 from objectstate.lazy_factory import ensure_global_config_context
-from openhcs.constants.constants import Backend
+from openhcs.constants.constants import AllComponents, Backend
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.source_workspace_projection import (
@@ -239,11 +239,15 @@ def test_bioformats_metadata_handler_reports_component_values(tmp_path: Path) ->
     assert handler.find_metadata_file(tmp_path) == tmp_path
     assert handler.get_grid_dimensions(tmp_path) == (1, 1)
     assert handler.get_pixel_size(tmp_path) == 0.5
-    assert handler.get_channel_values(tmp_path) == {"1": "DAPI", "2": "GFP"}
-    assert handler.get_well_values(tmp_path) == {"A01": "A01"}
-    assert handler.get_site_values(tmp_path) == {"1": None}
-    assert handler.get_z_index_values(tmp_path) == {"1": None}
-    assert handler.get_timepoint_values(tmp_path) == {"1": None}
+    component_values = handler.component_value_set(tmp_path)
+    assert component_values.values_for(AllComponents.CHANNEL) == {
+        "1": "DAPI",
+        "2": "GFP",
+    }
+    assert component_values.values_for(AllComponents.WELL) == {"A01": "A01"}
+    assert component_values.values_for(AllComponents.SITE) == {"1": None}
+    assert component_values.values_for(AllComponents.Z_INDEX) == {"1": None}
+    assert component_values.values_for(AllComponents.TIMEPOINT) == {"1": None}
 
 
 def test_bioformats_auto_detection_is_late_fallback(tmp_path: Path) -> None:

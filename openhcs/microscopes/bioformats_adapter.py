@@ -411,7 +411,7 @@ class BioFormatsStoreMetadata:
         )
         candidates = []
         for plane in image.pixels.planes:
-            address = OpenHCSPlaneAddress(
+            address = OpenHCSPlaneAddress.from_values(
                 well=well,
                 site=site,
                 channel=str(plane.c),
@@ -882,7 +882,13 @@ class ImageFileStoreAdapter(SourcePlaneStoreAdapter):
                 )
             relative_path = _relative_path(root, source_path)
             sample_id = OpenHCSPlaneAddress.component_token(relative_path)
-            address = OpenHCSPlaneAddress(sample_id, "1", "1", "1", "1")
+            address = OpenHCSPlaneAddress.from_values(
+                well=sample_id,
+                site="1",
+                channel="1",
+                z_index="1",
+                timepoint="1",
+            )
             metadata: dict[str, object] = {}
             for component, value in address.component_values().items():
                 metadata = with_source_component_metadata(metadata, component, value)
@@ -1282,7 +1288,7 @@ def _ngff_image_candidates(
                 "NGFF image declares unsupported nonspatial axes "
                 f"{tuple(coordinates)!r}."
             )
-        address = OpenHCSPlaneAddress(
+        address = OpenHCSPlaneAddress.from_values(
             well=well,
             site=str(site),
             channel=str(channel),

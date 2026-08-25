@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from dataclasses import replace
 
 import pytest
+from polystore.streaming.viewer_transport import ViewerStreamKwarg
+from polystore.zmq_config import POLYSTORE_ZMQ_CONFIG
+from zmqruntime.viewer_protocol import ViewerBatchWireField
 
+from openhcs.constants.constants import AllComponents
+from openhcs.core.components.parser_metaprogramming import FilenameParseResult
 from openhcs.core.config import (
     FijiDimensionMode,
     FijiStreamingConfig,
@@ -31,9 +36,6 @@ from openhcs.runtime.viewer_protocol import (
     ViewerLaunchContext,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
-from polystore.zmq_config import POLYSTORE_ZMQ_CONFIG
-from polystore.streaming.viewer_transport import ViewerStreamKwarg
-from zmqruntime.viewer_protocol import ViewerBatchWireField
 
 
 class FakeFileManager:
@@ -82,6 +84,17 @@ class FakeMetadataHandler:
         component_name: str,
     ) -> dict[str, str]:
         return {}
+
+
+def filename_parse_result(*, channel: int = 1) -> FilenameParseResult:
+    values = {
+        AllComponents.WELL: "A01",
+        AllComponents.SITE: 1,
+        AllComponents.CHANNEL: channel,
+        AllComponents.Z_INDEX: 1,
+        AllComponents.TIMEPOINT: 1,
+    }
+    return FilenameParseResult(values.items(), extension=".tif")
 
 
 def test_streaming_config_separates_registry_key_from_viewer_identity() -> None:
@@ -165,15 +178,7 @@ def test_stream_images_uses_resolved_config_backend_not_viewer_name(
         microscope_handler=SimpleNamespace(
             parser=SimpleNamespace(
                 parse_filename=lambda filename: (
-                    {
-                        "well": "A01",
-                        "site": 1,
-                        "channel": 1,
-                        "z_index": 1,
-                        "timepoint": 1,
-                    }
-                    if filename == "img.tif"
-                    else None
+                    filename_parse_result() if filename == "img.tif" else None
                 )
             ),
             metadata_handler=FakeMetadataHandler(),
@@ -281,13 +286,9 @@ def test_stream_images_reports_success_only_after_viewer_state_is_settled() -> N
         filemanager=filemanager,
         microscope_handler=SimpleNamespace(
             parser=SimpleNamespace(
-                parse_filename=lambda filename: {
-                    "well": "A01",
-                    "site": 1,
-                    "channel": int(filename[1]),
-                    "z_index": 1,
-                    "timepoint": 1,
-                }
+                parse_filename=lambda filename: filename_parse_result(
+                    channel=int(filename[1])
+                )
             ),
             metadata_handler=FakeMetadataHandler(),
         ),
@@ -317,13 +318,7 @@ def test_stream_images_does_not_report_success_when_viewer_settlement_fails() ->
         filemanager=FakeFileManager(),
         microscope_handler=SimpleNamespace(
             parser=SimpleNamespace(
-                parse_filename=lambda _filename: {
-                    "well": "A01",
-                    "site": 1,
-                    "channel": 1,
-                    "z_index": 1,
-                    "timepoint": 1,
-                }
+                parse_filename=lambda _filename: filename_parse_result()
             ),
             metadata_handler=FakeMetadataHandler(),
         ),
@@ -363,13 +358,7 @@ def test_stream_rois_supplies_per_path_component_metadata_from_artifact_name(
     microscope_handler = SimpleNamespace(
         parser=SimpleNamespace(
             parse_filename=lambda filename: (
-                {
-                    "well": "A01",
-                    "site": 1,
-                    "channel": 1,
-                    "z_index": 1,
-                    "timepoint": 1,
-                }
+                filename_parse_result()
                 if filename == "A01_s001_w1_z001_t001.tif"
                 else None
             )

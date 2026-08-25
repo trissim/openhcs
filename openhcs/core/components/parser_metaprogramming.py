@@ -1,34 +1,159 @@
-"""
-Metaprogramming system for dynamic parser interface generation.
-
-This module applies metaprogramming to the parser system, generating parser interfaces
-dynamically based on VariableComponents enum contents. This eliminates hardcoded
-assumptions about component names and makes the parser system truly generic.
-"""
+"""Filename parsing bound to the canonical OpenHCS component declaration."""
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Callable, Mapping, Type, TypeVar, Optional, Tuple, TypeAlias
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from enum import Enum
+from typing import Optional, Tuple, TypeAlias
+
+from polystore.streaming.viewer_transport import ViewerFilenameParseResultABC
+
+from openhcs.constants.constants import AllComponents
+from openhcs.core.components.component_values import OpenHCSComponentValues
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T', bound=Enum)
 FilenameParseValue: TypeAlias = str | int | float | bool | None
-ComponentValidator: TypeAlias = Callable[[FilenameParseValue], bool]
-ComponentExtractor: TypeAlias = Callable[[str], FilenameParseValue]
 
 
-class FilenameParseResult(dict[str, FilenameParseValue]):
-    """Nominal carrier for parsed filename component values."""
+@dataclass(frozen=True, slots=True, init=False)
+class FilenameParseResult(ViewerFilenameParseResultABC):
+    """Immutable parser result keyed by nominal component declarations."""
 
-    def component_matches(self, component_name: str, expected_value: object) -> bool:
-        """Compare one parsed component using its canonical selector spelling."""
+    components: OpenHCSComponentValues[FilenameParseValue]
+    extension: str
 
-        parsed_value = self.get(component_name)
+    def __init__(
+        self,
+        component_values: Iterable[tuple[AllComponents, FilenameParseValue]],
+        *,
+        extension: str,
+    ) -> None:
+        normalized_extension = str(extension).strip()
+        if not normalized_extension:
+            raise ValueError("Filename extension cannot be empty")
+        if not normalized_extension.startswith("."):
+            normalized_extension = f".{normalized_extension}"
+
+        object.__setattr__(self, "components", OpenHCSComponentValues(component_values))
+        object.__setattr__(self, "extension", normalized_extension)
+
+    @classmethod
+    def from_projection(
+        cls,
+        source_values: Iterable[tuple[Enum, FilenameParseValue]],
+        *,
+        extension: str,
+    ) -> "FilenameParseResult":
+        """Project one nominal component enum onto another by declared member name."""
+
+        return cls.from_components(
+            OpenHCSComponentValues.from_member_projection(source_values),
+            extension=extension,
+        )
+
+    @classmethod
+    def from_components(
+        cls,
+        components: OpenHCSComponentValues[FilenameParseValue],
+        *,
+        extension: str,
+    ) -> "FilenameParseResult":
+        """Bind canonical component values to one filename extension."""
+
+        return cls(components.declared_values(), extension=extension)
+
+    @classmethod
+    def from_wire_mapping(
+        cls,
+        component_values: Mapping[str, FilenameParseValue],
+        *,
+        extension: str,
+    ) -> "FilenameParseResult":
+        """Create a nominal result at an explicit keyword or wire boundary."""
+
+        return cls(
+            (
+                (component, component_values.get(component.value))
+                for component in AllComponents
+            ),
+            extension=extension,
+        )
+
+    def declared_values(
+        self,
+    ) -> tuple[tuple[AllComponents, FilenameParseValue], ...]:
+        """Return parsed values in declaration order."""
+
+        return self.components.declared_values()
+
+    def value_for(self, component: AllComponents) -> FilenameParseValue:
+        """Return the value owned by one exact component declaration."""
+
+        return self.components.value_for(component)
+
+    def with_value(
+        self,
+        component: AllComponents,
+        value: FilenameParseValue,
+    ) -> "FilenameParseResult":
+        """Return a result with one nominal component value replaced."""
+
+        return type(self).from_components(
+            self.components.with_value(component, value),
+            extension=self.extension,
+        )
+
+    def with_values(
+        self,
+        replacements: Iterable[tuple[AllComponents, FilenameParseValue]],
+    ) -> "FilenameParseResult":
+        """Return a result with nominally declared component replacements."""
+
+        components = self.components
+        seen: set[AllComponents] = set()
+        for component, value in replacements:
+            if component in seen:
+                raise ValueError(
+                    f"Filename component {component.value!r} was replaced more than once"
+                )
+            seen.add(component)
+            components = components.with_value(component, value)
+        return type(self).from_components(components, extension=self.extension)
+
+    def component_matches(
+        self,
+        component: AllComponents,
+        expected_value: object,
+    ) -> bool:
+        """Compare one parsed component through its nominal declaration."""
+
+        parsed_value = self.value_for(component)
         if parsed_value is None or expected_value is None:
             return parsed_value is expected_value
         return str(parsed_value) == str(expected_value)
+
+    def required_value(self, component: AllComponents) -> str | int | float | bool:
+        """Return one required component or fail with its declared identity."""
+
+        value = self.value_for(component)
+        if value is None or value == "":
+            raise MissingFilenameComponentError(component.value, empty=True)
+        return value
+
+    def wire_mapping(self) -> Mapping[str, FilenameParseValue]:
+        """Project this nominal result at an explicit string-keyed wire boundary."""
+
+        return {**self.components.wire_mapping(), "extension": self.extension}
+
+    def component_wire_mapping(self) -> Mapping[str, FilenameParseValue]:
+        """Project only component values for metadata and viewer boundaries."""
+
+        return self.components.wire_mapping()
+
+    def __hash__(self) -> int:
+        return hash((self.components.declared_values(), self.extension))
 
 
 class MissingFilenameComponentError(ValueError):
@@ -40,32 +165,6 @@ class MissingFilenameComponentError(ValueError):
         super().__init__(f"Filename component {component_name!r} {detail}.")
 
 
-def require_filename_component(
-    component_values: Mapping[str, object],
-    component_name: str,
-) -> object:
-    """Return a declared filename component or raise for an incomplete contract."""
-    if component_name not in component_values:
-        raise MissingFilenameComponentError(component_name)
-    value = component_values[component_name]
-    if value is None or value == "":
-        raise MissingFilenameComponentError(component_name, empty=True)
-    return value
-
-
-def optional_filename_component(
-    component_values: Mapping[str, object],
-    component_name: str,
-) -> object | None:
-    """Return a declared optional filename component, or None when omitted."""
-    if component_name not in component_values:
-        return None
-    value = component_values[component_name]
-    if value is None or value == "":
-        return None
-    return value
-
-
 def format_filename_component(value: object, padding: int = 0) -> str:
     """Format a declared filename component without inventing missing values."""
     if isinstance(value, str):
@@ -74,81 +173,13 @@ def format_filename_component(value: object, padding: int = 0) -> str:
 
 
 class GenericFilenameParser(ABC):
-    """
-    Generic base class for filename parsers with dynamically generated methods.
+    """Filename parser bound to the canonical OpenHCS component declaration."""
 
-    This class provides the foundation for truly generic parser interfaces that
-    adapt to any component configuration without hardcoded assumptions.
-    """
+    DEFAULT_EXTENSION = ".tif"
 
-    def __init__(self, component_enum: Type[T]):
-        """
-        Initialize the generic parser.
-
-        Args:
-            component_enum: The component enum this parser handles
-        """
-        self.component_enum = component_enum
-        self.FILENAME_COMPONENTS = [component.value for component in component_enum] + ['extension']
-        self.PLACEHOLDER_PATTERN = '{iii}'
-        self._generate_dynamic_methods()
-
-    def _generate_dynamic_methods(self):
-        """
-        Generate validation and extraction authorities for each component.
-
-        The methods are stored in explicit maps instead of instance attributes so
-        parser behavior is keyed by declared component identity, not reflection.
-        """
-        self._component_validators: dict[str, ComponentValidator] = {}
-        self._component_extractors: dict[str, ComponentExtractor] = {}
-        for component in self.component_enum:
-            component_name = component.value
-            self._component_validators[component_name] = self._create_generic_validator(component)
-            self._component_extractors[component_name] = self._create_generic_extractor(component)
-
-    def _create_generic_validator(self, component: Enum) -> ComponentValidator:
-        """
-        Create a generic validator for a component based on enum metadata.
-
-        This approach uses the component enum itself to determine validation rules,
-        making it truly generic and adaptable to any component configuration.
-        """
-        # Define validation rules based on component enum metadata
-        # This is generic and doesn't hardcode specific component names
-        def validate_component(value: FilenameParseValue) -> bool:
-            """Generic validation for any component value."""
-            if value is None:
-                return True  # Allow None values (placeholders)
-
-            # Generic validation based on value type and placeholder patterns
-            if isinstance(value, str):
-                # String values: allow non-empty strings or placeholder patterns
-                return len(value) > 0 or '{' in value
-            elif isinstance(value, int):
-                # Integer values: allow positive integers
-                return value >= 0
-            return isinstance(value, (float, bool))
-
-        return validate_component
-
-    def _create_generic_extractor(self, component: Enum) -> ComponentExtractor:
-        """
-        Create a generic extractor for a component based on enum metadata.
-
-        This approach uses the component enum to create extractors that work
-        with any component configuration without hardcoded assumptions.
-        """
-        component_name = component.value
-
-        def extract_component(filename: str) -> FilenameParseValue:
-            """Generic extraction for any component using parse_filename."""
-            parsed = self.parse_filename(filename)
-            if parsed and component_name in parsed:
-                return parsed[component_name]
-            return None
-
-        return extract_component
+    def __init__(self) -> None:
+        self.FILENAME_COMPONENTS = tuple(AllComponents)
+        self.PLACEHOLDER_PATTERN = "{iii}"
 
     @classmethod
     @abstractmethod
@@ -167,94 +198,79 @@ class GenericFilenameParser(ABC):
         pass
 
     @abstractmethod
-    def construct_filename(self, extension: str = '.tif', **component_values) -> str:
-        """Construct a filename from component values."""
+    def construct_filename(self, components: FilenameParseResult) -> str:
+        """Construct a filename from one nominal component result."""
         pass
 
-    def __getstate__(self):
-        """
-        Custom pickling method to handle dynamic functions.
-
-        Removes generated callables before pickling since they can't be serialized,
-        but preserves the component_enum so they can be regenerated.
-        """
-        state = self.__dict__.copy()
-        state.pop("_component_validators", None)
-        state.pop("_component_extractors", None)
-        return state
-
-    def __setstate__(self, state):
-        """
-        Custom unpickling method to regenerate dynamic functions.
-
-        Restores the object state and regenerates the dynamic methods
-        that were removed during pickling.
-        """
-        # Restore the object state
-        self.__dict__.update(state)
-
-        # Regenerate component authorities
-        self._generate_dynamic_methods()
-    
-    def get_component_names(self) -> list:
+    def get_component_names(self) -> tuple[str, ...]:
         """Get all component names for this parser."""
-        return [component.value for component in self.component_enum]
+        return AllComponents.ordered_names()
 
-    def validate_component_by_name(self, component_name: str, value: FilenameParseValue) -> bool:
-        """
-        Validate a component value using the dynamic validation methods.
+    def component_for_name(self, component_name: str) -> AllComponents:
+        """Resolve one external component name through the declared enum."""
 
-        Args:
-            component_name: Name of the component to validate
-            value: Value to validate
+        return AllComponents(component_name)
 
-        Returns:
-            True if the value is valid for the component
-        """
-        return self._component_validators[component_name](value)
+    def bind_component_values(
+        self,
+        component_values: Mapping[str, FilenameParseValue],
+        *,
+        extension: str | None = None,
+    ) -> FilenameParseResult:
+        """Bind an external component mapping before filename construction."""
 
-    def extract_component_by_name(self, filename: str, component_name: str) -> FilenameParseValue:
-        """
-        Extract a specific component from filename using dynamic extraction methods.
+        return FilenameParseResult.from_wire_mapping(
+            component_values,
+            extension=extension or self.DEFAULT_EXTENSION,
+        )
 
-        Args:
-            filename: Filename to parse
-            component_name: Name of component to extract
+    def bind_declared_values(
+        self,
+        component_values: Iterable[tuple[AllComponents, FilenameParseValue]],
+        *,
+        extension: str | None = None,
+    ) -> FilenameParseResult:
+        """Bind canonical component values without crossing a string boundary."""
 
-        Returns:
-            Component value or None if extraction fails
+        return FilenameParseResult(
+            component_values,
+            extension=extension or self.DEFAULT_EXTENSION,
+        )
 
-        Raises:
-            KeyError: If no extraction authority exists for the component
-        """
-        return self._component_extractors[component_name](filename)
-    
-    def validate_component_dict(self, components: FilenameParseResult) -> bool:
-        """
-        Validate that a component dictionary contains all required components.
-        
-        Args:
-            components: Dictionary of component values
-            
-        Returns:
-            True if all required components are present and valid
-        """
-        required_components = set(self.get_component_names())
-        provided_components = set(components.keys()) - {'extension'}
-        
-        # Check if all required components are provided
-        if not required_components.issubset(provided_components):
-            missing = required_components - provided_components
-            logger.warning(f"Missing required components: {missing}")
+    @staticmethod
+    def validate_component_value(value: FilenameParseValue) -> bool:
+        """Validate one generic parsed value without a mirrored component table."""
+
+        if value is None:
+            return True
+        if isinstance(value, str):
+            return bool(value) or "{" in value
+        if isinstance(value, int):
+            return value >= 0
+        return isinstance(value, (float, bool))
+
+    def extract_component(
+        self,
+        filename: str,
+        component: AllComponents,
+    ) -> FilenameParseValue:
+        """Extract one exact nominal component from a parsed filename."""
+
+        parsed = self.parse_filename(filename)
+        return None if parsed is None else parsed.value_for(component)
+
+    def validate_parse_result(self, result: FilenameParseResult) -> bool:
+        """Validate a complete result against this parser's declaration."""
+
+        declared_components = tuple(AllComponents)
+        if (
+            tuple(component for component, _ in result.declared_values())
+            != declared_components
+        ):
+            logger.warning("Parsed filename components do not match parser declaration")
             return False
-        
-        # Validate each component using the generic validation system
-        for component_name, value in components.items():
-            if component_name == 'extension':
-                continue
-
-            if not self.validate_component_by_name(component_name, value):
-                logger.warning(f"Invalid value for {component_name}: {value}")
+        for component, value in result.declared_values():
+            if not self.validate_component_value(value):
+                logger.warning("Invalid value for %s: %r", component.value, value)
                 return False
-        
         return True

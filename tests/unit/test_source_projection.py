@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ast
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -23,7 +22,6 @@ from openhcs.core.source_projection import (
 )
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 
-
 _OWNED_PROJECTION_MODULES = (
     Path("openhcs/core/source_projection.py"),
     Path("openhcs/core/source_binding_workspace.py"),
@@ -32,7 +30,7 @@ _OWNED_PROJECTION_MODULES = (
 
 
 def test_projection_nominal_owners_declare_projection_semantics() -> None:
-    address = OpenHCSPlaneAddress(
+    address = OpenHCSPlaneAddress.from_values(
         well="A01",
         site="1",
         channel="1",
@@ -69,10 +67,13 @@ def test_projection_nominal_owners_declare_projection_semantics() -> None:
         "Nuclei",
     )
     assert artifact.payload_composition_alias is None
-    assert artifact.virtual_workspace_path(
-        "labels.tif",
-        execution_anchor=False,
-    ) == "_source/Nuclei/labels.tif"
+    assert (
+        artifact.virtual_workspace_path(
+            "labels.tif",
+            execution_anchor=False,
+        )
+        == "_source/Nuclei/labels.tif"
+    )
 
     plane_metadata: dict[str, object] = {}
     plane_payload: dict[str, object] = {}
@@ -89,7 +90,9 @@ def test_projection_nominal_owners_declare_projection_semantics() -> None:
     assert artifact_payload == {"artifact_kind": "object_labels"}
 
 
-def test_owned_projection_modules_do_not_dispatch_on_concrete_projection_types() -> None:
+def test_owned_projection_modules_do_not_dispatch_on_concrete_projection_types() -> (
+    None
+):
     forbidden_types = {"SourcePlaneProjection", "SourceArtifactProjection"}
     for relative_path in _OWNED_PROJECTION_MODULES:
         source_path = Path(__file__).parents[2] / relative_path
@@ -114,7 +117,7 @@ def test_source_projection_serializes_canonical_virtual_filename() -> None:
     projection_set = SourceProjectionSet(
         (
             SourcePlaneProjection(
-                address=OpenHCSPlaneAddress(
+                address=OpenHCSPlaneAddress.from_values(
                     well="A01",
                     site="1",
                     channel="2",
@@ -154,8 +157,7 @@ def test_source_projection_serializes_canonical_virtual_filename() -> None:
     assert metadata["workspace_mapping"]["A01_s001_w2_z003_t004.tif"] == {
         "backend": "bioformats",
         "backend_address": (
-            '{"plane_index":6,"series_index":5,'
-            '"source_path":"stack.ome.tif"}'
+            '{"plane_index":6,"series_index":5,' '"source_path":"stack.ome.tif"}'
         ),
         "source_axis_indices": [],
     }
@@ -169,7 +171,7 @@ def test_source_projection_serializes_canonical_virtual_filename() -> None:
 
 
 def test_source_plane_address_canonicalizes_numeric_axis_padding() -> None:
-    address = OpenHCSPlaneAddress(
+    address = OpenHCSPlaneAddress.from_values(
         well="01",
         site="001",
         channel="02",
@@ -177,7 +179,7 @@ def test_source_plane_address_canonicalizes_numeric_axis_padding() -> None:
         timepoint="0004",
     )
 
-    assert address == OpenHCSPlaneAddress(
+    assert address == OpenHCSPlaneAddress.from_values(
         well="01",
         site="1",
         channel="2",
@@ -190,7 +192,7 @@ def test_source_projection_rejects_metadata_component_conflict() -> None:
     projection_set = SourceProjectionSet(
         (
             SourcePlaneProjection(
-                address=OpenHCSPlaneAddress(
+                address=OpenHCSPlaneAddress.from_values(
                     well="A01",
                     site="1",
                     channel="2",
@@ -231,16 +233,13 @@ def test_source_projection_preserves_provenance_owned_component_remaps(
     source_value: str,
     address_value: str,
 ) -> None:
-    address = replace(
-        OpenHCSPlaneAddress(
-            well="A01",
-            site="1",
-            channel="2",
-            z_index="3",
-            timepoint="4",
-        ),
-        **{component.value: address_value},
-    )
+    address = OpenHCSPlaneAddress.from_values(
+        well="A01",
+        site="1",
+        channel="2",
+        z_index="3",
+        timepoint="4",
+    ).with_value(component, address_value)
     projection_set = SourceProjectionSet(
         (
             SourcePlaneProjection(
@@ -269,13 +268,14 @@ def test_source_projection_preserves_provenance_owned_component_remaps(
     source_metadata = next(iter(metadata["source_metadata"].values()))
 
     assert source_metadata[component.value] == address_value
-    assert dict(SourceMetadataRoleView(source_metadata).original_items())[
-        component.value
-    ] == source_value
+    assert (
+        dict(SourceMetadataRoleView(source_metadata).original_items())[component.value]
+        == source_value
+    )
 
 
 def test_source_projection_rejects_duplicate_addresses() -> None:
-    address = OpenHCSPlaneAddress(
+    address = OpenHCSPlaneAddress.from_values(
         well="A01",
         site="1",
         channel="1",
@@ -301,7 +301,7 @@ def test_source_projection_rejects_duplicate_addresses() -> None:
 def test_artifact_only_projection_set_serializes_typed_execution_anchors() -> None:
     projections = tuple(
         SourceArtifactProjection(
-            address=OpenHCSPlaneAddress(
+            address=OpenHCSPlaneAddress.from_values(
                 well="A01",
                 site="1",
                 channel=str(channel),

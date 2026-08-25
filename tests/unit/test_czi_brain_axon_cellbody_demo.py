@@ -73,7 +73,7 @@ def _candidate(
             AllComponents.SITE.value: site_label,
             AllComponents.CHANNEL.value: channel_label,
         },
-        declared_address=OpenHCSPlaneAddress(
+        declared_address=OpenHCSPlaneAddress.from_values(
             well=".",
             site=site,
             channel=channel,
@@ -407,7 +407,7 @@ def test_czi_contributor_samples_only_declared_crop_planes(
         for candidate in prepared_dataset.candidates
     ] == list(selection.ordered_channel_labels)
     assert [
-        candidate.declared_address.channel
+        candidate.declared_address.value_for(AllComponents.CHANNEL)
         for candidate in prepared_dataset.candidates
         if candidate.declared_address is not None
     ] == ["1", "2", "3"]

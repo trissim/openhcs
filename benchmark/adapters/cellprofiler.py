@@ -35,7 +35,7 @@ from benchmark.contracts.tool_adapter import (
     ToolNotInstalledError,
 )
 from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
-from openhcs.constants import Backend
+from openhcs.constants import AllComponents, Backend
 from openhcs.core.config import GlobalPipelineConfig, WellFilterConfig
 from openhcs.core.source_binding_workspace import (
     SourceBindingWorkspaceMaterialization,
@@ -407,7 +407,7 @@ class NativeCellProfilerSelectedSourceUniverse:
             raise ValueError(
                 f"Cannot parse source-binding virtual filename {virtual_path!r}."
             )
-        return str(parsed["well"])
+        return str(parsed.required_value(AllComponents.WELL))
 
     @staticmethod
     def _workspace_source_path(
@@ -1449,9 +1449,7 @@ class NativeCellProfilerSuccessMarkerReferenceCompletenessStrategy(
         self,
         reference_output_dir: Path,
     ) -> bool:
-        return (
-            reference_output_dir / NATIVE_CELLPROFILER_SUCCESS_MARKER
-        ).is_file()
+        return (reference_output_dir / NATIVE_CELLPROFILER_SUCCESS_MARKER).is_file()
 
 
 class NativeCellProfilerSemanticSnapshotReferenceCompletenessStrategy(

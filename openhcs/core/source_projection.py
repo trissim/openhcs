@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
-import re
 from types import MappingProxyType
 from typing import Any, ClassVar, Mapping, cast
 from urllib.parse import quote
@@ -13,20 +14,12 @@ from urllib.parse import quote
 from polystore.virtual_workspace import SourcePixelRef
 
 from openhcs.constants.constants import AllComponents
+from openhcs.core.components.component_values import OpenHCSComponentValues
 from openhcs.core.artifacts import ArtifactType, ImageArtifactType
 from openhcs.core.source_bindings import (
     SOURCE_BINDING_ALIAS_METADATA_FIELD,
     NamedSourceBinding,
     SourceProjectionRole,
-)
-from openhcs.core.source_metadata import (
-    SourceComponentProjectionStrategy,
-    SourceMetadataIdentityProjection,
-    SourceMetadataRoleView,
-    SourceMetadataMapping,
-    SourceMetadataValue,
-    source_metadata_dict,
-    source_metadata_scalar,
 )
 from openhcs.core.source_matching import (
     source_component_metadata_values,
@@ -34,6 +27,15 @@ from openhcs.core.source_matching import (
     source_metadata_values_equal,
     with_original_source_metadata,
     with_source_component_metadata,
+)
+from openhcs.core.source_metadata import (
+    SourceComponentProjectionStrategy,
+    SourceMetadataIdentityProjection,
+    SourceMetadataMapping,
+    SourceMetadataRoleView,
+    SourceMetadataValue,
+    source_metadata_dict,
+    source_metadata_scalar,
 )
 
 
@@ -49,18 +51,19 @@ class SourceDatasetDiagnostic(ABC):
         """Return this diagnostic's leaf-owned canonical metadata payload."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class OpenHCSPlaneAddress:
     """Canonical OpenHCS logical address for one image plane."""
 
-    well: str
-    site: str
-    channel: str
-    z_index: str
-    timepoint: str
+    _components: OpenHCSComponentValues[str]
 
-    def __post_init__(self) -> None:
-        for component, value in self.component_values().items():
+    def __init__(
+        self,
+        component_values: Iterable[tuple[AllComponents, object]],
+    ) -> None:
+        components = OpenHCSComponentValues(component_values)
+        normalized_values: list[tuple[AllComponents, str]] = []
+        for component, value in components.items():
             if value is None or value == "":
                 raise ValueError(
                     f"{component.value} cannot be empty in an OpenHCS plane address."
@@ -68,26 +71,75 @@ class OpenHCSPlaneAddress:
             normalized = str(value)
             if component is not AllComponents.WELL and normalized.isdecimal():
                 normalized = str(int(normalized))
-            object.__setattr__(self, component.value, normalized)
+            normalized_values.append((component, normalized))
+        object.__setattr__(
+            self, "_components", OpenHCSComponentValues(normalized_values)
+        )
 
-    def component_values(self) -> dict[AllComponents, str]:
+    @classmethod
+    def from_values(
+        cls,
+        well: object,
+        site: object,
+        channel: object,
+        z_index: object,
+        timepoint: object,
+    ) -> "OpenHCSPlaneAddress":
+        """Bind one plane emitted by an API with named native coordinates."""
+
+        return cls(
+            (
+                (AllComponents.WELL, well),
+                (AllComponents.SITE, site),
+                (AllComponents.CHANNEL, channel),
+                (AllComponents.Z_INDEX, z_index),
+                (AllComponents.TIMEPOINT, timepoint),
+            )
+        )
+
+    def component_values(self) -> OpenHCSComponentValues[str]:
         """Return address values keyed by OpenHCS component enum."""
 
-        return {
-            AllComponents.WELL: self.well,
-            AllComponents.SITE: self.site,
-            AllComponents.CHANNEL: self.channel,
-            AllComponents.Z_INDEX: self.z_index,
-            AllComponents.TIMEPOINT: self.timepoint,
-        }
+        return self._components
+
+    def value_for(self, component: AllComponents) -> str:
+        """Return one logical coordinate through its nominal declaration."""
+
+        return self._components.value_for(component)
+
+    def with_value(
+        self,
+        component: AllComponents,
+        value: object,
+    ) -> "OpenHCSPlaneAddress":
+        """Return an address with one declared coordinate replaced."""
+
+        self._components.value_for(component)
+        return type(self)(
+            (
+                declared_component,
+                value if declared_component is component else current_value,
+            )
+            for declared_component, current_value in self._components.items()
+        )
+
+    def __hash__(self) -> int:
+        return hash(self._components.declared_values())
 
     def as_component_metadata(self) -> dict[str, str]:
         """Return parser-compatible component metadata."""
 
-        return {
-            component.value: value
+        return dict(self.component_values().wire_mapping())
+
+    def parsed_component_values(
+        self,
+    ) -> tuple[tuple[AllComponents, str | int], ...]:
+        """Project canonical identities onto parsed filename scalar values."""
+
+        return tuple(
+            (component, _coordinate_value(value))
             for component, value in self.component_values().items()
-        }
+        )
 
     @staticmethod
     def component_token(value: object) -> str:
@@ -111,25 +163,13 @@ class OpenHCSPlaneAddress:
         return encoded
 
     @classmethod
-    def from_parsed(cls, parsed: Mapping[str, Any]) -> "OpenHCSPlaneAddress":
-        """Create an address from parser output."""
+    def from_component_values(
+        cls,
+        component_values: Iterable[tuple[AllComponents, object]],
+    ) -> "OpenHCSPlaneAddress":
+        """Create an address from nominal OpenHCS component values."""
 
-        missing = [
-            component.value
-            for component in AllComponents
-            if parsed.get(component.value) is None
-        ]
-        if missing:
-            raise ValueError(
-                "Parsed OpenHCS virtual filename lacks required components: "
-                + ", ".join(missing)
-            )
-        return cls(
-            **{
-                component.value: str(parsed[component.value])
-                for component in AllComponents
-            }
-        )
+        return cls(component_values)
 
     _filename_pattern: ClassVar[re.Pattern[str]] = re.compile(
         r"^(?P<well>[^_]+)_s(?P<site>[^_]+)_w(?P<channel>[^_]+)"
@@ -137,37 +177,53 @@ class OpenHCSPlaneAddress:
         r"(?:_[^.]*)?(?P<extension>(?:\.\w+)+)$"
     )
 
-    @classmethod
-    def construct_filename(
-        cls,
+    def filename(
+        self,
         extension: str = ".tif",
         site_padding: int = 3,
         z_padding: int = 3,
         timepoint_padding: int = 3,
-        **component_values: object,
     ) -> str:
-        address = cls(
-            **{
-                component.value: str(component_values[component.value])
-                for component in AllComponents
-            }
-        )
         return (
-            f"{address.well}_s{_padded(address.site, site_padding)}"
-            f"_w{address.channel}_z{_padded(address.z_index, z_padding)}"
-            f"_t{_padded(address.timepoint, timepoint_padding)}{extension}"
+            f"{self.value_for(AllComponents.WELL)}"
+            f"_s{_padded(self.value_for(AllComponents.SITE), site_padding)}"
+            f"_w{self.value_for(AllComponents.CHANNEL)}"
+            f"_z{_padded(self.value_for(AllComponents.Z_INDEX), z_padding)}"
+            f"_t{_padded(self.value_for(AllComponents.TIMEPOINT), timepoint_padding)}"
+            f"{extension}"
         )
 
     @classmethod
-    def parse_filename(cls, filename: str) -> Mapping[str, str | int] | None:
+    def from_filename(cls, filename: str) -> "OpenHCSPlaneFilename | None":
         match = cls._filename_pattern.match(Path(str(filename)).name)
         if match is None:
             return None
         values = match.groupdict()
-        return {
-            component.value: _coordinate_value(values[component.value])
-            for component in AllComponents
-        } | {"extension": values["extension"]}
+        return OpenHCSPlaneFilename(
+            address=cls.from_component_values(
+                (
+                    (component, _coordinate_value(values[component.value]))
+                    for component in AllComponents
+                )
+            ),
+            extension=values["extension"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class OpenHCSPlaneFilename:
+    """Parsed canonical OpenHCS plane address and its file extension."""
+
+    address: OpenHCSPlaneAddress
+    extension: str
+
+    def __post_init__(self) -> None:
+        extension = str(self.extension).strip()
+        if not extension:
+            raise ValueError("OpenHCS plane filename extension cannot be empty")
+        if not extension.startswith("."):
+            extension = f".{extension}"
+        object.__setattr__(self, "extension", extension)
 
 
 @dataclass(frozen=True, slots=True)
@@ -493,7 +549,10 @@ class SourcePlaneDataset:
             self._record_identity(
                 sample_groups,
                 store_identity.sample_group_key,
-                (address.well, address.site),
+                (
+                    address.value_for(AllComponents.WELL),
+                    address.value_for(AllComponents.SITE),
+                ),
                 "sample group",
             )
             self._record_identity(
@@ -885,19 +944,22 @@ class SourceProjectionMetadataSerializer:
 
         address = projection.address
         path = self.parser.construct_filename(
-            well=address.well,
-            site=_parser_component(address.site),
-            channel=_parser_component(address.channel),
-            z_index=_parser_component(address.z_index),
-            timepoint=_parser_component(address.timepoint),
-            extension=self.image_extension,
+            self.parser.bind_declared_values(
+                (
+                    (component, _parser_component(value))
+                    for component, value in address.component_values().items()
+                ),
+                extension=self.image_extension,
+            )
         )
         parsed = self.parser.parse_filename(path)
         if parsed is None:
             raise ValueError(
                 f"Generated virtual filename is not parser-readable: {path!r}"
             )
-        parsed_address = OpenHCSPlaneAddress.from_parsed(parsed)
+        parsed_address = OpenHCSPlaneAddress.from_component_values(
+            parsed.declared_values()
+        )
         if parsed_address != address:
             raise ValueError(
                 "Generated virtual filename parsed to a different address: "

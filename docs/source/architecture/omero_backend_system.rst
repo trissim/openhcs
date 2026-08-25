@@ -1,11 +1,11 @@
-OMERO integration transition
-============================
+OMERO integration architecture
+==============================
 
 PolyStore owns generic OMERO storage mechanics. OpenHCS packages the deployment
 bundle under ``openhcs/omero``; its bundled ``omero_openhcs`` plugin owns the
-OMERO.web application integration. PolyStore declarations also own OMERO text
-format parsing, table-service readiness, and image-plane batch construction;
-OpenHCS does not mirror those mechanics.
+OMERO.web application integration. PolyStore declarations also own canonical
+well and plane addresses, OMERO text format parsing, table-service readiness,
+and image-plane batch construction; OpenHCS does not mirror those mechanics.
 
 The packaged deployment pins PostgreSQL, OMERO.server, and OMERO.web. This makes
 a cold deployment resolve the same stack as a cached deployment. Its default

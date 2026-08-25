@@ -487,7 +487,7 @@ class PlateInspectionMutableParsedComponents:
         for component in AllComponents:
             self._add_optional(
                 self.values[component],
-                parsed.get(component.value),
+                parsed.value_for(component),
             )
 
     @staticmethod

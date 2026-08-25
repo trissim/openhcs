@@ -2,20 +2,18 @@ import json
 
 import numpy as np
 import pytest
-
-import openhcs  # noqa: F401
 from polystore.base import DataSink
+from polystore.fiji_stream import FijiStreamingBackend
 from polystore.filemanager import FileManager
 from polystore.memory import MemoryStorageBackend
 from polystore.napari_stream import NapariStreamingBackend
-from polystore.fiji_stream import FijiStreamingBackend
-from polystore.streaming.identity import (
-    FixedStreamProducerIdentityKind,
-    StreamProducerIdentity,
-)
 from polystore.streaming import (
     StreamingBatchMessageBuilder,
     StreamingBatchMessageRequest,
+)
+from polystore.streaming.identity import (
+    FixedStreamProducerIdentityKind,
+    StreamProducerIdentity,
 )
 from polystore.streaming.viewer_transport import (
     BatchViewerStreamSourceMetadata,
@@ -23,8 +21,8 @@ from polystore.streaming.viewer_transport import (
     ViewerFilenameParserABC,
     ViewerMetadataHandlerABC,
     ViewerMicroscopeHandlerABC,
-    ViewerStreamProducer,
     ViewerStreamBackendKwargs,
+    ViewerStreamProducer,
     ViewerStreamRequest,
     ViewerStreamSource,
     ViewerStreamSourceIdentity,
@@ -32,21 +30,42 @@ from polystore.streaming.viewer_transport import (
 from zmqruntime.config import TransportMode
 from zmqruntime.viewer_protocol import ViewerTransportEndpoint
 
+import openhcs  # noqa: F401
 from openhcs.constants.constants import AllComponents, VariableComponents
+from openhcs.core.components.parser_metaprogramming import FilenameParseResult
 from openhcs.core.measurement_row_materialization import (
     MeasurementProjectedColumnarRows,
 )
-from openhcs.core.runtime_object_label_domains import ObjectLabelDomain, ObjectLabelDomainScope
+from openhcs.core.runtime_image_values import (
+    ImageMetadataPayload,
+    ImagePayloadMetadata,
+)
+from openhcs.core.runtime_object_label_domains import (
+    ObjectLabelDomain,
+    ObjectLabelDomainScope,
+)
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelPayload,
+    ObjectLabelVariantData,
+)
 from openhcs.core.runtime_plane_projection import RuntimePlaneAxis
-from openhcs.core.runtime_tabular_values import FieldSpec
 from openhcs.core.runtime_slice_projection import RuntimeProjectionPlaneMetadata
+from openhcs.core.runtime_tabular_values import FieldSpec
+from openhcs.core.source_image_provenance import (
+    SourceImageIdentity,
+    SourceImageProvenancePlanes,
+)
+from openhcs.core.source_metadata import (
+    SOURCE_PLANE_COUNT_FIELD,
+    SOURCE_PLANE_INDEX_FIELD,
+)
 from openhcs.core.source_spatial_domain import SourceSpatialDomain
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 from openhcs.processing.materialization import (
     ImageFileOptions,
     JsonOptions,
-    MaterializedFilenameIdentity,
     MaterializationSpec,
+    MaterializedFilenameIdentity,
     ROIOptions,
     TiffStackOptions,
     csv_only,
@@ -66,22 +85,6 @@ from openhcs.processing.materialization.core import (
     RuntimePlaneStackAxesProjectionSelection,
     ViewerStreamBackendCallKwargs,
 )
-from openhcs.core.runtime_image_values import (
-    ImageMetadataPayload,
-    ImagePayloadMetadata,
-)
-from openhcs.core.runtime_object_labels import (
-    ObjectLabelVariantData,
-    ObjectLabelPayload,
-)
-from openhcs.core.source_image_provenance import (
-    SourceImageProvenancePlanes,
-)
-from openhcs.core.source_metadata import (
-    SOURCE_PLANE_COUNT_FIELD,
-    SOURCE_PLANE_INDEX_FIELD,
-)
-from openhcs.core.source_image_provenance import SourceImageIdentity
 
 
 def _memory_materialize(spec, data, path, filemanager):
@@ -124,7 +127,10 @@ class _TestViewerFilenameParser(ViewerFilenameParserABC):
         }
         parsed.setdefault("z_index", "1")
         parsed.setdefault("timepoint", "1")
-        return parsed
+        return FilenameParseResult(
+            ((component, parsed[component.value]) for component in AllComponents),
+            extension=parsed.get("extension", ".tif"),
+        )
 
 
 class _TestViewerMetadataHandler(ViewerMetadataHandlerABC):
@@ -1338,9 +1344,7 @@ def test_generic_object_labels_feed_napari_and_fiji_roi_transports() -> None:
             component_names_request=napari_backend.component_names_request(
                 stream_request
             ),
-            display_payload_extra=napari_backend.display_payload_extra(
-                stream_request
-            ),
+            display_payload_extra=napari_backend.display_payload_extra(stream_request),
         ),
     ).batch_images
     fiji_backend = FijiStreamingBackend()
@@ -1353,9 +1357,7 @@ def test_generic_object_labels_feed_napari_and_fiji_roi_transports() -> None:
             component_names_request=fiji_backend.component_names_request(
                 stream_request
             ),
-            display_payload_extra=fiji_backend.display_payload_extra(
-                stream_request
-            ),
+            display_payload_extra=fiji_backend.display_payload_extra(stream_request),
         ),
     )
     fiji_items = fiji_items.batch_images

@@ -10,11 +10,9 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, Type
 
-from openhcs.constants.constants import Backend, Microscope
+from openhcs.constants.constants import AllComponents, Backend, Microscope
 from openhcs.core.components.parser_metaprogramming import (
     format_filename_component,
-    optional_filename_component,
-    require_filename_component,
 )
 from polystore.exceptions import MetadataNotFoundError
 from polystore.filemanager import FileManager
@@ -24,10 +22,12 @@ from openhcs.microscopes.microscope_interfaces import (
     DiskImageFileListingMetadataHandler,
     FilenameParseResult,
     FilenameParser,
+    MetadataComponentValueSet,
     MetadataHandler,
 )
 
 logger = logging.getLogger(__name__)
+
 
 class ImageXpressHandler(MicroscopeHandler):
     """
@@ -80,7 +80,9 @@ class ImageXpressHandler(MicroscopeHandler):
 
     # Uses default workspace initialization from base class
 
-    def _build_virtual_mapping(self, plate_path: Path, filemanager: FileManager) -> Path:
+    def _build_virtual_mapping(
+        self, plate_path: Path, filemanager: FileManager
+    ) -> Path:
         """
         Build ImageXpress virtual workspace mapping using plate-relative paths.
 
@@ -95,7 +97,9 @@ class ImageXpressHandler(MicroscopeHandler):
         """
         plate_path = Path(plate_path)  # Ensure Path object
 
-        logger.info(f"🔄 BUILDING VIRTUAL MAPPING: ImageXpress folder flattening for {plate_path}")
+        logger.info(
+            f"🔄 BUILDING VIRTUAL MAPPING: ImageXpress folder flattening for {plate_path}"
+        )
 
         # Initialize mapping dict (PLATE-RELATIVE paths)
         workspace_mapping = {}
@@ -104,7 +108,9 @@ class ImageXpressHandler(MicroscopeHandler):
         self._flatten_timepoints(plate_path, filemanager, workspace_mapping, plate_path)
         self._flatten_zsteps(plate_path, filemanager, workspace_mapping, plate_path)
 
-        logger.info(f"Built {len(workspace_mapping)} virtual path mappings for ImageXpress")
+        logger.info(
+            f"Built {len(workspace_mapping)} virtual path mappings for ImageXpress"
+        )
 
         # Save virtual workspace mapping and all available metadata
         self.save_virtual_workspace_metadata(plate_path, workspace_mapping)
@@ -118,7 +124,7 @@ class ImageXpressHandler(MicroscopeHandler):
         fm: FileManager,
         mapping_dict: Dict[str, SourcePixelRef],
         plate_path: Path,
-        folder_components: Optional[Dict[str, int]] = None,
+        folder_components: tuple[tuple[AllComponents, int], ...] = (),
     ):
         """
         Process Z-step folders virtually by building plate-relative mapping dict.
@@ -136,14 +142,20 @@ class ImageXpressHandler(MicroscopeHandler):
             directory=directory,
             fm=fm,
             folder_pattern=zstep_pattern,
-            component_name='z_index',
+            component=AllComponents.Z_INDEX,
             folder_type="ZStep",
             mapping_dict=mapping_dict,
             plate_path=plate_path,
             folder_components=folder_components,
         )
 
-    def _flatten_timepoints(self, directory: Path, fm: FileManager, mapping_dict: Dict[str, SourcePixelRef], plate_path: Path):
+    def _flatten_timepoints(
+        self,
+        directory: Path,
+        fm: FileManager,
+        mapping_dict: Dict[str, SourcePixelRef],
+        plate_path: Path,
+    ):
         """
         Process TimePoint folders virtually by building plate-relative mapping dict.
 
@@ -157,8 +169,11 @@ class ImageXpressHandler(MicroscopeHandler):
 
         # First flatten Z-steps within each timepoint folder (if they exist)
         entries = fm.list_dir(directory, Backend.DISK.value)
-        subdirs = [Path(directory) / entry for entry in entries
-                   if (Path(directory) / entry).is_dir()]
+        subdirs = [
+            Path(directory) / entry
+            for entry in entries
+            if (Path(directory) / entry).is_dir()
+        ]
 
         for subdir in subdirs:
             match = timepoint_pattern.search(subdir.name)
@@ -168,7 +183,7 @@ class ImageXpressHandler(MicroscopeHandler):
                     fm,
                     mapping_dict,
                     plate_path,
-                    folder_components={'timepoint': int(match.group(1))},
+                    folder_components=((AllComponents.TIMEPOINT, int(match.group(1))),),
                 )
 
         # Then flatten timepoint folders themselves
@@ -176,16 +191,23 @@ class ImageXpressHandler(MicroscopeHandler):
             directory=directory,
             fm=fm,
             folder_pattern=timepoint_pattern,
-            component_name='timepoint',
+            component=AllComponents.TIMEPOINT,
             folder_type="TimePoint",
             mapping_dict=mapping_dict,
-            plate_path=plate_path
+            plate_path=plate_path,
         )
 
-    def _flatten_indexed_folders(self, directory: Path, fm: FileManager,
-                                 folder_pattern: re.Pattern, component_name: str,
-                                 folder_type: str, mapping_dict: Dict[str, SourcePixelRef], plate_path: Path,
-                                 folder_components: Optional[Dict[str, int]] = None):
+    def _flatten_indexed_folders(
+        self,
+        directory: Path,
+        fm: FileManager,
+        folder_pattern: re.Pattern,
+        component: AllComponents,
+        folder_type: str,
+        mapping_dict: Dict[str, SourcePixelRef],
+        plate_path: Path,
+        folder_components: tuple[tuple[AllComponents, int], ...] = (),
+    ):
         """
         Generic helper to flatten indexed folders virtually (TimePoint_N, ZStep_M, etc.).
 
@@ -202,8 +224,11 @@ class ImageXpressHandler(MicroscopeHandler):
         """
         # List all subdirectories
         entries = fm.list_dir(directory, Backend.DISK.value)
-        subdirs = [Path(directory) / entry for entry in entries
-                   if (Path(directory) / entry).is_dir()]
+        subdirs = [
+            Path(directory) / entry
+            for entry in entries
+            if (Path(directory) / entry).is_dir()
+        ]
 
         # Find indexed folders
         indexed_folders = []
@@ -219,7 +244,9 @@ class ImageXpressHandler(MicroscopeHandler):
         # Sort by index
         indexed_folders.sort(key=lambda x: x[0])
 
-        logger.info(f"Found {len(indexed_folders)} {folder_type} folders. Building virtual mapping...")
+        logger.info(
+            f"Found {len(indexed_folders)} {folder_type} folders. Building virtual mapping..."
+        )
 
         # Process each folder
         for index, folder in indexed_folders:
@@ -239,14 +266,10 @@ class ImageXpressHandler(MicroscopeHandler):
                 if not metadata:
                     continue
 
-                if folder_components:
-                    metadata.update(folder_components)
-
-                # Update the component
-                metadata[component_name] = index
-
                 # Reconstruct filename
-                new_filename = self.parser.construct_filename(**metadata)
+                new_filename = self.parser.construct_filename(
+                    metadata.with_values((*folder_components, (component, index)))
+                )
 
                 # Build PLATE-RELATIVE virtual flattened path (at plate root, not in subdirectory)
                 # This makes images appear at plate root in virtual workspace
@@ -263,8 +286,6 @@ class ImageXpressHandler(MicroscopeHandler):
                 logger.debug(f"  Mapped: {virtual_relative} → {real_relative}")
 
 
-
-
 class ImageXpressFilenameParser(FilenameParser):
     """
     Parser for ImageXpress microscope filenames.
@@ -277,7 +298,9 @@ class ImageXpressFilenameParser(FilenameParser):
     # Regular expression pattern for ImageXpress filenames
     # Supports: well, site, channel, z_index, timepoint
     # Also supports result files with suffixes like: A01_s001_w1_z001_t001_cell_counts_step7.json
-    _pattern = re.compile(r'(?:.*?_)?([A-Z]\d+)(?:_s(\d+|\{[^\}]*\}))?(?:_w(\d+|\{[^\}]*\}))?(?:_z(\d+|\{[^\}]*\}))?(?:_t(\d+|\{[^\}]*\}))?(?:_.*?)?(\.\w+)?$')
+    _pattern = re.compile(
+        r"(?:.*?_)?([A-Z]\d+)(?:_s(\d+|\{[^\}]*\}))?(?:_w(\d+|\{[^\}]*\}))?(?:_z(\d+|\{[^\}]*\}))?(?:_t(\d+|\{[^\}]*\}))?(?:_.*?)?(\.\w+)?$"
+    )
 
     def __init__(self, filemanager=None, pattern_format=None):
         """
@@ -332,21 +355,23 @@ class ImageXpressFilenameParser(FilenameParser):
             well, site_str, channel_str, z_str, t_str, ext = match.groups()
 
             # Missing MetaXpress site/z/timepoint tokens represent scalar axes.
-            parse_comp = lambda s: None if not s or '{' in s else int(s)
+            parse_comp = lambda s: None if not s or "{" in s else int(s)
             site = 1 if site_str is None else parse_comp(site_str)
             channel = parse_comp(channel_str)
             z_index = 1 if z_str is None else parse_comp(z_str)
             timepoint = 1 if t_str is None else parse_comp(t_str)
 
             # Use the parsed components in the result
-            result = FilenameParseResult({
-                'well': well,
-                'site': site,
-                'channel': channel,
-                'z_index': z_index,
-                'timepoint': timepoint,
-                'extension': ext if ext else '.tif'  # Default if somehow empty
-            })
+            result = FilenameParseResult(
+                (
+                    (AllComponents.WELL, well),
+                    (AllComponents.SITE, site),
+                    (AllComponents.CHANNEL, channel),
+                    (AllComponents.Z_INDEX, z_index),
+                    (AllComponents.TIMEPOINT, timepoint),
+                ),
+                extension=ext if ext else ".tif",
+            )
 
             return result
         else:
@@ -374,33 +399,26 @@ class ImageXpressFilenameParser(FilenameParser):
         col = component_value[1:]
 
         if not row.isalpha() or not col.isdigit():
-            raise ValueError(f"Invalid ImageXpress component format: {component_value}. Expected format like 'A01', 'C04'")
+            raise ValueError(
+                f"Invalid ImageXpress component format: {component_value}. Expected format like 'A01', 'C04'"
+            )
 
         return row, col
 
-    def construct_filename(self, extension: str = '.tif', site_padding: int = 3, z_padding: int = 3, timepoint_padding: int = 3, **component_values) -> str:
-        """
-        Construct an ImageXpress filename from components.
+    def construct_filename(
+        self,
+        components: FilenameParseResult,
+        site_padding: int = 3,
+        z_padding: int = 3,
+        timepoint_padding: int = 3,
+    ) -> str:
+        """Construct an ImageXpress filename from nominal component values."""
 
-        This method now uses **kwargs to accept any component values dynamically,
-        making it compatible with the generic parser interface.
-
-        Args:
-            extension (str, optional): File extension (default: '.tif')
-            site_padding (int, optional): Width to pad site numbers to (default: 3)
-            z_padding (int, optional): Width to pad Z-index numbers to (default: 3)
-            timepoint_padding (int, optional): Width to pad timepoint numbers to (default: 3)
-            **component_values: Component values as keyword arguments.
-                               Expected keys: well, site, channel, z_index, timepoint
-
-        Returns:
-            str: Constructed filename
-        """
-        well = require_filename_component(component_values, 'well')
-        site = require_filename_component(component_values, 'site')
-        channel = require_filename_component(component_values, 'channel')
-        z_index = optional_filename_component(component_values, 'z_index')
-        timepoint = optional_filename_component(component_values, 'timepoint')
+        well = components.required_value(AllComponents.WELL)
+        site = components.required_value(AllComponents.SITE)
+        channel = components.required_value(AllComponents.CHANNEL)
+        z_index = components.value_for(AllComponents.Z_INDEX)
+        timepoint = components.value_for(AllComponents.TIMEPOINT)
 
         parts = [well]
 
@@ -417,7 +435,7 @@ class ImageXpressFilenameParser(FilenameParser):
             parts.append(f"_t{format_filename_component(timepoint, timepoint_padding)}")
 
         base_name = "".join(parts)
-        return f"{base_name}{extension}"
+        return f"{base_name}{components.extension}"
 
 
 class ImageXpressMetadataHandler(DiskImageFileListingMetadataHandler):
@@ -441,29 +459,30 @@ class ImageXpressMetadataHandler(DiskImageFileListingMetadataHandler):
     def _read_htd_content(
         self,
         plate_path: Union[str, Path],
-        context: Optional['ProcessingContext'] = None,
     ) -> str:
-        htd_file = self.find_metadata_file(plate_path, context)
-        encodings_to_try = ('utf-8', 'windows-1252', 'latin-1', 'cp1252', 'iso-8859-1')
+        htd_file = self.find_metadata_file(plate_path)
+        encodings_to_try = ("utf-8", "windows-1252", "latin-1", "cp1252", "iso-8859-1")
 
         for encoding in encodings_to_try:
             try:
-                with open(htd_file, 'r', encoding=encoding) as f:
+                with open(htd_file, "r", encoding=encoding) as f:
                     return f.read()
             except UnicodeDecodeError:
                 logger.debug("Failed to read HTD file with encoding: %s", encoding)
 
-        raise ValueError(f"Could not read HTD file with any supported encoding: {encodings_to_try}")
+        raise ValueError(
+            f"Could not read HTD file with any supported encoding: {encodings_to_try}"
+        )
 
-    def find_metadata_file(self, plate_path: Union[str, Path],
-                           context: Optional['ProcessingContext'] = None) -> Path:
+    def find_metadata_file(
+        self,
+        plate_path: Union[str, Path],
+    ) -> Path:
         """
         Find the HTD file for an ImageXpress plate.
 
         Args:
             plate_path: Path to the plate folder
-            context: Optional ProcessingContext (not used)
-
         Returns:
             Path to the HTD file
 
@@ -483,14 +502,16 @@ class ImageXpressMetadataHandler(DiskImageFileListingMetadataHandler):
 
         # Use filemanager to list files
         # Pass the backend parameter as required by Clause 306 (Backend Positional Parameters)
-        htd_files = self.filemanager.list_files(plate_path, Backend.DISK.value, pattern="*.HTD")
+        htd_files = self.filemanager.list_files(
+            plate_path, Backend.DISK.value, pattern="*.HTD"
+        )
         if htd_files:
             for htd_file in htd_files:
                 # Convert to Path if it's a string
                 if isinstance(htd_file, str):
                     htd_file = Path(htd_file)
 
-                if 'plate' in htd_file.name.lower():
+                if "plate" in htd_file.name.lower():
                     return htd_file
 
             # Return the first file
@@ -500,17 +521,19 @@ class ImageXpressMetadataHandler(DiskImageFileListingMetadataHandler):
             return first_file
 
         # Fail loudly if no HTD file is found
-        raise MetadataNotFoundError("No HTD or metadata file found. ImageXpressHandler requires declared metadata.")
+        raise MetadataNotFoundError(
+            "No HTD or metadata file found. ImageXpressHandler requires declared metadata."
+        )
 
-    def get_grid_dimensions(self, plate_path: Union[str, Path],
-                           context: Optional['ProcessingContext'] = None) -> Tuple[int, int]:
+    def get_grid_dimensions(
+        self,
+        plate_path: Union[str, Path],
+    ) -> Tuple[int, int]:
         """
         Get grid dimensions for stitching from HTD file.
 
         Args:
             plate_path: Path to the plate folder
-            context: Optional ProcessingContext (not used)
-
         Returns:
             (grid_rows, grid_cols) - UPDATED: Now returns (rows, cols) for MIST compatibility
 
@@ -519,7 +542,7 @@ class ImageXpressMetadataHandler(DiskImageFileListingMetadataHandler):
             ValueError: If grid dimensions cannot be determined from metadata
         """
         try:
-            htd_content = self._read_htd_content(plate_path, context)
+            htd_content = self._read_htd_content(plate_path)
 
             # Extract grid dimensions - try multiple formats
             # First try the new format with "XSites" and "YSites"
@@ -528,38 +551,46 @@ class ImageXpressMetadataHandler(DiskImageFileListingMetadataHandler):
 
             # If not found, try the old format with SiteColumns and SiteRows
             if not (cols_match and rows_match):
-                cols_match = re.search(r'SiteColumns=(\d+)', htd_content)
-                rows_match = re.search(r'SiteRows=(\d+)', htd_content)
+                cols_match = re.search(r"SiteColumns=(\d+)", htd_content)
+                rows_match = re.search(r"SiteRows=(\d+)", htd_content)
 
             if cols_match and rows_match:
                 grid_size_x = int(cols_match.group(1))  # cols from metadata
                 grid_size_y = int(rows_match.group(1))  # rows from metadata
-                logger.info("Using grid dimensions from HTD file: %dx%d (cols x rows)", grid_size_x, grid_size_y)
+                logger.info(
+                    "Using grid dimensions from HTD file: %dx%d (cols x rows)",
+                    grid_size_x,
+                    grid_size_y,
+                )
                 # FIXED: Return (rows, cols) for MIST compatibility instead of (cols, rows)
                 return grid_size_y, grid_size_x
 
             # Fail loudly if grid dimensions cannot be determined
-            raise ValueError(f"Could not find grid dimensions in HTD metadata for {plate_path}")
+            raise ValueError(
+                f"Could not find grid dimensions in HTD metadata for {plate_path}"
+            )
         except Exception as e:
             # Fail loudly on any error
-            raise ValueError(f"Error parsing ImageXpress grid dimensions for {plate_path}: {e}")
+            raise ValueError(
+                f"Error parsing ImageXpress grid dimensions for {plate_path}: {e}"
+            )
 
-    def get_pixel_size(self, plate_path: Union[str, Path],
-                       context: Optional['ProcessingContext'] = None) -> float:
+    def get_pixel_size(
+        self,
+        plate_path: Union[str, Path],
+    ) -> float:
         """
         Get pixel size from ImageXpress HTD metadata.
 
         Args:
             plate_path: Path to the plate folder
-            context: Optional ProcessingContext (not used)
-
         Returns:
             Pixel size in micrometers
 
         Raises:
             ValueError: If pixel size cannot be determined from metadata
         """
-        htd_content = self._read_htd_content(plate_path, context)
+        htd_content = self._read_htd_content(plate_path)
         pixel_size_match = re.search(
             r'"(?:PixelSizeUM|PixelSizeMicrons|PixelSize)",\s*([0-9]+(?:\.[0-9]+)?)',
             htd_content,
@@ -567,84 +598,29 @@ class ImageXpressMetadataHandler(DiskImageFileListingMetadataHandler):
         if pixel_size_match:
             return float(pixel_size_match.group(1))
 
-        raise ValueError(f"ImageXpress HTD metadata does not declare pixel size for {plate_path}")
+        raise ValueError(
+            f"ImageXpress HTD metadata does not declare pixel size for {plate_path}"
+        )
 
-    def get_channel_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        """
-        Get channel key->name mapping from ImageXpress HTD file.
+    def component_value_set(
+        self,
+        plate_path: Union[str, Path],
+    ) -> MetadataComponentValueSet:
+        """Return the channel labels declared by ImageXpress HTD metadata."""
 
-        Args:
-            plate_path: Path to the plate folder (str or Path)
-
-        Returns:
-            Dict mapping channel IDs to channel names from metadata
-            Example: {"1": "TL-20", "2": "DAPI", "3": "FITC", "4": "CY5"}
-        """
         htd_content = self._read_htd_content(plate_path)
-        channel_mapping = {}
+        channel_mapping: dict[str, str | None] = {}
         wave_pattern = re.compile(r'"WaveName(\d+)", "([^"]*)"')
-        matches = wave_pattern.findall(htd_content)
-
-        for wave_num, wave_name in matches:
-            if wave_name:  # Only add non-empty wave names
+        for wave_num, wave_name in wave_pattern.findall(htd_content):
+            if wave_name:
                 channel_mapping[wave_num] = wave_name
-
-        if channel_mapping:
-            return channel_mapping
-        return None
-
-    def get_well_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        """
-        Get well key→name mapping from ImageXpress metadata.
-
-        Args:
-            plate_path: Path to the plate folder (str or Path)
-
-        Returns:
-            None - ImageXpress doesn't provide rich well names in metadata
-        """
-        return None
-
-    def get_site_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        """
-        Get site key→name mapping from ImageXpress metadata.
-
-        Args:
-            plate_path: Path to the plate folder (str or Path)
-
-        Returns:
-            None - ImageXpress doesn't provide rich site names in metadata
-        """
-        return None
-
-    def get_z_index_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        """
-        Get z_index key→name mapping from ImageXpress metadata.
-
-        Args:
-            plate_path: Path to the plate folder (str or Path)
-
-        Returns:
-            None - ImageXpress doesn't provide rich z_index names in metadata
-        """
-        return None
-
-    def get_timepoint_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        """
-        Get timepoint key→name mapping from ImageXpress metadata.
-
-        Args:
-            plate_path: Path to the plate folder (str or Path)
-
-        Returns:
-            None - ImageXpress doesn't provide rich timepoint names in metadata
-        """
-        return None
-
-
+        return MetadataComponentValueSet.from_partial(
+            ((AllComponents.CHANNEL, channel_mapping or None),)
+        )
 
 
 # Set metadata handler class after class definition for automatic registration
 from openhcs.microscopes.microscope_base import register_metadata_handler
+
 ImageXpressHandler._metadata_handler_class = ImageXpressMetadataHandler
 register_metadata_handler(ImageXpressHandler, ImageXpressMetadataHandler)

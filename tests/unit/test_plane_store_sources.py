@@ -167,10 +167,10 @@ def test_polystore_zarr_semantic_coordinates_round_trip_through_store_discovery(
 
     assert {
         (
-            candidate.declared_address.site,
-            candidate.declared_address.channel,
-            candidate.declared_address.z_index,
-            candidate.declared_address.timepoint,
+            candidate.declared_address.value_for(AllComponents.SITE),
+            candidate.declared_address.value_for(AllComponents.CHANNEL),
+            candidate.declared_address.value_for(AllComponents.Z_INDEX),
+            candidate.declared_address.value_for(AllComponents.TIMEPOINT),
         )
         for candidate in dataset.candidates
     } == {
@@ -199,7 +199,10 @@ def test_mixed_plane_stores_bind_and_load_through_virtual_workspace(
         Backend.DISK.value,
         Backend.OME_ZARR.value,
     }
-    assert {candidate.declared_address.well for candidate in dataset.candidates} == {
+    assert {
+        candidate.declared_address.value_for(AllComponents.WELL)
+        for candidate in dataset.candidates
+    } == {
         "A01",
         "mask.png",
         "plain.tif",
@@ -270,9 +273,7 @@ def test_saved_source_bindings_rebuild_canonical_store_projection(
     assert {
         projection.source_alias
         for path in initial_projection.relative_virtual_paths()
-        if (
-            projection := initial_projection.source_projections_by_virtual_path[path]
-        )
+        if (projection := initial_projection.source_projections_by_virtual_path[path])
     } == set(stores)
 
     edited_aliases = {"NGFF": "RawNGFF", "TIFF": "RawTIFF", "PNG": "Mask"}
@@ -284,19 +285,14 @@ def test_saved_source_bindings_rebuild_canonical_store_projection(
     )
     orchestrator.apply_pipeline_config(
         PipelineConfig(
-            source_bindings_config=LazySourceBindingsConfig.from_config(
-                edited_bindings
-            )
+            source_bindings_config=LazySourceBindingsConfig.from_config(edited_bindings)
         )
     )
 
     assert orchestrator.state is OrchestratorState.CREATED
     assert not orchestrator.is_initialized()
     assert orchestrator.microscope_handler is None
-    assert (
-        orchestrator.get_effective_config().source_bindings_config
-        == edited_bindings
-    )
+    assert orchestrator.get_effective_config().source_bindings_config == edited_bindings
 
     orchestrator.initialize()
 
@@ -308,17 +304,17 @@ def test_saved_source_bindings_rebuild_canonical_store_projection(
         for path in projection.relative_virtual_paths()
     )
     assert {record.source_alias for record in records} == set(edited_aliases.values())
-    assert {record.address.well for record in records} == {
+    assert {record.address.value_for(AllComponents.WELL) for record in records} == {
         "A01",
         "mask.png",
         "plain.tif",
     }
     assert {
         (
-            record.address.site,
-            record.address.channel,
-            record.address.z_index,
-            record.address.timepoint,
+            record.address.value_for(AllComponents.SITE),
+            record.address.value_for(AllComponents.CHANNEL),
+            record.address.value_for(AllComponents.Z_INDEX),
+            record.address.value_for(AllComponents.TIMEPOINT),
         )
         for record in records
     } == {("1", "1", "1", "1")}
@@ -359,15 +355,16 @@ def test_mixed_plane_stores_materialize_and_reopen_with_source_identity(
     orchestrator = PipelineOrchestrator(
         plate_path=tmp_path,
         pipeline_config=PipelineConfig(
-            source_bindings_config=LazySourceBindingsConfig.from_config(
-                source_bindings
-            )
+            source_bindings_config=LazySourceBindingsConfig.from_config(source_bindings)
         ),
     ).initialize()
     context = orchestrator.create_context(axis_id="A01")
     projection = orchestrator.source_workspace_projection()
     source_records = {
-        projection.source_projections_by_virtual_path[path].source_alias: (path, projection.source_projections_by_virtual_path[path])
+        projection.source_projections_by_virtual_path[path].source_alias: (
+            path,
+            projection.source_projections_by_virtual_path[path],
+        )
         for path in projection.relative_virtual_paths()
     }
 
@@ -383,7 +380,7 @@ def test_mixed_plane_stores_materialize_and_reopen_with_source_identity(
             Backend.ZARR.value,
             orchestrator.get_effective_config().zarr_config,
             context,
-            record.address.well,
+            record.address.value_for(AllComponents.WELL),
         )
         np.testing.assert_array_equal(payload, stores[alias][1])
 
@@ -401,8 +398,7 @@ def test_mixed_plane_stores_materialize_and_reopen_with_source_identity(
         for source_metadata in zarr_metadata["source_metadata"].values()
     } == set(stores)
     assert {
-        payload["backend"]
-        for payload in zarr_metadata["workspace_mapping"].values()
+        payload["backend"] for payload in zarr_metadata["workspace_mapping"].values()
     } == {Backend.ZARR.value}
 
     reopened = PipelineOrchestrator(plate_path=tmp_path).initialize()

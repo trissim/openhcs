@@ -23,10 +23,7 @@ def _disk_source_addresses(mapping: dict[str, object]) -> dict[str, str]:
         for virtual_path, payload in mapping.items()
     }
     assert {ref.backend for ref in refs.values()} == {"disk"}
-    return {
-        virtual_path: ref.backend_address
-        for virtual_path, ref in refs.items()
-    }
+    return {virtual_path: ref.backend_address for virtual_path, ref in refs.items()}
 
 
 def test_imagexpress_parser_accepts_plate_prefixed_metaxpress_names() -> None:
@@ -34,7 +31,8 @@ def test_imagexpress_parser_accepts_plate_prefixed_metaxpress_names() -> None:
 
     parsed = parser.parse_filename("plate_A01_s1_w2.tif")
 
-    assert parsed == {
+    assert parsed is not None
+    assert dict(parsed.wire_mapping()) == {
         "well": "A01",
         "site": 1,
         "channel": 2,
@@ -49,7 +47,8 @@ def test_imagexpress_parser_defaults_missing_metaxpress_site_to_one() -> None:
 
     parsed = parser.parse_filename("plate_A01_w2.tif")
 
-    assert parsed == {
+    assert parsed is not None
+    assert dict(parsed.wire_mapping()) == {
         "well": "A01",
         "site": 1,
         "channel": 2,
@@ -66,7 +65,9 @@ def test_synthetic_imagexpress_can_emit_bioformats_compatible_plate_prefix(
 
     IMAGE_XPRESS_PLATE_FACTORY.create(plate)
 
-    assert sorted(path.relative_to(plate).as_posix() for path in plate.rglob("*.tif")) == [
+    assert sorted(
+        path.relative_to(plate).as_posix() for path in plate.rglob("*.tif")
+    ) == [
         "TimePoint_1/ZStep_1/plate_A01_s1_w1.tif",
         "TimePoint_1/ZStep_1/plate_A01_s1_w2.tif",
         "TimePoint_1/ZStep_1/plate_A01_s2_w1.tif",
@@ -76,10 +77,7 @@ def test_synthetic_imagexpress_can_emit_bioformats_compatible_plate_prefix(
         "TimePoint_1/ZStep_2/plate_A01_s2_w1.tif",
         "TimePoint_1/ZStep_2/plate_A01_s2_w2.tif",
     ]
-    assert {
-        tifffile.imread(path).shape
-        for path in plate.rglob("*.tif")
-    } == {(32, 32)}
+    assert {tifffile.imread(path).shape for path in plate.rglob("*.tif")} == {(32, 32)}
 
 
 def test_synthetic_openhcs_zstack_uses_structured_source_refs(
@@ -102,9 +100,7 @@ def test_synthetic_openhcs_zstack_uses_structured_source_refs(
         generator.generate_dataset()
         generator.generate_openhcs_metadata(sub_dir="TimePoint_1")
 
-    metadata = json.loads(
-        (plate / "openhcs_metadata.json").read_text(encoding="utf-8")
-    )
+    metadata = json.loads((plate / "openhcs_metadata.json").read_text(encoding="utf-8"))
     mapping = metadata["subdirectories"]["TimePoint_1"]["workspace_mapping"]
 
     assert _disk_source_addresses(mapping) == {
@@ -131,9 +127,12 @@ def test_synthetic_openhcs_zstack_uses_structured_source_refs(
     virtual_paths = filemanager.list_image_files(input_dir, backend)
     assert len(virtual_paths) == 2
 
-    source_path = plate / mapping[Path(virtual_paths[0]).relative_to(plate).as_posix()][
-        "backend_address"
-    ]
+    source_path = (
+        plate
+        / mapping[Path(virtual_paths[0]).relative_to(plate).as_posix()][
+            "backend_address"
+        ]
+    )
     np.testing.assert_array_equal(
         filemanager.load(virtual_paths[0], backend),
         tifffile.imread(source_path),

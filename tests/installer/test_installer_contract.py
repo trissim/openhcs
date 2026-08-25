@@ -125,9 +125,18 @@ def test_intel_macos_dependencies_select_wheel_backed_release_lines() -> None:
     assert not requirements["opencv-python-headless"].specifier.contains("4.11.0.86")
 
 
-def test_pyimagej_install_surfaces_require_managed_java_constraint_api() -> None:
+def test_imagej_install_surfaces_activate_polystore_runtime_authority() -> None:
     project = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))["project"]
     extras = project["optional-dependencies"]
+    core_requirements = {
+        requirement.name: requirement
+        for requirement_text in project["dependencies"]
+        if (requirement := Requirement(requirement_text)).marker is None
+    }
+
+    polystore = core_requirements["polystore"]
+    assert polystore.specifier.contains("0.2.7")
+    assert not polystore.specifier.contains("0.2.6")
 
     for extra_name in ("fiji", "bioformats", "viz", "all"):
         parsed_requirements = [
@@ -136,9 +145,12 @@ def test_pyimagej_install_surfaces_require_managed_java_constraint_api() -> None
         requirements = {
             requirement.name: requirement for requirement in parsed_requirements
         }
-        scyjava = requirements["scyjava"]
-        assert scyjava.specifier.contains("1.12.0")
-        assert not scyjava.specifier.contains("1.11.0")
+        runtime_activation = requirements["polystore"]
+        assert runtime_activation.extras == {"bioformats"}
+        assert not runtime_activation.specifier
+        assert "pyimagej" not in requirements
+        assert "scyjava" not in requirements
+        assert "imglyb" not in requirements
 
 
 def test_install_profile_projects_release_requirement() -> None:

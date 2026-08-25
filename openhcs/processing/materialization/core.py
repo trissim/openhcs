@@ -31,6 +31,7 @@ from zmqruntime.viewer_protocol import ViewerWireField, ViewerWireValue
 from openhcs.constants.constants import AllComponents, VariableComponents
 from openhcs.core.artifacts import ArtifactMaterializationPayload
 from openhcs.core.component_set import ComponentSet
+from openhcs.core.components.parser_metaprogramming import FilenameParseResult
 from openhcs.core.image_file_serialization import ImageFileFormat
 from openhcs.core.registry_strategies import (
     AlwaysMatchesContextMixin,
@@ -589,8 +590,10 @@ class SourceComponentMetadataStemAuthority:
     def stem(self, metadata: SourceComponentMetadata) -> str:
         return Path(
             self.parser.construct_filename(
-                extension=self.required_extension(metadata),
-                **self.component_values(metadata),
+                self.parser.bind_component_values(
+                    self.component_values(metadata),
+                    extension=self.required_extension(metadata),
+                )
             )
         ).stem
 
@@ -870,7 +873,9 @@ class ParserBackedSourceStemAuthority(PathOnlySourceStemAuthority):
             return ()
 
         return tuple(
-            SourceComponentMetadataStemAuthority(self.parser).stem(parsed)
+            SourceComponentMetadataStemAuthority(self.parser).stem(
+                parsed.wire_mapping()
+            )
             for extension in self.path_parse_extensions(metadata)
             for parsed in (self.parser.parse_filename(f"{path_name}{extension}"),)
             if parsed is not None
@@ -894,19 +899,16 @@ class ParserBackedSourceStemAuthority(PathOnlySourceStemAuthority):
 
     @staticmethod
     def parsed_components_match_metadata(
-        parsed: Mapping[str, MaterializationValue],
+        parsed: FilenameParseResult,
         metadata: SourceComponentMetadata,
     ) -> bool:
-        component_items = tuple(
-            SourceComponentMetadataStemAuthority.component_values(parsed).items()
-        )
         return all(
-            key in metadata
+            component.value in metadata
             and ParserBackedSourceStemAuthority.component_values_match(
                 parsed_value,
-                metadata[key],
+                metadata[component.value],
             )
-            for key, parsed_value in component_items
+            for component, parsed_value in parsed.declared_values()
         )
 
     @staticmethod

@@ -64,7 +64,6 @@ from openhcs.runtime.zmq_execution_observation import (
 )
 from polystore.bioformats_java import BioFormatsJavaContext
 
-
 LIVE_ZMQ_ENV = "OPENHCS_RUN_SOURCE_STORE_ZMQ_ACCEPTANCE"
 REQUIRE_FORMAT_FIXTURES_ENV = "OPENHCS_REQUIRE_SOURCE_STORE_FORMAT_FIXTURES"
 DEFAULT_CZI_FIXTURE = Path(
@@ -319,17 +318,17 @@ def test_code_mode_and_zmq_wire_preserve_mixed_store_sources(
     records = tuple(record for _path, record in records_by_alias.values())
 
     assert set(records_by_alias) == set(stores)
-    assert {record.address.well for record in records} == {
+    assert {record.address.value_for(AllComponents.WELL) for record in records} == {
         "A01",
         "mask.png",
         "plain.tif",
     }
     assert {
         (
-            record.address.site,
-            record.address.channel,
-            record.address.z_index,
-            record.address.timepoint,
+            record.address.value_for(AllComponents.SITE),
+            record.address.value_for(AllComponents.CHANNEL),
+            record.address.value_for(AllComponents.Z_INDEX),
+            record.address.value_for(AllComponents.TIMEPOINT),
         )
         for record in records
     } == {("1", "1", "1", "1")}

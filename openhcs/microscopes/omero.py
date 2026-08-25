@@ -8,18 +8,24 @@ for OMERO microscopes using native OMERO metadata.
 import logging
 import re
 from pathlib import Path
-from typing import ClassVar, Dict, List, Optional, Tuple, Type, Union
+from typing import ClassVar
 
-from openhcs.constants.constants import Backend, Microscope
+from polystore import (
+    OMEROPlaneAddress,
+    OMEROWellAddress,
+)
 from polystore.exceptions import MetadataNotFoundError
 from polystore.filemanager import FileManager
+
+from openhcs.constants.constants import AllComponents, Backend, Microscope
 from openhcs.microscopes.microscope_base import (
     MicroscopeHandler,
     MicroscopeSourceSelectionRole,
 )
 from openhcs.microscopes.microscope_interfaces import (
-    FilenameParseResult,
     FilenameParser,
+    FilenameParseResult,
+    MetadataComponentValueSet,
     MetadataHandler,
 )
 
@@ -41,7 +47,7 @@ class OMEROMetadataHandler(MetadataHandler):
     def __init__(self, filemanager: FileManager):
         super().__init__()
         self.filemanager = filemanager
-        self._metadata_cache: Dict[int, Dict[str, Dict[int, str]]] = {}  # plate_id → metadata
+        self._metadata_cache: dict[int, MetadataComponentValueSet] = {}
 
     def _get_omero_conn(self):
         """
@@ -71,7 +77,7 @@ class OMEROMetadataHandler(MetadataHandler):
                 "Ensure OMERO backend is properly initialized with connection."
             ) from e
 
-    def _load_plate_metadata(self, plate_id: int) -> Dict[str, Dict[int, str]]:
+    def _load_plate_metadata(self, plate_id: int) -> MetadataComponentValueSet:
         """
         Load all metadata for a plate in one OMERO query (cached).
 
@@ -83,45 +89,60 @@ class OMEROMetadataHandler(MetadataHandler):
 
         # Get connection from backend registry
         conn = self._get_omero_conn()
-        
+
         plate = conn.getObject("Plate", plate_id)
         if not plate:
             raise ValueError(f"OMERO Plate not found: {plate_id}")
 
-        # Query OMERO once for all metadata
-        metadata = {}
-
         # Get metadata from all wells to ensure complete coverage
         # (different wells might have different dimensions)
-        all_channels = {}
+        all_channels: dict[str, str] = {}
+        all_wells: dict[str, str] = {}
         max_z = 0
         max_t = 0
 
         for well in plate.listChildren():
+            well_label = OMEROWellAddress(
+                row_index=well.getRow(),
+                column_index=well.getColumn(),
+            ).label
+            all_wells[well_label] = well_label
             well_sample = well.getWellSample(0)
             if well_sample:
                 image = well_sample.getImage()
 
                 # Collect channel names
                 for i, channel in enumerate(image.getChannels()):
-                    channel_idx = i + 1
-                    if channel_idx not in all_channels:
-                        all_channels[channel_idx] = channel.getLabel() or f"Channel {channel_idx}"
+                    channel_index = str(i + 1)
+                    if channel_index not in all_channels:
+                        all_channels[channel_index] = (
+                            channel.getLabel() or f"Channel {channel_index}"
+                        )
 
                 # Track max dimensions
                 max_z = max(max_z, image.getSizeZ())
                 max_t = max(max_t, image.getSizeT())
 
-        # Build metadata dict
-        metadata['channel'] = all_channels
-        metadata['z_index'] = {z + 1: f"Z{z + 1}" for z in range(max_z)}
-        metadata['timepoint'] = {t + 1: f"T{t + 1}" for t in range(max_t)}
+        metadata = MetadataComponentValueSet.from_partial(
+            (
+                (AllComponents.CHANNEL, all_channels),
+                (AllComponents.WELL, all_wells),
+                (
+                    AllComponents.Z_INDEX,
+                    {str(z + 1): f"Z{z + 1}" for z in range(max_z)},
+                ),
+                (
+                    AllComponents.TIMEPOINT,
+                    {str(t + 1): f"T{t + 1}" for t in range(max_t)},
+                ),
+            )
+        )
 
         # Cache it
         self._metadata_cache[plate_id] = metadata
         return metadata
 
-    def find_metadata_file(self, plate_path: Union[str, Path]) -> Path:
+    def find_metadata_file(self, plate_path: str | Path) -> Path:
         """
         OMERO doesn't use metadata files, but detects based on /omero/ path pattern.
 
@@ -130,13 +151,13 @@ class OMEROMetadataHandler(MetadataHandler):
         """
         plate_path = Path(plate_path)
         # OMERO plates use virtual paths like /omero/plate_123
-        if str(plate_path).startswith('/omero/plate_'):
+        if str(plate_path).startswith("/omero/plate_"):
             return plate_path
         raise MetadataNotFoundError(
             f"OMERO plate path must use /omero/plate_<id>, got {plate_path}"
         )
 
-    def _extract_plate_id(self, plate_path: Union[str, Path, int]) -> int:
+    def _extract_plate_id(self, plate_path: str | Path | int) -> int:
         """
         Extract plate_id from various path formats.
 
@@ -161,70 +182,24 @@ class OMEROMetadataHandler(MetadataHandler):
         path_str = str(Path(plate_path).name)  # Get just the filename part
 
         # Match 'plate_<id>' or 'plate_<id>_<suffix>'
-        match = re.match(r'plate_(\d+)', path_str)
+        match = re.match(r"plate_(\d+)", path_str)
         if not match:
-            raise ValueError(f"Invalid OMERO path format: {plate_path}. Expected /omero/plate_<id> or /omero/plate_<id>_<suffix>")
+            raise ValueError(
+                f"Invalid OMERO path format: {plate_path}. Expected /omero/plate_<id> or /omero/plate_<id>_<suffix>"
+            )
 
         return int(match.group(1))
 
-    def get_channel_values(self, plate_path: Union[str, Path, int]) -> Dict[int, str]:
-        """Get channel metadata (cached)."""
+    def component_value_set(
+        self,
+        plate_path: str | Path | int,
+    ) -> MetadataComponentValueSet:
+        """Return one cached nominal metadata projection for the OMERO plate."""
+
         plate_id = self._extract_plate_id(plate_path)
-        metadata = self._load_plate_metadata(plate_id)
-        return metadata['channel']
+        return self._load_plate_metadata(plate_id)
 
-    def get_z_index_values(self, plate_path: Union[str, Path, int]) -> Dict[int, str]:
-        """Get Z-index metadata (cached)."""
-        plate_id = self._extract_plate_id(plate_path)
-        metadata = self._load_plate_metadata(plate_id)
-        return metadata['z_index']
-
-    def get_timepoint_values(self, plate_path: Union[str, Path, int]) -> Dict[int, str]:
-        """Get timepoint metadata (cached)."""
-        plate_id = self._extract_plate_id(plate_path)
-        metadata = self._load_plate_metadata(plate_id)
-        return metadata['timepoint']
-
-    # Other component methods return empty dicts (not applicable for OMERO)
-    def get_site_values(self, plate_path: Union[str, Path, int]) -> Dict[int, str]:
-        return {}
-
-    def get_well_values(self, plate_path: Union[str, Path, int]) -> Dict[str, str]:
-        """
-        Get well metadata (cached).
-        
-        Raises if the OMERO plate cannot be loaded.
-        """
-        plate_id = self._extract_plate_id(plate_path)
-        conn = self._get_omero_conn()
-        
-        plate = conn.getObject("Plate", plate_id)
-        if not plate:
-            raise ValueError(f"OMERO Plate not found: {plate_id}")
-        
-        # Extract well IDs from the plate
-        well_values = {}
-        for well in plate.listChildren():
-            # Get well label (e.g., "A01", "B02")
-            well_label = f"{chr(ord('A') + well.getRow())}{well.getColumn() + 1:02d}"
-            well_values[well_label] = well_label
-        
-        return well_values
-
-    def parse_metadata(self, plate_path: Union[str, Path, int]) -> Dict[str, Dict[str, Optional[str]]]:
-        """
-        Parse all metadata for OMERO plate.
-        
-        OMERO doesn't use metadata files - it queries OMERO API directly.
-        This implementation returns metadata for all components that OMERO supports.
-        
-        Raises if the OMERO plate cannot be loaded.
-        """
-        # Use the base class's parse_metadata method which dynamically
-        # calls the appropriate get_*_values methods
-        return super().parse_metadata(plate_path)
-
-    def get_grid_dimensions(self, plate_path: Union[str, Path, int]) -> Tuple[int, int]:
+    def get_grid_dimensions(self, plate_path: str | Path | int) -> tuple[int, int]:
         """
         Extract grid dimensions from OMERO plate metadata.
 
@@ -248,7 +223,7 @@ class OMEROMetadataHandler(MetadataHandler):
                 continue
             for nv in ann.getMapValue():
                 if nv.name == self.GRID_DIMENSIONS_METADATA_KEY:
-                    rows, cols = map(int, nv.value.split(','))
+                    rows, cols = map(int, nv.value.split(","))
                     logger.info(
                         "Found grid_dimensions (%s, %s) in OMERO metadata",
                         rows,
@@ -261,7 +236,7 @@ class OMEROMetadataHandler(MetadataHandler):
             f"{self.GRID_DIMENSIONS_METADATA_KEY}."
         )
 
-    def get_pixel_size(self, plate_path: Union[str, Path, int]) -> float:
+    def get_pixel_size(self, plate_path: str | Path | int) -> float:
         """
         Get pixel size from OMERO image metadata.
 
@@ -286,7 +261,9 @@ class OMEROMetadataHandler(MetadataHandler):
 
         raise ValueError(f"OMERO Plate {plate_id} does not declare pixel size.")
 
-    def get_image_files(self, plate_path: Union[str, Path, int], all_subdirs: bool = False) -> List[str]:
+    def get_image_files(
+        self, plate_path: str | Path | int, all_subdirs: bool = False
+    ) -> list[str]:
         """
         Get list of virtual filenames from OMERO backend.
 
@@ -296,7 +273,9 @@ class OMEROMetadataHandler(MetadataHandler):
             plate_path: Path to the plate folder or plate ID
             all_subdirs: Unused for OMERO (no subdirectories), kept for interface compatibility
         """
-        plate_id = plate_path if isinstance(plate_path, int) else int(Path(plate_path).name)
+        plate_id = (
+            plate_path if isinstance(plate_path, int) else int(Path(plate_path).name)
+        )
 
         # Get OMERO backend from registry
         omero_backend = self.filemanager.registry[Backend.OMERO_LOCAL.value]
@@ -315,52 +294,42 @@ class OMEROFilenameParser(FilenameParser):
     OMERO backend generates filenames in standard format with ALL components:
     A01_s001_w1_z001_t001.tif
 
-    This is compatible with ImageXpress format, but OMERO always includes
-    all components (well, site, channel, z_index, timepoint) since it knows
-    the full plate structure from OMERO metadata.
-
-    For now, this just uses the ImageXpress pattern since they're compatible.
-    In the future, this could enforce that all components are present.
+    PolyStore owns the virtual address declaration. This parser projects that
+    declaration onto OpenHCS component metadata without copying its grammar.
     """
-
-    # Use ImageXpress pattern - it's compatible
-    from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
-    _pattern = ImageXpressFilenameParser._pattern
 
     @classmethod
     def can_parse(cls, filename: str) -> bool:
         """Check if this parser can parse the given filename."""
-        return cls._pattern.match(filename) is not None
+        return OMEROPlaneAddress.from_filename(filename) is not None
 
-    def parse_filename(self, filename: str) -> Optional[FilenameParseResult]:
-        """Parse OMERO virtual filename using ImageXpress pattern."""
-        from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
-        parser = ImageXpressFilenameParser()
-        return parser.parse_filename(filename)
+    def parse_filename(self, filename: str) -> FilenameParseResult | None:
+        """Project one PolyStore OMERO address onto OpenHCS components."""
 
-    def construct_filename(self, well, site, channel, z_index, timepoint, extension='.tif', **kwargs) -> str:
+        address = OMEROPlaneAddress.from_filename(filename)
+        if address is None:
+            return None
+        return FilenameParseResult.from_projection(
+            address.declared_values(),
+            extension=address.extension,
+        )
+
+    def construct_filename(self, components: FilenameParseResult) -> str:
         """
         Construct OMERO virtual filename.
 
         OMERO always generates complete filenames with all components.
         """
-        from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
-        parser = ImageXpressFilenameParser()
-        return parser.construct_filename(
-            well=well,
-            site=site,
-            channel=channel,
-            z_index=z_index,
-            timepoint=timepoint,
-            extension=extension,
-            **kwargs
-        )
+        return OMEROPlaneAddress.from_member_projection(
+            components.declared_values(),
+            extension=components.extension,
+        ).filename()
 
-    def extract_component_coordinates(self, component_value: str) -> Tuple[str, str]:
+    def extract_component_coordinates(self, component_value: str) -> tuple[str, str]:
         """Extract coordinates from well identifier (e.g., 'A01' → ('A', '01'))."""
-        from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
-        parser = ImageXpressFilenameParser()
-        return parser.extract_component_coordinates(component_value)
+
+        well = OMEROWellAddress.from_label(component_value)
+        return well.row_label, f"{well.column_index + 1:02d}"
 
 
 class OMEROHandler(MicroscopeHandler):
@@ -385,7 +354,7 @@ class OMEROHandler(MicroscopeHandler):
             "not evidence that OMERO owns a folder."
         )
 
-    def __init__(self, filemanager: FileManager, pattern_format: Optional[str] = None):
+    def __init__(self, filemanager: FileManager, pattern_format: str | None = None):
         """
         Initialize OMERO handler.
 
@@ -413,16 +382,18 @@ class OMEROHandler(MicroscopeHandler):
         return self._microscope_type
 
     @property
-    def metadata_handler_class(self) -> Type[MetadataHandler]:
+    def metadata_handler_class(self) -> type[MetadataHandler]:
         """Metadata handler class (for interface enforcement only)."""
         return OMEROMetadataHandler
 
     @property
-    def compatible_backends(self) -> List[Backend]:
+    def compatible_backends(self) -> list[Backend]:
         """OMERO is only compatible with OMERO_LOCAL backend."""
         return [Backend.OMERO_LOCAL]
 
-    def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager) -> Path:
+    def _prepare_workspace(
+        self, workspace_path: Path, filemanager: FileManager
+    ) -> Path:
         """
         OMERO doesn't need workspace preparation - it's a virtual filesystem.
 
@@ -435,7 +406,9 @@ class OMEROHandler(MicroscopeHandler):
         """
         return workspace_path
 
-    def initialize_workspace(self, plate_path: Union[int, Path], filemanager: FileManager) -> Path:
+    def initialize_workspace(
+        self, plate_path: int | Path, filemanager: FileManager
+    ) -> Path:
         """
         OMERO creates a virtual path for the plate.
 
@@ -461,6 +434,7 @@ class OMEROHandler(MicroscopeHandler):
 
 
 # Set metadata handler class after class definition for automatic registration
-from openhcs.microscopes.microscope_base import register_metadata_handler  # noqa: E402
+from openhcs.microscopes.microscope_base import register_metadata_handler
+
 OMEROHandler._metadata_handler_class = OMEROMetadataHandler
 register_metadata_handler(OMEROHandler, OMEROMetadataHandler)

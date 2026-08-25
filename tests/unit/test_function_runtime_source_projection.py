@@ -221,7 +221,7 @@ def test_workspace_source_files_select_exact_projection_roles(
     plate_path = tmp_path / "plate"
     canonical_path = "A01_s001_w1_z001_t001.tif"
     artifact_path = f"_source/Illumination/{canonical_path}"
-    address = OpenHCSPlaneAddress(
+    address = OpenHCSPlaneAddress.from_values(
         well="A01",
         site="1",
         channel="1",
@@ -271,7 +271,7 @@ def test_workspace_source_projection_carries_exact_aliases_into_stack_provenance
     projection_set = SourceProjectionSet(
         tuple(
             SourcePlaneProjection(
-                address=OpenHCSPlaneAddress(
+                address=OpenHCSPlaneAddress.from_values(
                     well="A01",
                     site="1",
                     channel=str(channel),
@@ -377,7 +377,7 @@ def test_workspace_source_loading_preserves_declared_tiff_intensity_scale(
     )
     virtual_path = "A01_s001_w1_z001_t001.tif"
     source_plane = SourcePlaneProjection(
-        address=OpenHCSPlaneAddress(
+        address=OpenHCSPlaneAddress.from_values(
             well="A01",
             site="1",
             channel="1",
@@ -3388,7 +3388,7 @@ def test_alias_only_workspace_filter_excludes_unselected_source_and_orders_stack
     )
     source_planes = tuple(
         SourcePlaneProjection(
-            address=OpenHCSPlaneAddress(
+            address=OpenHCSPlaneAddress.from_values(
                 well="R04C09",
                 site="11",
                 channel=channel,
@@ -3475,7 +3475,7 @@ def test_unbound_workspace_source_keeps_filename_component_provenance(
         source_metadata_by_path={virtual_path: source_metadata},
         source_projections_by_virtual_path={
             virtual_path: SourcePlaneProjection(
-                address=OpenHCSPlaneAddress(
+                address=OpenHCSPlaneAddress.from_values(
                     well="A01",
                     site="2",
                     channel="1",
@@ -3614,7 +3614,7 @@ def test_producer_anchored_pipeline_start_paths_use_exact_source_projection_bund
     )
     source_planes = tuple(
         SourcePlaneProjection(
-            address=OpenHCSPlaneAddress(
+            address=OpenHCSPlaneAddress.from_values(
                 well="A01",
                 site="1",
                 channel=str(channel),
@@ -4985,7 +4985,9 @@ def test_declared_main_flow_output_context_qualifies_output_filename(
 
     assert red_path.name == "A01_s001_w1_z001_t001_CorrRed.jpg"
     assert green_path.name == "A01_s001_w1_z001_t001_CorrGreen.jpg"
-    assert SourceSchemaFilenameParser().parse_filename(red_path.name) == {
+    parsed = SourceSchemaFilenameParser().parse_filename(red_path.name)
+    assert parsed is not None
+    assert dict(parsed.wire_mapping()) == {
         "well": "A01",
         "site": 1,
         "channel": 1,

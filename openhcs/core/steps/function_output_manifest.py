@@ -22,8 +22,11 @@ from openhcs.core.runtime_image_values import (
 )
 
 from openhcs.core.step_dependencies import StepInputDependencyKind
-from openhcs.core.steps.function_output_identity import FunctionOutputIdentity
-from openhcs.core.steps.function_output_identity import FunctionOutputPathAuthority
+from openhcs.core.steps.function_output_identity import (
+    FunctionOutputComponentIdentityAuthority,
+    FunctionOutputIdentity,
+    FunctionOutputPathAuthority,
+)
 from openhcs.microscopes.microscope_interfaces import FilenameParser
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 
@@ -227,14 +230,14 @@ class ProducedOutputSemantics(FunctionOutputIdentity):
         path = Path(path)
         if output_context is None:
             output_context = AlignedImageSliceContext.anonymous_main_flow()
-        parsed = parser.parse_filename(path.name) or {}
-        extension = parsed.pop("extension", path.suffix) or None
+        parsed = parser.parse_filename(path.name)
+        extension = parsed.extension if parsed is not None else path.suffix or None
         identity = FunctionOutputIdentity(
-            component_values={
-                str(key): value
-                for key, value in parsed.items()
-                if isinstance(value, (str, int))
-            },
+            component_values=(
+                FunctionOutputComponentIdentityAuthority.from_parsed(parsed)
+                if parsed is not None
+                else {}
+            ),
             extension=extension,
             source="existing main-flow path",
         )

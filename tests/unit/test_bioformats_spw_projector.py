@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from openhcs.constants.constants import AllComponents
 from openhcs.core.source_projection import OpenHCSPlaneAddress
 from openhcs.microscopes.bioformats_adapter import (
     BioFormatsDatasetAmbiguityError,
@@ -38,9 +39,7 @@ def _image(
             planes=tuple(
                 BioFormatsPlane(c=channel, z=1, t=timepoint, index=index)
                 for index, (timepoint, channel) in enumerate(
-                    (t, c)
-                    for t in range(1, size_t + 1)
-                    for c in range(1, size_c + 1)
+                    (t, c) for t in range(1, size_t + 1) for c in range(1, size_c + 1)
                 )
             ),
         ),
@@ -80,10 +79,10 @@ def test_store_metadata_emits_exact_plate_planes(tmp_path: Path) -> None:
 
     assert dataset.identity.value == "Plate:0"
     assert [candidate.declared_address for candidate in dataset.candidates] == [
-        OpenHCSPlaneAddress("A02", "3", "1", "1", "1"),
-        OpenHCSPlaneAddress("A02", "3", "2", "1", "1"),
-        OpenHCSPlaneAddress("A02", "3", "1", "1", "2"),
-        OpenHCSPlaneAddress("A02", "3", "2", "1", "2"),
+        OpenHCSPlaneAddress.from_values("A02", "3", "1", "1", "1"),
+        OpenHCSPlaneAddress.from_values("A02", "3", "2", "1", "1"),
+        OpenHCSPlaneAddress.from_values("A02", "3", "1", "1", "2"),
+        OpenHCSPlaneAddress.from_values("A02", "3", "2", "1", "2"),
     ]
 
 
@@ -97,11 +96,17 @@ def test_nonplate_images_map_to_distinct_well_samples(tmp_path: Path) -> None:
         ),
     ).source_dataset()
 
-    assert [candidate.declared_address.well for candidate in dataset.candidates] == [
+    assert [
+        candidate.declared_address.value_for(AllComponents.WELL)
+        for candidate in dataset.candidates
+    ] == [
         "Image%3Asample-a.npy",
         "Image%3Asample-b.npy",
     ]
-    assert [candidate.declared_address.site for candidate in dataset.candidates] == [
+    assert [
+        candidate.declared_address.value_for(AllComponents.SITE)
+        for candidate in dataset.candidates
+    ] == [
         "1",
         "2",
     ]
@@ -120,15 +125,14 @@ def test_one_nonplate_czi_maps_many_scenes_to_exact_series_sites(
 
     assert dataset.identity.value == tmp_path.resolve().as_uri()
     assert [candidate.declared_address for candidate in dataset.candidates] == [
-        OpenHCSPlaneAddress("many-scenes.czi", "1", "1", "1", "1"),
-        OpenHCSPlaneAddress("many-scenes.czi", "4", "1", "1", "1"),
+        OpenHCSPlaneAddress.from_values("many-scenes.czi", "1", "1", "1", "1"),
+        OpenHCSPlaneAddress.from_values("many-scenes.czi", "4", "1", "1", "1"),
     ]
     assert {
         candidate.store_identity.container_key for candidate in dataset.candidates
     } == {((tmp_path / "many-scenes.czi").resolve(),)}
     assert {
-        candidate.store_identity.sample_group_id
-        for candidate in dataset.candidates
+        candidate.store_identity.sample_group_id for candidate in dataset.candidates
     } == {"Image:scene-a", "Image:scene-b"}
 
 
@@ -155,9 +159,7 @@ def test_one_plate_czi_preserves_many_wells_and_sparse_sample_indexes(
                         well_id="Well:B02",
                         row=1,
                         column=1,
-                        samples=(
-                            BioFormatsWellSample("Sample:9", "Image:9", 9),
-                        ),
+                        samples=(BioFormatsWellSample("Sample:9", "Image:9", 9),),
                     ),
                 ),
             ),
@@ -171,13 +173,12 @@ def test_one_plate_czi_preserves_many_wells_and_sparse_sample_indexes(
 
     assert dataset.identity.value == "Plate:many-samples"
     assert [candidate.declared_address for candidate in dataset.candidates] == [
-        OpenHCSPlaneAddress("A01", "1", "1", "1", "1"),
-        OpenHCSPlaneAddress("A01", "5", "1", "1", "1"),
-        OpenHCSPlaneAddress("B02", "10", "1", "1", "1"),
+        OpenHCSPlaneAddress.from_values("A01", "1", "1", "1", "1"),
+        OpenHCSPlaneAddress.from_values("A01", "5", "1", "1", "1"),
+        OpenHCSPlaneAddress.from_values("B02", "10", "1", "1", "1"),
     ]
     assert {
-        candidate.store_identity.sample_group_id
-        for candidate in dataset.candidates
+        candidate.store_identity.sample_group_id for candidate in dataset.candidates
     } == {"Sample:0", "Sample:4", "Sample:9"}
 
 

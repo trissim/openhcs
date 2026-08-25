@@ -5,32 +5,29 @@ This module contains fixtures that are used across multiple integration tests.
 These fixtures were extracted from test_pipeline_orchestrator.py to avoid circular imports.
 """
 
-import shutil
-import pytest
 import io
 import os
-from contextlib import redirect_stdout, redirect_stderr
+import shutil
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-import numpy as np
-from typing import List, Union
 
-from openhcs.core.orchestrator import PipelineOrchestrator
+import pytest
+
+# from openhcs.core.utils import stack
 from openhcs.core.config import (
     GlobalPipelineConfig,
-    VFSConfig,
     MaterializationBackend,
-    ZarrConfig,
     PathPlanningConfig,
+    VFSConfig,
+    ZarrConfig,
 )
+from openhcs.core.orchestrator import PipelineOrchestrator
 
 # from openhcs.core.config import StitcherConfig, PipelineConfig
 # from openhcs.core.step_base import Step
 # from openhcs.core.step_registry import PositionGenerationStep, ImageStitchingStep, NormStep, CompositeStep
 # from openhcs.backends.position_generator.ashlar_backend import AshlarPositionGeneratorBackend as IP
 from openhcs.demo.synthetic_data import SyntheticMicroscopyGenerator
-
-# from openhcs.core.utils import stack
-from polystore.filemanager import FileManager
 
 # Using a simple list for image extensions
 DEFAULT_IMAGE_EXTENSIONS = [".tif", ".tiff", ".png", ".jpg", ".jpeg"]
@@ -378,9 +375,9 @@ def plate_dir(test_function_dir, microscope_config, test_params, data_type_confi
     if microscope_config.get("is_virtual") and microscope_config.get(
         "requires_connection"
     ):
-        from openhcs.runtime.omero_instance_manager import OMEROInstanceManager
         import tempfile
-        from pathlib import Path
+
+        from openhcs.runtime.omero_instance_manager import OMEROInstanceManager
 
         # Connect to OMERO (automatically starts docker-compose if needed)
         omero_manager = OMEROInstanceManager()
@@ -425,7 +422,6 @@ def plate_dir(test_function_dir, microscope_config, test_params, data_type_confi
                 omero_manager.conn,
                 tmpdir,
                 plate_name=f"Test_{data_type_config['name']}",
-                microscope_format=generator_format,  # Use ImageXpress format
                 grid_dimensions=test_params.get(
                     "grid_size", (3, 3)
                 ),  # Pass grid dimensions
@@ -490,12 +486,10 @@ def track_thread_activity(func):
 
 def clear_thread_activity():
     """Mock function for clearing thread activity."""
-    pass
 
 
 def print_thread_activity_report():
     """Mock function for printing thread activity report."""
-    pass
 
 
 @pytest.fixture
@@ -586,8 +580,8 @@ def dapi_process(stack):
 
 
 def find_image_files(
-    directory: Union[str, Path], pattern: str = "*", recursive: bool = True
-) -> List[Path]:
+    directory: str | Path, pattern: str = "*", recursive: bool = True
+) -> list[Path]:
     """
     Find all image files in a directory matching a pattern using breadth-first traversal.
 
@@ -599,8 +593,8 @@ def find_image_files(
     Returns:
         List of Path objects for image files sorted by depth (shallower first)
     """
-    from collections import deque
     import fnmatch
+    from collections import deque
 
     directory = Path(directory)
     image_files = []
@@ -614,13 +608,13 @@ def find_image_files(
 
             try:
                 for entry in current_dir.iterdir():
-                    if entry.is_file():
-                        # Check if file matches pattern and has image extension
-                        if fnmatch.fnmatch(entry.name, pattern):
-                            if entry.suffix.lower() in [
-                                ext.lower() for ext in DEFAULT_IMAGE_EXTENSIONS
-                            ]:
-                                image_files.append((entry, depth))
+                    if (
+                        entry.is_file()
+                        and fnmatch.fnmatch(entry.name, pattern)
+                        and entry.suffix.lower()
+                        in {ext.lower() for ext in DEFAULT_IMAGE_EXTENSIONS}
+                    ):
+                        image_files.append((entry, depth))
                     elif entry.is_dir():
                         # Add subdirectory to queue for later processing
                         dirs_to_search.append((entry, depth + 1))

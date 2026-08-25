@@ -11,7 +11,6 @@ from scipy.io import savemat
 from openhcs.constants.constants import Backend
 from openhcs.core.artifacts import ObjectLabelsArtifactType
 from openhcs.core.compiled_step_plan import CompiledStepPlan
-from openhcs.core.components.parser_metaprogramming import FilenameParseResult
 from openhcs.core.source_binding_selection import (
     PipelineStartSourceUniverseRequest,
     SourceFileUniverse,
@@ -72,18 +71,13 @@ def test_get_all_image_paths_contextualizes_relative_backend_listings() -> None:
                 return listed_address
             return f"{directory}/{listed_address}"
 
-    class WellParser:
-        @staticmethod
-        def parse_filename(filename: str):
-            return FilenameParseResult({"well": filename[:3]})
-
     filemanager = ListedPathFileManager()
     paths = get_all_image_paths(
         "/virtual/plate_1",
         "relative_backend",
         "A01",
         filemanager,
-        SimpleNamespace(parser=WellParser()),
+        SimpleNamespace(parser=SourceSchemaFilenameParser()),
     )
 
     assert paths == [

@@ -8,7 +8,7 @@ including filename parsing and metadata handling.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Hashable
+from collections.abc import Hashable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Dict, Mapping, Optional, TYPE_CHECKING, Tuple, Union
@@ -17,6 +17,7 @@ from openhcs.core.components.parser_metaprogramming import (
     FilenameParseResult,
     GenericFilenameParser,
 )
+from openhcs.core.components.component_values import OpenHCSComponentValues
 from metaclass_registry import AutoRegisterMeta
 from polystore.streaming.viewer_transport import (
     ViewerFilenameParserABC,
@@ -30,37 +31,94 @@ if TYPE_CHECKING:
     from openhcs.microscopes.openhcs import OpenHCSMetadata
 
 
-@dataclass(frozen=True)
-class MetadataComponentValueSet:
-    """Named component metadata projection for display and export surfaces."""
+@dataclass(frozen=True, slots=True, init=False, eq=False)
+class MetadataComponentValues(Mapping[str, str | None]):
+    """Immutable display labels for the values of one image component."""
 
-    channels: Optional[Dict[str, Optional[str]]]
-    wells: Optional[Dict[str, Optional[str]]]
-    sites: Optional[Dict[str, Optional[str]]]
-    z_indexes: Optional[Dict[str, Optional[str]]]
-    timepoints: Optional[Dict[str, Optional[str]]]
+    _entries: tuple[tuple[str, str | None], ...]
+
+    def __init__(self, values: Mapping[object, object | None]) -> None:
+        object.__setattr__(
+            self,
+            "_entries",
+            tuple(
+                (
+                    str(key),
+                    None if label is None else str(label),
+                )
+                for key, label in values.items()
+            ),
+        )
+
+    def __getitem__(self, key: str) -> str | None:
+        for declared_key, label in self._entries:
+            if declared_key == key:
+                return label
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return (key for key, _ in self._entries)
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Mapping):
+            return NotImplemented
+        return dict(self.items()) == dict(other.items())
+
+
+MetadataComponentValuesInput = Mapping[object, object | None]
+
+
+class MetadataComponentValueSet:
+    """Complete immutable metadata keyed by canonical component declarations."""
+
+    __slots__ = ("_component_values",)
+
+    def __init__(
+        self,
+        component_values: Iterable[
+            tuple[AllComponents, MetadataComponentValuesInput | None]
+        ],
+    ) -> None:
+        self._component_values = OpenHCSComponentValues(
+            (
+                (
+                    component,
+                    None if values is None else MetadataComponentValues(values),
+                )
+                for component, values in component_values
+            )
+        )
+
+    @classmethod
+    def from_partial(
+        cls,
+        component_values: Iterable[
+            tuple[AllComponents, MetadataComponentValuesInput | None]
+        ],
+    ) -> "MetadataComponentValueSet":
+        """Fill undeclared metadata axes with an explicit unavailable value."""
+
+        partial = OpenHCSComponentValues.from_partial(
+            component_values,
+            missing_value=None,
+        )
+        return cls(partial.declared_values())
 
     def component_values(
         self,
-    ) -> tuple[tuple[AllComponents, Optional[Dict[str, Optional[str]]]], ...]:
+    ) -> tuple[tuple[AllComponents, MetadataComponentValues | None], ...]:
         """Return component metadata in the order declared by OpenHCS axes."""
-        return (
-            (AllComponents.CHANNEL, self.channels),
-            (AllComponents.WELL, self.wells),
-            (AllComponents.SITE, self.sites),
-            (AllComponents.Z_INDEX, self.z_indexes),
-            (AllComponents.TIMEPOINT, self.timepoints),
-        )
+        return self._component_values.declared_values()
 
     def values_for(
         self,
         component: AllComponents,
-    ) -> Optional[Dict[str, Optional[str]]]:
+    ) -> MetadataComponentValues | None:
         """Return metadata values for one OpenHCS component declaration."""
-        for declared_component, values in self.component_values():
-            if declared_component == component:
-                return values
-        raise ValueError(f"Unsupported metadata component {component.value!r}.")
+        return self._component_values.value_for(component)
 
 
 @dataclass(frozen=True)
@@ -199,6 +257,7 @@ def list_relative_disk_image_files(
             relative_paths.append(path.as_posix())
     return sorted(relative_paths)
 
+
 class FilenameParser(
     ViewerFilenameParserABC,
     GenericFilenameParser,
@@ -213,13 +272,13 @@ class FilenameParser(
     """
 
     # Registry configuration for AutoRegisterMeta
-    __registry_key__ = '__name__'  # Use class name as registration key
-    __registry_name__ = 'filename parser'  # Human-readable name for logging
+    __registry_key__ = "__name__"  # Use class name as registration key
+    __registry_name__ = "filename parser"  # Human-readable name for logging
 
     def __init__(self):
         """Initialize the parser with AllComponents enum."""
         self.pattern_format: str | None = None
-        super().__init__(AllComponents)
+        super().__init__()
 
     def semantic_identity(self) -> tuple[Hashable, ...]:
         """Return the parser semantics that affect filename parsing."""
@@ -253,8 +312,7 @@ class FilenameParser(
             filename (str): Filename to parse
 
         Returns:
-            dict or None: Dictionary with extracted components or None if parsing fails.
-            The dictionary should contain keys matching VariableComponents enum values plus 'extension'.
+            A complete nominal component result, or ``None`` when parsing fails.
         """
         pass
 
@@ -275,25 +333,8 @@ class FilenameParser(
         pass
 
     @abstractmethod
-    def construct_filename(self, extension: str = '.tif', **component_values) -> str:
-        """
-        Construct a filename from component values.
-
-        This method now uses **kwargs to accept any component values dynamically,
-        making it truly generic and adaptable to any component configuration.
-
-        Args:
-            extension (str, optional): File extension (default: '.tif')
-            **component_values: Component values as keyword arguments.
-                               Keys should match VariableComponents enum values.
-                               Example: well='A01', site=1, channel=2, z_index=1
-
-        Returns:
-            str: Constructed filename
-
-        Example:
-            construct_filename(well='A01', site=1, channel=2, z_index=1, extension='.tif')
-        """
+    def construct_filename(self, components: FilenameParseResult) -> str:
+        """Construct a filename from one complete nominal component result."""
         pass
 
 
@@ -424,59 +465,12 @@ class MetadataHandler(ViewerMetadataHandlerABC, ABC):
         pass
 
     @abstractmethod
-    def get_channel_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        """
-        Get channel key→name mapping from metadata.
+    def component_value_set(
+        self,
+        plate_path: Union[str, Path],
+    ) -> MetadataComponentValueSet:
+        """Return metadata for the canonical component declaration."""
 
-        Args:
-            plate_path: Path to the plate folder (str or Path)
-
-        Returns:
-            Dict mapping channel keys to display names, or None if not available
-            Example: {"1": "HOECHST 33342", "2": "Calcein", "3": "Alexa 647"}
-        """
-        pass
-
-    @abstractmethod
-    def get_well_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        """
-        Get well key→name mapping from metadata.
-
-        Args:
-            plate_path: Path to the plate folder (str or Path)
-
-        Returns:
-            Dict mapping well keys to display names, or None if not available
-            Example: {"A01": "Control", "A02": "Treatment"} or None
-        """
-        pass
-
-    @abstractmethod
-    def get_site_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        """
-        Get site key→name mapping from metadata.
-
-        Args:
-            plate_path: Path to the plate folder (str or Path)
-
-        Returns:
-            Dict mapping site keys to display names, or None if not available
-            Example: {"1": "Center", "2": "Edge"} or None
-        """
-        pass
-
-    @abstractmethod
-    def get_z_index_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        """
-        Get z_index key→name mapping from metadata.
-
-        Args:
-            plate_path: Path to the plate folder (str or Path)
-
-        Returns:
-            Dict mapping z_index keys to display names, or None if not available
-            Example: {"1": "Bottom", "2": "Middle", "3": "Top"} or None
-        """
         pass
 
     def get_component_values(
@@ -484,13 +478,17 @@ class MetadataHandler(ViewerMetadataHandlerABC, ABC):
         plate_path: Union[str, Path],
         component_name: str,
     ) -> Optional[Dict[str, Optional[str]]]:
-        """Get display values for a named microscope component."""
-        return self.component_value_set(plate_path).values_for(
+        """Project display values at the viewer's string-keyed boundary."""
+
+        values = self.component_value_set(plate_path).values_for(
             AllComponents(component_name)
         )
+        return None if values is None else dict(values)
 
     @abstractmethod
-    def get_image_files(self, plate_path: Union[str, Path], all_subdirs: bool = False) -> list[str]:
+    def get_image_files(
+        self, plate_path: Union[str, Path], all_subdirs: bool = False
+    ) -> list[str]:
         """
         Get image files exposed by this metadata handler.
 
@@ -506,12 +504,10 @@ class MetadataHandler(ViewerMetadataHandlerABC, ABC):
         """Return analysis-result directories declared by this metadata source."""
         return ()
 
-    def parse_metadata(self, plate_path: Union[str, Path]) -> Dict[str, Dict[str, Optional[str]]]:
-        """
-        Parse all metadata using dynamic method resolution.
-
-        This method iterates through VariableComponents and calls the corresponding
-        abstract methods to collect all available metadata.
+    def parse_metadata(
+        self, plate_path: Union[str, Path]
+    ) -> Dict[str, Dict[str, Optional[str]]]:
+        """Serialize available nominal component metadata.
 
         Args:
             plate_path: Path to the plate folder (str or Path)
@@ -524,18 +520,8 @@ class MetadataHandler(ViewerMetadataHandlerABC, ABC):
         component_values = self.component_value_set(plate_path)
         for component, values in component_values.component_values():
             if values:
-                result[component.value] = values
+                result[component.value] = dict(values)
         return result
-
-    def component_value_set(self, plate_path: Union[str, Path]) -> MetadataComponentValueSet:
-        """Return metadata components as a named projection instead of a dict bag."""
-        return MetadataComponentValueSet(
-            channels=self.get_channel_values(plate_path),
-            wells=self.get_well_values(plate_path),
-            sites=self.get_site_values(plate_path),
-            z_indexes=self.get_z_index_values(plate_path),
-            timepoints=self.get_timepoint_values(plate_path),
-        )
 
     def build_metadata_view_document(
         self,
@@ -556,22 +542,18 @@ class MetadataHandler(ViewerMetadataHandlerABC, ABC):
                 f"{microscope_handler.__class__.__name__} cannot build metadata view without a parser."
             )
 
-        metadata = OpenHCSMetadata(
+        metadata = OpenHCSMetadata.from_component_value_set(
+            component_values=component_values,
             microscope_handler_name=microscope_handler.microscope_type,
             source_filename_parser_name=parser.__class__.__name__,
             grid_dimensions=list(grid_dims),
             pixel_size=pixel_size,
             image_files=image_files,
-            channels=component_values.channels,
-            wells=component_values.wells,
-            sites=component_values.sites,
-            z_indexes=component_values.z_indexes,
-            timepoints=component_values.timepoints,
             available_backends={"disk": True},
             source_diagnostics=[
-                dict(diagnostic)
-                for diagnostic in self.source_diagnostics(plate_path)
-            ] or None,
+                dict(diagnostic) for diagnostic in self.source_diagnostics(plate_path)
+            ]
+            or None,
             main=None,
         )
         title = f"Metadata - {microscope_handler.microscope_type}"
@@ -592,7 +574,9 @@ class DiskImageFileListingMetadataHandler(MetadataHandler):
 
     filemanager: FileManager
 
-    def get_image_files(self, plate_path: Union[str, Path], all_subdirs: bool = False) -> list[str]:
+    def get_image_files(
+        self, plate_path: Union[str, Path], all_subdirs: bool = False
+    ) -> list[str]:
         return list_relative_disk_image_files(
             self.filemanager,
             plate_path,

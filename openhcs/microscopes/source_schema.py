@@ -6,8 +6,8 @@ import re
 
 from openhcs.core.source_projection import OpenHCSPlaneAddress
 from openhcs.microscopes.microscope_interfaces import (
-    FilenameParseResult,
     FilenameParser,
+    FilenameParseResult,
 )
 
 
@@ -21,13 +21,16 @@ class SourceSchemaFilenameParser(FilenameParser):
 
     @classmethod
     def can_parse(cls, filename: str) -> bool:
-        return OpenHCSPlaneAddress.parse_filename(filename) is not None
+        return OpenHCSPlaneAddress.from_filename(filename) is not None
 
     def parse_filename(self, filename: str) -> FilenameParseResult | None:
-        parsed = OpenHCSPlaneAddress.parse_filename(filename)
+        parsed = OpenHCSPlaneAddress.from_filename(filename)
         if parsed is None:
             return None
-        return FilenameParseResult(parsed)
+        return FilenameParseResult(
+            parsed.address.parsed_component_values(),
+            extension=parsed.extension,
+        )
 
     def extract_component_coordinates(self, component_value: str) -> tuple[str, str]:
         match = re.match(r"^([A-Za-z]+)([0-9]+)$", component_value)
@@ -37,16 +40,17 @@ class SourceSchemaFilenameParser(FilenameParser):
 
     def construct_filename(
         self,
-        extension: str = ".tif",
+        components: FilenameParseResult,
         site_padding: int = 3,
         z_padding: int = 3,
         timepoint_padding: int = 3,
-        **component_values,
     ) -> str:
-        return OpenHCSPlaneAddress.construct_filename(
-            extension=extension,
+        address = OpenHCSPlaneAddress.from_component_values(
+            components.declared_values()
+        )
+        return address.filename(
+            extension=components.extension,
             site_padding=site_padding,
             z_padding=z_padding,
             timepoint_padding=timepoint_padding,
-            **component_values,
         )

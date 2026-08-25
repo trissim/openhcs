@@ -190,7 +190,9 @@ class PlateImageInventory:
             )
         return PlateImageInventory._record(
             plate_path=plate_path,
-            image_file=parser.construct_filename(**address.as_component_metadata()),
+            image_file=parser.construct_filename(
+                parser.bind_declared_values(address.parsed_component_values())
+            ),
             parser=parser,
             projection=None,
             filemanager=filemanager,
@@ -260,7 +262,7 @@ class PlateImageInventory:
         if parser is not None:
             parsed = parser.parse_filename(image_file)
             if parsed:
-                metadata.update(dict(parsed))
+                metadata.update(parsed.wire_mapping())
         source_file = Path(source_path)
         metadata["size"] = file_size_label(source_file)
         metadata["modified"] = file_modified_label(source_file)
@@ -836,7 +838,7 @@ class PlateResultFileInventory:
             if parser is not None:
                 parsed = parser.parse_filename(file_path.name)
                 if parsed:
-                    metadata.update(dict(parsed))
+                    metadata.update(parsed.wire_mapping())
             records.append(
                 PlateResultFileRecord(
                     relative_path=str(relative_path),

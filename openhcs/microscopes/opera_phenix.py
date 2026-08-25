@@ -11,10 +11,9 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Type, Tuple
 
-from openhcs.constants.constants import Backend, Microscope
+from openhcs.constants.constants import AllComponents, Backend, Microscope
 from openhcs.core.components.parser_metaprogramming import (
     format_filename_component,
-    require_filename_component,
 )
 from openhcs.microscopes.opera_phenix_xml_parser import OperaPhenixXmlParser
 from polystore.filemanager import FileManager
@@ -25,11 +24,11 @@ from openhcs.microscopes.microscope_interfaces import (
     DiskImageFileListingMetadataHandler,
     FilenameParseResult,
     FilenameParser,
+    MetadataComponentValueSet,
     MetadataHandler,
 )
 
 logger = logging.getLogger(__name__)
-
 
 
 class OperaPhenixHandler(MicroscopeHandler):
@@ -56,7 +55,9 @@ class OperaPhenixHandler(MicroscopeHandler):
         return False
 
     def __init__(self, filemanager: FileManager, pattern_format: Optional[str] = None):
-        self.parser = OperaPhenixFilenameParser(filemanager, pattern_format=pattern_format)
+        self.parser = OperaPhenixFilenameParser(
+            filemanager, pattern_format=pattern_format
+        )
         self.metadata_handler = OperaPhenixMetadataHandler(filemanager)
         super().__init__(parser=self.parser, metadata_handler=self.metadata_handler)
 
@@ -91,7 +92,9 @@ class OperaPhenixHandler(MicroscopeHandler):
 
     # Uses default workspace initialization from base class
 
-    def _build_virtual_mapping(self, plate_path: Path, filemanager: FileManager) -> Path:
+    def _build_virtual_mapping(
+        self, plate_path: Path, filemanager: FileManager
+    ) -> Path:
         """
         Build Opera Phenix virtual workspace mapping using plate-relative paths.
 
@@ -104,7 +107,9 @@ class OperaPhenixHandler(MicroscopeHandler):
         """
         plate_path = Path(plate_path)  # Ensure Path object
 
-        logger.info(f"🔄 BUILDING VIRTUAL MAPPING: Opera Phenix field remapping for {plate_path}")
+        logger.info(
+            f"🔄 BUILDING VIRTUAL MAPPING: Opera Phenix field remapping for {plate_path}"
+        )
 
         # Opera Phenix images are always in Images/ subdirectory
         image_dir = plate_path / self.root_dir
@@ -115,7 +120,9 @@ class OperaPhenixHandler(MicroscopeHandler):
         # Try to load field mapping from Index.xml if available
         xml_parser = None
         try:
-            index_xml = filemanager.find_file_recursive(plate_path, "Index.xml", Backend.DISK.value)
+            index_xml = filemanager.find_file_recursive(
+                plate_path, "Index.xml", Backend.DISK.value
+            )
             if index_xml:
                 xml_parser = OperaPhenixXmlParser(index_xml)
                 field_mapping = xml_parser.get_field_id_mapping()
@@ -131,7 +138,9 @@ class OperaPhenixHandler(MicroscopeHandler):
         if xml_parser:
             num_filled = self._fill_missing_images(image_dir, xml_parser, filemanager)
             if num_filled > 0:
-                logger.info(f"Created {num_filled} placeholder images for autofocus failures")
+                logger.info(
+                    f"Created {num_filled} placeholder images for autofocus failures"
+                )
 
         # Get all image files in the directory (including newly created placeholders)
         image_files = filemanager.list_image_files(image_dir, Backend.DISK.value)
@@ -148,21 +157,29 @@ class OperaPhenixHandler(MicroscopeHandler):
                 file_name = file_path.name
             else:
                 # Skip any unexpected types
-                logger.warning("Unexpected file path type: %s", type(file_path).__name__)
+                logger.warning(
+                    "Unexpected file path type: %s", type(file_path).__name__
+                )
                 continue
 
             # Parse file metadata
             metadata = self.parser.parse_filename(file_name)
-            if not metadata or 'site' not in metadata or metadata['site'] is None:
+            if metadata is None:
+                continue
+            original_field_id = metadata.value_for(AllComponents.SITE)
+            if original_field_id is None:
                 continue
 
             # Remap the field ID using the spatial layout
-            original_field_id = metadata['site']
             new_field_id = field_mapping.get(original_field_id, original_field_id)
 
             # Construct the new filename with proper padding
-            metadata['site'] = new_field_id  # Update site with remapped value
-            new_name = self.parser.construct_filename(**metadata)
+            new_name = self.parser.construct_filename(
+                metadata.with_value(
+                    AllComponents.SITE,
+                    new_field_id,
+                )
+            )
 
             # Build PLATE-RELATIVE mapping (no workspace directory)
             # Use .as_posix() to ensure forward slashes on all platforms (Windows uses backslashes with str())
@@ -173,7 +190,9 @@ class OperaPhenixHandler(MicroscopeHandler):
                 backend_address=real_relative,
             )
 
-        logger.info(f"Built {len(workspace_mapping)} virtual path mappings for Opera Phenix")
+        logger.info(
+            f"Built {len(workspace_mapping)} virtual path mappings for Opera Phenix"
+        )
 
         # Save virtual workspace mapping and all available metadata
         self.save_virtual_workspace_metadata(plate_path, workspace_mapping)
@@ -184,7 +203,7 @@ class OperaPhenixHandler(MicroscopeHandler):
         self,
         image_dir: Path,
         xml_parser: OperaPhenixXmlParser,
-        filemanager: FileManager
+        filemanager: FileManager,
     ) -> int:
         """
         Fill in missing images with black pixels by detecting gaps in continuous sequences.
@@ -206,7 +225,9 @@ class OperaPhenixHandler(MicroscopeHandler):
         import numpy as np
         from itertools import product
 
-        logger.debug("Checking for missing images in Opera Phenix workspace using continuous sequence detection")
+        logger.debug(
+            "Checking for missing images in Opera Phenix workspace using continuous sequence detection"
+        )
 
         # 1. Get actual files
         # Clause 245: Workspace operations are disk-only by design
@@ -242,11 +263,11 @@ class OperaPhenixHandler(MicroscopeHandler):
                 sample_metadata = metadata
 
             # Collect dimension values
-            well = metadata.get('well')
-            channel = metadata.get('channel')
-            site = metadata.get('site')
-            z_index = metadata.get('z_index')
-            timepoint = metadata.get('timepoint')
+            well = metadata.value_for(AllComponents.WELL)
+            channel = metadata.value_for(AllComponents.CHANNEL)
+            site = metadata.value_for(AllComponents.SITE)
+            z_index = metadata.value_for(AllComponents.Z_INDEX)
+            timepoint = metadata.value_for(AllComponents.TIMEPOINT)
 
             if well:
                 wells.add(well)
@@ -266,7 +287,9 @@ class OperaPhenixHandler(MicroscopeHandler):
             actual_combinations.add((well, channel, site, z_index, timepoint))
 
         if not wells or not channels or not sites:
-            logger.warning("Could not extract sufficient dimension information from filenames")
+            logger.warning(
+                "Could not extract sufficient dimension information from filenames"
+            )
             return 0
 
         # Default z_index to 1 if not present in any file
@@ -277,9 +300,11 @@ class OperaPhenixHandler(MicroscopeHandler):
         if not timepoints and has_timepoint:
             timepoints.add(1)
 
-        logger.info(f"Detected dimensions: {len(wells)} wells, {len(channels)} channels, "
-                   f"{len(sites)} sites, {len(z_indices)} z-planes" +
-                   (f", {len(timepoints)} timepoints" if timepoints else ""))
+        logger.info(
+            f"Detected dimensions: {len(wells)} wells, {len(channels)} channels, "
+            f"{len(sites)} sites, {len(z_indices)} z-planes"
+            + (f", {len(timepoints)} timepoints" if timepoints else "")
+        )
 
         # 3. Generate all expected combinations
         expected_combinations = set()
@@ -300,7 +325,9 @@ class OperaPhenixHandler(MicroscopeHandler):
             logger.debug("No missing images detected in continuous sequence")
             return 0
 
-        logger.info(f"Found {len(missing_combinations)} missing images in continuous sequence")
+        logger.info(
+            f"Found {len(missing_combinations)} missing images in continuous sequence"
+        )
 
         # 5. Construct filenames for missing combinations
         missing_files = []
@@ -309,14 +336,17 @@ class OperaPhenixHandler(MicroscopeHandler):
 
             # Construct filename using standardized format
             filename = self.parser.construct_filename(
-                well=well,
-                site=site,
-                channel=channel,
-                z_index=z_index,
-                timepoint=timepoint,
-                extension=sample_metadata.get('extension', '.tiff'),
+                sample_metadata.with_values(
+                    (
+                        (AllComponents.WELL, well),
+                        (AllComponents.CHANNEL, channel),
+                        (AllComponents.SITE, site),
+                        (AllComponents.Z_INDEX, z_index),
+                        (AllComponents.TIMEPOINT, timepoint),
+                    )
+                ),
                 site_padding=3,  # Virtual workspace uses standardized 3-digit padding
-                z_padding=3
+                z_padding=3,
             )
 
             missing_files.append(filename)
@@ -328,7 +358,9 @@ class OperaPhenixHandler(MicroscopeHandler):
             first_image = filemanager.load(first_image_path, Backend.DISK.value)
             height, width = first_image.shape
             dtype = first_image.dtype
-            logger.debug(f"Using dimensions from existing image: {height}x{width}, dtype={dtype}")
+            logger.debug(
+                f"Using dimensions from existing image: {height}x{width}, dtype={dtype}"
+            )
         except Exception as e:
             logger.warning(f"Could not load existing image for dimensions: {e}")
             # Default dimensions for Opera Phenix
@@ -341,25 +373,31 @@ class OperaPhenixHandler(MicroscopeHandler):
 
         created_count = 0
         skipped_count = 0
-        
+
         for filename in missing_files:
             output_path = image_dir / filename
-            
+
             # CRITICAL SAFETY CHECK: Never overwrite existing files
             if output_path.exists():
                 # File already exists - DO NOT OVERWRITE to prevent data loss
-                logger.warning(f"Image already exists, skipping to prevent data loss: {filename}")
+                logger.warning(
+                    f"Image already exists, skipping to prevent data loss: {filename}"
+                )
                 skipped_count += 1
                 continue
-            
+
             # Clause 245: Workspace operations are disk-only by design
             filemanager.save(black_image, output_path, Backend.DISK.value)
             logger.debug(f"Created missing image: {filename}")
             created_count += 1
 
         if skipped_count > 0:
-            logger.warning(f"Skipped {skipped_count} existing files to prevent overwriting")
-        logger.info(f"Successfully created {created_count} missing images with black pixels")
+            logger.warning(
+                f"Skipped {skipped_count} existing files to prevent overwriting"
+            )
+        logger.info(
+            f"Successfully created {created_count} missing images with black pixels"
+        )
         return created_count
 
 
@@ -371,11 +409,16 @@ class OperaPhenixFilenameParser(FilenameParser):
     - r01c01f001p01-ch1.tiff
     """
 
+    DEFAULT_EXTENSION = ".tiff"
+
     # Regular expression pattern for Opera Phenix filenames
     # Supports: row, column, site (field), z_index (plane), channel, timepoint (sk=stack)
     # sk = stack/timepoint, fk = field stack, fl = focal level
     # Also supports result files with suffixes like: r01c01f001p01-ch1_cell_counts_step7.json
-    _pattern = re.compile(r"r(\d{1,2})c(\d{1,2})f(\d+|\{[^\}]*\})p(\d+|\{[^\}]*\})-ch(\d+|\{[^\}]*\})(?:sk(\d+|\{[^\}]*\}))?(?:fk\d+)?(?:fl\d+)?(?:_.*?)?(\.\w+)$", re.I)
+    _pattern = re.compile(
+        r"r(\d{1,2})c(\d{1,2})f(\d+|\{[^\}]*\})p(\d+|\{[^\}]*\})-ch(\d+|\{[^\}]*\})(?:sk(\d+|\{[^\}]*\}))?(?:fk\d+)?(?:fl\d+)?(?:_.*?)?(\.\w+)$",
+        re.I,
+    )
 
     # Pattern for extracting row and column from Opera Phenix well format
     _well_pattern = re.compile(r"R(\d{2})C(\d{2})", re.I)
@@ -424,7 +467,9 @@ class OperaPhenixFilenameParser(FilenameParser):
         """
         # This is a string operation that doesn't perform actual file I/O
         basename = os.path.basename(filename)
-        logger.debug("OperaPhenixFilenameParser attempting to parse basename: '%s'", basename)
+        logger.debug(
+            "OperaPhenixFilenameParser attempting to parse basename: '%s'", basename
+        )
 
         # Try parsing using the Opera Phenix pattern
         match = self._pattern.match(basename)
@@ -435,7 +480,7 @@ class OperaPhenixFilenameParser(FilenameParser):
             # Helper function to parse component strings
             def parse_comp(s):
                 """Parse component string to int or None if it's a placeholder."""
-                if not s or '{' in s:
+                if not s or "{" in s:
                     return None
                 return int(s)
 
@@ -448,44 +493,34 @@ class OperaPhenixFilenameParser(FilenameParser):
             z_index = parse_comp(z_str)
             timepoint = parse_comp(sk_str)  # sk = stack/timepoint
 
-            result = FilenameParseResult({
-                'well': well,
-                'site': site,
-                'channel': channel,
-                'wavelength': channel,  # For backward compatibility
-                'z_index': z_index,
-                'timepoint': timepoint,  # sk = stack/timepoint
-                'extension': ext if ext else '.tif'
-            })
+            result = FilenameParseResult(
+                (
+                    (AllComponents.WELL, well),
+                    (AllComponents.SITE, site),
+                    (AllComponents.CHANNEL, channel),
+                    (AllComponents.Z_INDEX, z_index),
+                    (AllComponents.TIMEPOINT, timepoint),
+                ),
+                extension=ext if ext else ".tif",
+            )
             return result
 
         logger.warning("Regex match failed for basename: '%s'", basename)
         return None
 
-    def construct_filename(self, extension: str = '.tiff', site_padding: int = 3, z_padding: int = 3, **component_values) -> str:
-        """
-        Construct an Opera Phenix filename from components.
+    def construct_filename(
+        self,
+        components: FilenameParseResult,
+        site_padding: int = 3,
+        z_padding: int = 3,
+    ) -> str:
+        """Construct an Opera Phenix filename from nominal component values."""
 
-        This method now uses **kwargs to accept any component values dynamically,
-        making it compatible with the generic parser interface.
-
-        Note: Opera Phenix uses 'sk' (stack) for timepoint in filenames.
-
-        Args:
-            extension (str, optional): File extension (default: '.tiff')
-            site_padding (int, optional): Width to pad site numbers to (default: 3)
-            z_padding (int, optional): Width to pad Z-index numbers to (default: 3)
-            **component_values: Component values as keyword arguments.
-                               Expected keys: well, site, channel, z_index, timepoint
-
-        Returns:
-            str: Constructed filename
-        """
-        well = require_filename_component(component_values, 'well')
-        site = require_filename_component(component_values, 'site')
-        channel = require_filename_component(component_values, 'channel')
-        z_index = require_filename_component(component_values, 'z_index')
-        timepoint = require_filename_component(component_values, 'timepoint')
+        well = components.required_value(AllComponents.WELL)
+        site = components.required_value(AllComponents.SITE)
+        channel = components.required_value(AllComponents.CHANNEL)
+        z_index = components.required_value(AllComponents.Z_INDEX)
+        timepoint = components.required_value(AllComponents.TIMEPOINT)
 
         # Extract row and column from well name
         # Check if well is in Opera Phenix format (e.g., 'R01C03')
@@ -504,10 +539,12 @@ class OperaPhenixFilenameParser(FilenameParser):
 
         return (
             f"r{row:02d}c{col:02d}{site_part}{z_part}"
-            f"-ch{format_filename_component(channel)}{sk_part}fk1fl1{extension}"
+            f"-ch{format_filename_component(channel)}{sk_part}fk1fl1{components.extension}"
         )
 
-    def remap_field_in_filename(self, filename: str, xml_parser: Optional[OperaPhenixXmlParser] = None) -> str:
+    def remap_field_in_filename(
+        self, filename: str, xml_parser: Optional[OperaPhenixXmlParser] = None
+    ) -> str:
         """
         Remap the field ID in a filename to follow a top-left to bottom-right pattern.
 
@@ -523,17 +560,24 @@ class OperaPhenixFilenameParser(FilenameParser):
 
         # Parse the filename
         metadata = self.parse_filename(filename)
-        if not metadata or 'site' not in metadata or metadata['site'] is None:
+        if metadata is None:
+            return filename
+        site = metadata.value_for(AllComponents.SITE)
+        if site is None:
             return filename
 
         # Get the mapping and remap the field ID
         mapping = xml_parser.get_field_id_mapping()
-        new_field_id = xml_parser.remap_field_id(metadata['site'], mapping)
+        new_field_id = xml_parser.remap_field_id(site, mapping)
 
         # Always create a new filename with the remapped field ID and consistent padding
         # This ensures all filenames have the same format, even if the field ID didn't change
-        metadata['site'] = new_field_id  # Update site with remapped value
-        return self.construct_filename(**metadata)
+        return self.construct_filename(
+            metadata.with_value(
+                AllComponents.SITE,
+                new_field_id,
+            )
+        )
 
     def extract_component_coordinates(self, component_value: str) -> Tuple[str, str]:
         """
@@ -558,7 +602,7 @@ class OperaPhenixFilenameParser(FilenameParser):
             row_num = int(match.group(1))
             col_num = int(match.group(2))
             # Convert to letter-number format: R01C03 -> A, 03
-            row = chr(ord('A') + row_num - 1)  # R01 -> A, R02 -> B, etc.
+            row = chr(ord("A") + row_num - 1)  # R01 -> A, R02 -> B, etc.
             col = f"{col_num:02d}"  # Ensure 2-digit padding
             return row, col
         else:
@@ -568,7 +612,9 @@ class OperaPhenixFilenameParser(FilenameParser):
             row = component_value[0]
             col = component_value[1:]
             if not row.isalpha() or not col.isdigit():
-                raise ValueError(f"Invalid Opera Phenix component format: {component_value}. Expected 'R01C03' or 'A01' format")
+                raise ValueError(
+                    f"Invalid Opera Phenix component format: {component_value}. Expected 'R01C03' or 'A01' format"
+                )
             return row, col
 
 
@@ -630,15 +676,6 @@ class OperaPhenixMetadataHandler(DiskImageFileListingMetadataHandler):
             "Opera Phenix metadata requires Index.xml file."
         )
 
-        # Ensure result is a Path object
-        if isinstance(result, str):
-            return Path(result)
-        if isinstance(result, Path):
-            return result
-        # This should not happen if FileManager is properly implemented
-        logger.warning("Unexpected result type from find_file_recursive: %s", type(result).__name__)
-        return Path(str(result))
-
     def get_grid_dimensions(self, plate_path: Union[str, Path]):
         """
         Get grid dimensions for stitching from Index.xml file.
@@ -677,7 +714,9 @@ class OperaPhenixMetadataHandler(DiskImageFileListingMetadataHandler):
                 "Grid dimensions must be positive integers."
             )
 
-        logger.info("Grid size from Index.xml: %dx%d (cols x rows)", grid_size[0], grid_size[1])
+        logger.info(
+            "Grid size from Index.xml: %dx%d (cols x rows)", grid_size[0], grid_size[1]
+        )
         # FIXED: Return (rows, cols) for MIST compatibility instead of (cols, rows)
         return (grid_size[1], grid_size[0])
 
@@ -722,17 +761,12 @@ class OperaPhenixMetadataHandler(DiskImageFileListingMetadataHandler):
         logger.info("Pixel size from Index.xml: %.4f μm", pixel_size)
         return pixel_size
 
-    def get_channel_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        """
-        Get channel key→name mapping from Opera Phenix Index.xml.
+    def component_value_set(
+        self,
+        plate_path: Union[str, Path],
+    ) -> MetadataComponentValueSet:
+        """Return channel labels declared by Opera Phenix Index.xml."""
 
-        Args:
-            plate_path: Path to the plate folder (str or Path)
-
-        Returns:
-            Dict mapping channel IDs to channel names from metadata
-            Example: {"1": "HOECHST 33342", "2": "Calcein", "3": "Alexa 647"}
-        """
         try:
             # Ensure plate_path is a Path object
             if isinstance(plate_path, str):
@@ -743,7 +777,7 @@ class OperaPhenixMetadataHandler(DiskImageFileListingMetadataHandler):
             xml_parser = self.create_xml_parser(index_xml)
 
             # Extract channel information
-            channel_mapping = {}
+            channel_mapping: dict[str, str | None] = {}
 
             # Look for channel entries in the XML
             # Opera Phenix stores channel info in multiple places, try the most common
@@ -753,7 +787,7 @@ class OperaPhenixMetadataHandler(DiskImageFileListingMetadataHandler):
             # Find channel entries with ChannelName elements
             channel_entries = root.findall(f".//{namespace}Entry[@ChannelID]")
             for entry in channel_entries:
-                channel_id = entry.get('ChannelID')
+                channel_id = entry.get("ChannelID")
                 channel_name_elem = entry.find(f"{namespace}ChannelName")
 
                 if channel_id and channel_name_elem is not None:
@@ -761,59 +795,16 @@ class OperaPhenixMetadataHandler(DiskImageFileListingMetadataHandler):
                     if channel_name:
                         channel_mapping[channel_id] = channel_name
 
-            return channel_mapping if channel_mapping else None
+            channel_values = channel_mapping or None
 
         except Exception as e:
-            logger.debug(f"Could not extract channel names from Opera Phenix metadata: {e}")
-            return None
-
-    def get_well_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        """
-        Get well key→name mapping from Opera Phenix metadata.
-
-        Args:
-            plate_path: Path to the plate folder (str or Path)
-
-        Returns:
-            None - Opera Phenix doesn't provide rich well names in metadata
-        """
-        return None
-
-    def get_site_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        """
-        Get site key→name mapping from Opera Phenix metadata.
-
-        Args:
-            plate_path: Path to the plate folder (str or Path)
-
-        Returns:
-            None - Opera Phenix doesn't provide rich site names in metadata
-        """
-        return None
-
-    def get_z_index_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        """
-        Get z_index key→name mapping from Opera Phenix metadata.
-
-        Args:
-            plate_path: Path to the plate folder (str or Path)
-
-        Returns:
-            None - Opera Phenix doesn't provide rich z_index names in metadata
-        """
-        return None
-
-    def get_timepoint_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
-        """
-        Get timepoint key→name mapping from Opera Phenix metadata.
-
-        Args:
-            plate_path: Path to the plate folder (str or Path)
-
-        Returns:
-            None - Opera Phenix doesn't provide rich timepoint names in metadata
-        """
-        return None
+            logger.debug(
+                f"Could not extract channel names from Opera Phenix metadata: {e}"
+            )
+            channel_values = None
+        return MetadataComponentValueSet.from_partial(
+            ((AllComponents.CHANNEL, channel_values),)
+        )
 
     def create_xml_parser(self, xml_path: Union[str, Path]):
         """
@@ -842,5 +833,6 @@ class OperaPhenixMetadataHandler(DiskImageFileListingMetadataHandler):
 
 # Set metadata handler class after class definition for automatic registration
 from openhcs.microscopes.microscope_base import register_metadata_handler
+
 OperaPhenixHandler._metadata_handler_class = OperaPhenixMetadataHandler
 register_metadata_handler(OperaPhenixHandler, OperaPhenixMetadataHandler)

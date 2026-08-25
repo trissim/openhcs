@@ -325,9 +325,11 @@ def get_default_group_by():
 
 @lru_cache(maxsize=1)
 def get_multiprocessing_axis():
-    """Get multiprocessing axis from ComponentConfiguration."""
+    """Get the multiprocessing axis from the canonical component enum."""
+
+    all_components, _, _, _ = _create_enums()
     config = get_openhcs_config()
-    return config.multiprocessing_axis
+    return all_components.__members__[config.multiprocessing_axis.name]
 
 
 DEFAULT_MICROSCOPE: Microscope = Microscope.AUTO

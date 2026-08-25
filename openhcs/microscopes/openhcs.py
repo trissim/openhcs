@@ -34,10 +34,12 @@ from openhcs.core.virtual_workspace_metadata import (
     FIELDS,
     METADATA_CONFIG,
     MetadataWriteError,
+    component_metadata_field,
     get_metadata_path,
 )
 from openhcs.microscopes.microscope_interfaces import (
     AnalysisResultDirectory,
+    MetadataComponentValueSet,
     MetadataHandler,
     MetadataViewDocument,
     MetadataViewEntry,
@@ -656,30 +658,24 @@ class OpenHCSMetadataHandler(MetadataHandler, OpenHCSMetadataBase):
             else None
         )
 
-    def get_channel_values(
-        self, plate_path: Union[str, Path]
-    ) -> Optional[Dict[str, Optional[str]]]:
-        return self._get_optional_metadata_dict(plate_path, FIELDS.CHANNELS)
+    def component_value_set(
+        self,
+        plate_path: Union[str, Path],
+    ) -> MetadataComponentValueSet:
+        """Read every canonical component through the persisted schema declaration."""
 
-    def get_well_values(
-        self, plate_path: Union[str, Path]
-    ) -> Optional[Dict[str, Optional[str]]]:
-        return self._get_optional_metadata_dict(plate_path, FIELDS.WELLS)
-
-    def get_site_values(
-        self, plate_path: Union[str, Path]
-    ) -> Optional[Dict[str, Optional[str]]]:
-        return self._get_optional_metadata_dict(plate_path, FIELDS.SITES)
-
-    def get_z_index_values(
-        self, plate_path: Union[str, Path]
-    ) -> Optional[Dict[str, Optional[str]]]:
-        return self._get_optional_metadata_dict(plate_path, FIELDS.Z_INDEXES)
-
-    def get_timepoint_values(
-        self, plate_path: Union[str, Path]
-    ) -> Optional[Dict[str, Optional[str]]]:
-        return self._get_optional_metadata_dict(plate_path, FIELDS.TIMEPOINTS)
+        return MetadataComponentValueSet(
+            (
+                (
+                    component,
+                    self._get_optional_metadata_dict(
+                        plate_path,
+                        component_metadata_field(component),
+                    ),
+                )
+                for component in AllComponents
+            )
+        )
 
     def get_objective_values(
         self, plate_path: Union[str, Path]
@@ -802,11 +798,11 @@ class OpenHCSMetadata:
     grid_dimensions: List[int]
     pixel_size: float
     image_files: List[str]
-    channels: Optional[Dict[str, str]]
-    wells: Optional[Dict[str, str]]
-    sites: Optional[Dict[str, str]]
-    z_indexes: Optional[Dict[str, str]]
-    timepoints: Optional[Dict[str, str]]
+    channels: Optional[Dict[str, Optional[str]]]
+    wells: Optional[Dict[str, Optional[str]]]
+    sites: Optional[Dict[str, Optional[str]]]
+    z_indexes: Optional[Dict[str, Optional[str]]]
+    timepoints: Optional[Dict[str, Optional[str]]]
     available_backends: Dict[str, bool]
     workspace_mapping: Optional[Dict[str, Any]] = (
         None  # Virtual path -> path string or structured backend ref
@@ -827,6 +823,44 @@ class OpenHCSMetadata:
         None  # Sibling directory containing analysis results for this subdirectory
     )
 
+    @classmethod
+    def from_component_value_set(
+        cls,
+        *,
+        component_values: MetadataComponentValueSet,
+        microscope_handler_name: str,
+        source_filename_parser_name: str,
+        grid_dimensions: List[int],
+        pixel_size: float,
+        image_files: List[str],
+        available_backends: Dict[str, bool],
+        source_diagnostics: Optional[List[Dict[str, Any]]] = None,
+        main: Optional[bool] = None,
+    ) -> "OpenHCSMetadata":
+        """Construct persisted metadata from the nominal component authority."""
+
+        def serialized_values(
+            component: AllComponents,
+        ) -> Optional[Dict[str, str | None]]:
+            values = component_values.values_for(component)
+            return None if values is None else dict(values)
+
+        return cls(
+            microscope_handler_name=microscope_handler_name,
+            source_filename_parser_name=source_filename_parser_name,
+            grid_dimensions=grid_dimensions,
+            pixel_size=pixel_size,
+            image_files=image_files,
+            channels=serialized_values(AllComponents.CHANNEL),
+            wells=serialized_values(AllComponents.WELL),
+            sites=serialized_values(AllComponents.SITE),
+            z_indexes=serialized_values(AllComponents.Z_INDEX),
+            timepoints=serialized_values(AllComponents.TIMEPOINT),
+            available_backends=available_backends,
+            source_diagnostics=source_diagnostics,
+            main=main,
+        )
+
 
 _OPENHCS_METADATA_REQUIRED_FIELDS = (
     FIELDS.MICROSCOPE_HANDLER_NAME,
@@ -834,11 +868,7 @@ _OPENHCS_METADATA_REQUIRED_FIELDS = (
     FIELDS.GRID_DIMENSIONS,
     FIELDS.PIXEL_SIZE,
     FIELDS.IMAGE_FILES,
-    FIELDS.CHANNELS,
-    FIELDS.WELLS,
-    FIELDS.SITES,
-    FIELDS.Z_INDEXES,
-    FIELDS.TIMEPOINTS,
+    *(component_metadata_field(component) for component in AllComponents),
     FIELDS.AVAILABLE_BACKENDS,
 )
 
@@ -1148,9 +1178,9 @@ class OpenHCSMetadataGenerator(OpenHCSMetadataBase):
 
             # Extract each component from the parsed filename
             for component in AllComponents:
-                component_name = component.value
-                if component_name in parsed:
-                    component_value = str(parsed[component_name])
+                parsed_value = parsed.value_for(component)
+                if parsed_value is not None:
+                    component_value = str(parsed_value)
                     # Store with None as display name (will be merged with original metadata display names)
                     if component_value not in result[component]:
                         result[component][component_value] = None

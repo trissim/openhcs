@@ -34,11 +34,12 @@ metaclass-registry
 PolyStore
   Owns ``FileManager``, backend registration and lifecycle, generic storage
   formats, ROI, virtual-workspace references, storage/streaming primitives, and
-  the generic ImageJ runtime declaration, Zarr compressor, chunk strategy, and
-  backend configuration declarations. OpenHCS owns source-binding semantics,
-  domain ``ImageFileFormat`` pixel/intensity metadata, artifact materialization
-  plans, and a fieldless application registration subtype of PolyStore's
-  ``ZarrConfig``. See
+  canonical OMERO well/plane addressing, the generic ImageJ runtime
+  declaration, Zarr compressor, chunk strategy, and backend configuration
+  declarations. OpenHCS owns source-binding semantics, domain
+  ``ImageFileFormat`` pixel/intensity metadata, artifact materialization plans,
+  and a fieldless application registration subtype of PolyStore's ``ZarrConfig``.
+  See
   :external+polystore:doc:`PolyStore documentation <index>`.
 
 pyqt-reactive

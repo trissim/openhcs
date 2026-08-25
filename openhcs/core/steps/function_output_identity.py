@@ -15,6 +15,7 @@ from openhcs.core.runtime_image_values import (
 )
 from openhcs.core.runtime_array_values import RuntimeArrayData
 from openhcs.core.components.parser_metaprogramming import (
+    FilenameParseResult,
     MissingFilenameComponentError,
 )
 from openhcs.core.source_image_provenance import (
@@ -113,6 +114,7 @@ class FunctionOutputPathRequest:
         default_factory=FunctionOutputIdentityCache
     )
 
+
 @dataclass(frozen=True, slots=True)
 class FunctionOutputIdentity:
     """Semantic component identity used for one output filename."""
@@ -172,6 +174,7 @@ class FilenameQualifier:
             raise ValueError("Filename qualifier cannot be empty.")
         return qualifier
 
+
 @dataclass(frozen=True, slots=True)
 class FunctionOutputParserContext:
     """Parser-facing microscope context for FunctionStep output finalization."""
@@ -195,7 +198,9 @@ class FunctionOutputParserContext:
         return self.parser.__class__.__name__
 
     def parse_path_metadata(self, path: str | Path) -> SourceComponentMetadata | None:
-        return self.parser.parse_filename(_cached_path_name(str(path)))
+        parsed = self.parser.parse_filename(_cached_path_name(str(path)))
+        return None if parsed is None else parsed.wire_mapping()
+
 
 class FunctionOutputPathAuthority:
     """Construct output filenames from semantic identity through the parser."""
@@ -265,13 +270,12 @@ class FunctionOutputPathAuthority:
         )
         extension = identity.extension
         try:
-            if extension is None:
-                filename = parser.construct_filename(**component_values)
-            else:
-                filename = parser.construct_filename(
+            filename = parser.construct_filename(
+                parser.bind_component_values(
+                    component_values,
                     extension=extension,
-                    **component_values,
                 )
+            )
             return cls._qualified_filename(filename, identity.filename_qualifier)
         except MissingFilenameComponentError as exc:
             raise IncompleteFunctionOutputFilenameIdentityError(
@@ -385,15 +389,12 @@ class FunctionOutputComponentIdentityAuthority:
     @classmethod
     def from_parsed(
         cls,
-        parsed: SourceComponentMetadata,
+        parsed: FilenameParseResult,
     ) -> dict[str, FunctionOutputComponentValue]:
         return {
-            str(key): cls.coerce_component_value(
-                AllComponents.from_value(str(key)),
-                value,
-            )
-            for key, value in parsed.items()
-            if str(key) != "extension" and value is not None
+            str(component.value): cls.coerce_component_value(component, value)
+            for component, value in parsed.declared_values()
+            if value is not None
         }
 
     @staticmethod
@@ -796,7 +797,7 @@ class FunctionOutputIdentityAuthority:
             component_values=FunctionOutputComponentIdentityAuthority.from_parsed(
                 parsed
             ),
-            extension=FunctionOutputExtensionAuthority.from_metadata(parsed),
+            extension=parsed.extension,
             source=source,
         )
 
@@ -952,9 +953,7 @@ class FunctionOutputIdentityAuthority:
             - identity_component_values
         )
         ordered_keys = tuple(
-            component.value
-            for component in AllComponents
-            if component.value in keys
+            component.value for component in AllComponents if component.value in keys
         )
         extra_keys = tuple(sorted(keys - frozenset(ordered_keys)))
         return (*ordered_keys, *extra_keys)
@@ -1040,7 +1039,10 @@ class FunctionOutputIdentityAuthority:
                 for component_name in split_component_values:
                     component_values.pop(component_name, None)
             filename_component_values = dict(parsed_identity.component_values)
-            for component_name, component_value in identity.filename_component_values.items():
+            for (
+                component_name,
+                component_value,
+            ) in identity.filename_component_values.items():
                 if (
                     request.input_aligned_output
                     and component_name in split_component_values
@@ -1077,8 +1079,8 @@ class FunctionOutputIdentityAuthority:
         extension: str | None,
         source: str,
     ) -> FunctionOutputIdentity | None:
-        component_values = FunctionOutputComponentIdentityAuthority.from_source_metadata(
-            metadata
+        component_values = (
+            FunctionOutputComponentIdentityAuthority.from_source_metadata(metadata)
         )
         if not component_values:
             return None

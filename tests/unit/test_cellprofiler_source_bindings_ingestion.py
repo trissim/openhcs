@@ -205,7 +205,10 @@ def test_workspace_projection_materializes_complete_declared_universe(
 
     assert len(projection_set.projections) == 4
     assert {
-        (projection.address.site, projection.address.channel)
+        (
+            projection.address.value_for(AllComponents.SITE),
+            projection.address.value_for(AllComponents.CHANNEL),
+        )
         for projection in projection_set.projections
     } == {("1", "1"), ("1", "2"), ("2", "1"), ("2", "2")}
 
@@ -240,7 +243,8 @@ def test_source_stack_expansion_is_declared_by_config(tmp_path: Path) -> None:
 
     assert len(projection_set.projections) == 4
     assert {
-        projection.address.timepoint for projection in projection_set.projections
+        projection.address.value_for(AllComponents.TIMEPOINT)
+        for projection in projection_set.projections
     } == {"1", "2"}
     assert {
         projection.ref.source_axis_indices for projection in projection_set.projections

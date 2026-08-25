@@ -14,6 +14,7 @@ from polystore.atomic import LOCK_CONFIG, FileLockError, atomic_update_json
 from polystore.virtual_workspace import SourcePixelRef
 
 from openhcs.core.artifacts import ArtifactType
+from openhcs.constants.constants import AllComponents
 from openhcs.core.source_bindings import SourceProjectionRole
 from openhcs.core.source_metadata import (
     SourceMetadataMapping,
@@ -26,6 +27,7 @@ from openhcs.core.source_projection import (
     SourcePlaneProjection,
     SourceProjection,
 )
+
 
 @dataclass(frozen=True)
 class OpenHCSMetadataConfig:
@@ -80,9 +82,8 @@ class AtomicMetadataWriter:
             for subdirectory_name, fields in subdirectory_updates.items():
                 subdirectory = subdirectories.setdefault(subdirectory_name, {})
                 for key, value in fields.items():
-                    if (
-                        key == METADATA_CONFIG.AVAILABLE_BACKENDS_KEY
-                        and isinstance(value, dict)
+                    if key == METADATA_CONFIG.AVAILABLE_BACKENDS_KEY and isinstance(
+                        value, dict
                     ):
                         subdirectory[key] = {
                             **subdirectory.get(key, {}),
@@ -171,6 +172,16 @@ class OpenHCSMetadataFields:
 
 
 FIELDS = OpenHCSMetadataFields()
+
+
+def component_metadata_field(component: AllComponents) -> str:
+    """Derive the persisted collection field for one declared component."""
+
+    if not isinstance(component, AllComponents):
+        raise TypeError("Metadata fields require an exact AllComponents member")
+    suffix = "es" if component.value.endswith("x") else "s"
+    return f"{component.value}{suffix}"
+
 
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | Mapping[str, "JsonValue"] | Sequence["JsonValue"]
@@ -293,7 +304,7 @@ class VirtualWorkspaceSourceProjectionEntries:
             raise RuntimeError(
                 "virtual_workspace source_projection address must be a mapping."
             )
-        address = OpenHCSPlaneAddress(
+        address = OpenHCSPlaneAddress.from_values(
             well=cls._required_text(address_value, "well"),
             site=cls._required_text(address_value, "site"),
             channel=cls._required_text(address_value, "channel"),
@@ -425,12 +436,14 @@ class VirtualWorkspaceSourceMetadataEntries:
     @staticmethod
     def normalize_metadata_fields(metadata_fields: JsonValue) -> SourceMetadataMapping:
         if not isinstance(metadata_fields, Mapping):
-            raise RuntimeError("virtual_workspace source metadata values must be mappings.")
+            raise RuntimeError(
+                "virtual_workspace source metadata values must be mappings."
+            )
         return MappingProxyType(
             {
-                str(key): VirtualWorkspaceSourceMetadataEntries.normalize_metadata_value(
-                    value
-                )
+                str(
+                    key
+                ): VirtualWorkspaceSourceMetadataEntries.normalize_metadata_value(value)
                 for key, value in metadata_fields.items()
             }
         )
@@ -440,13 +453,17 @@ class VirtualWorkspaceSourceMetadataEntries:
         if isinstance(value, Mapping):
             return MappingProxyType(
                 {
-                    str(nested_key): VirtualWorkspaceSourceMetadataEntries.require_scalar_metadata_value(
+                    str(
+                        nested_key
+                    ): VirtualWorkspaceSourceMetadataEntries.require_scalar_metadata_value(
                         nested_value
                     )
                     for nested_key, nested_value in value.items()
                 }
             )
-        return VirtualWorkspaceSourceMetadataEntries.require_scalar_metadata_value(value)
+        return VirtualWorkspaceSourceMetadataEntries.require_scalar_metadata_value(
+            value
+        )
 
     @staticmethod
     def require_scalar_metadata_value(value: JsonValue) -> SourceMetadataScalar:

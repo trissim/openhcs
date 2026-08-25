@@ -164,13 +164,13 @@ def test_source_binding_workspace_projector_assigns_selector_channels(tmp_path):
         projection.source_alias: projection for projection in projection_set.projections
     }
 
-    assert by_alias["nuclei"].address.well == "A01"
-    assert by_alias["nuclei"].address.site == "1"
-    assert by_alias["nuclei"].address.channel == "1"
+    assert by_alias["nuclei"].address.value_for(AllComponents.WELL) == "A01"
+    assert by_alias["nuclei"].address.value_for(AllComponents.SITE) == "1"
+    assert by_alias["nuclei"].address.value_for(AllComponents.CHANNEL) == "1"
     assert by_alias["nuclei"].ref.backend_address == "raw/nuclei_A01_s1.png"
-    assert by_alias["membrane"].address.well == "A01"
-    assert by_alias["membrane"].address.site == "1"
-    assert by_alias["membrane"].address.channel == "2"
+    assert by_alias["membrane"].address.value_for(AllComponents.WELL) == "A01"
+    assert by_alias["membrane"].address.value_for(AllComponents.SITE) == "1"
+    assert by_alias["membrane"].address.value_for(AllComponents.CHANNEL) == "2"
     assert by_alias["membrane"].ref.backend_address == "raw/membrane_A01_s1.png"
 
     metadata = projection_set.metadata_dict(
@@ -241,7 +241,7 @@ def test_source_binding_workspace_projects_semantic_identity_after_raw_selection
         filemanager=_filemanager(),
     ).projections
 
-    assert projection.address.channel == "MCP_DNA"
+    assert projection.address.value_for(AllComponents.CHANNEL) == "MCP_DNA"
     original_metadata = dict(
         SourceMetadataRoleView(projection.source_metadata).original_items()
     )
@@ -300,7 +300,10 @@ def test_source_binding_workspace_remaps_store_addresses_and_labels(tmp_path):
     )
 
     assert {
-        (projection.address.well, projection.address.site)
+        (
+            projection.address.value_for(AllComponents.WELL),
+            projection.address.value_for(AllComponents.SITE),
+        )
         for projection in projection_set.projections
     } == {("B02", "3")}
     assert metadata[FIELDS.WELLS] == {"B02": None}
@@ -360,11 +363,11 @@ def test_source_binding_workspace_projects_declared_groups_to_wells(tmp_path):
 
     assert {
         (
-            projection.address.well,
-            projection.address.site,
-            projection.address.channel,
-            projection.address.z_index,
-            projection.address.timepoint,
+            projection.address.value_for(AllComponents.WELL),
+            projection.address.value_for(AllComponents.SITE),
+            projection.address.value_for(AllComponents.CHANNEL),
+            projection.address.value_for(AllComponents.Z_INDEX),
+            projection.address.value_for(AllComponents.TIMEPOINT),
         )
         for projection in projection_set.projections
     } == {
@@ -408,7 +411,10 @@ def test_source_binding_workspace_projects_registered_well_parts(tmp_path):
         filemanager=_filemanager(),
     )
 
-    assert {projection.address.well for projection in projection_set.projections} == {
+    assert {
+        projection.address.value_for(AllComponents.WELL)
+        for projection in projection_set.projections
+    } == {
         "A01",
         "B02",
     }
@@ -541,12 +547,12 @@ def test_source_binding_workspace_projector_order_matches_aliases(tmp_path):
         projection.source_alias: projection for projection in projection_set.projections
     }
 
-    assert by_alias["DAPI"].address.well == "A01"
-    assert by_alias["DAPI"].address.site == "1"
-    assert by_alias["DAPI"].address.channel == "1"
-    assert by_alias["Actin"].address.well == "A01"
-    assert by_alias["Actin"].address.site == "1"
-    assert by_alias["Actin"].address.channel == "2"
+    assert by_alias["DAPI"].address.value_for(AllComponents.WELL) == "A01"
+    assert by_alias["DAPI"].address.value_for(AllComponents.SITE) == "1"
+    assert by_alias["DAPI"].address.value_for(AllComponents.CHANNEL) == "1"
+    assert by_alias["Actin"].address.value_for(AllComponents.WELL) == "A01"
+    assert by_alias["Actin"].address.value_for(AllComponents.SITE) == "1"
+    assert by_alias["Actin"].address.value_for(AllComponents.CHANNEL) == "2"
 
 
 def test_order_source_sets_join_imported_metadata_across_aliases(tmp_path):
@@ -691,7 +697,7 @@ def test_order_source_sets_preserve_shared_virtual_stack_coordinates(tmp_path):
     )
 
     assert tuple(
-        (projection.source_alias, projection.address.z_index)
+        (projection.source_alias, projection.address.value_for(AllComponents.Z_INDEX))
         for projection in projection_set.projections
     ) == (
         ("DNA", "1"),
@@ -856,7 +862,7 @@ def test_imported_metadata_later_stage_overrides_extracted_field(tmp_path):
 
     assert metadata["Plate"] == "plate_1"
     assert metadata["Dose"] == "0"
-    assert projection.address.well == "A01"
+    assert projection.address.value_for(AllComponents.WELL) == "A01"
     original = dict(SourceMetadataRoleView(metadata).original_items())
     assert original["Plate"] == "plate_1"
     assert original["Well"] == "A01"
@@ -1176,7 +1182,8 @@ def test_source_binding_workspace_projector_expands_declared_source_stack(tmp_pa
     ).projection_set(tmp_path, (stack,), filemanager=_filemanager())
 
     assert tuple(
-        projection.address.z_index for projection in projection_set.projections
+        projection.address.value_for(AllComponents.Z_INDEX)
+        for projection in projection_set.projections
     ) == ("1", "2", "3")
     assert tuple(
         projection.ref.source_axis_indices for projection in projection_set.projections
@@ -1229,7 +1236,7 @@ def test_order_source_sets_pair_expanded_stack_planes_across_aliases(tmp_path):
     assert tuple(
         (
             projection.source_alias,
-            projection.address.z_index,
+            projection.address.value_for(AllComponents.Z_INDEX),
             projection.ref.source_axis_indices,
         )
         for projection in projection_set.projections
@@ -1350,7 +1357,10 @@ def test_source_binding_workspace_broadcasts_explicit_single_members(tmp_path):
         if projection.source_alias == "Flatfield"
     )
     assert len(flatfield_projections) == 2
-    assert {projection.address.site for projection in flatfield_projections} == {
+    assert {
+        projection.address.value_for(AllComponents.SITE)
+        for projection in flatfield_projections
+    } == {
         "1",
         "2",
     }
@@ -1430,7 +1440,10 @@ def test_metadata_source_sets_reuse_declared_partial_match_members(tmp_path):
     assert {
         projection.ref.backend_address for projection in illumination_projections
     } == {"plate_illum.tif"}
-    assert {projection.address.site for projection in illumination_projections} == {
+    assert {
+        projection.address.value_for(AllComponents.SITE)
+        for projection in illumination_projections
+    } == {
         "1",
         "2",
     }

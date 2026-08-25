@@ -59,7 +59,6 @@ from openhcs.microscopes import create_microscope_handler
 from openhcs.microscopes.microscope_base import MicroscopeHandler
 from openhcs.core.alias_property import AliasProperty
 
-
 # Import generic component system - required for orchestrator functionality
 
 # Optional napari import for visualization
@@ -174,11 +173,11 @@ class PipelineOrchestrator:
         self.plate_path = plate_path
         self.workspace_path = workspace_path
         self.source_plate_path = plate_path
-        self.input_workspace_preparation_result: InputWorkspacePreparationResult | None = None
+        self.input_workspace_preparation_result: (
+            InputWorkspacePreparationResult | None
+        ) = None
         self.selected_pipeline_path = (
-            Path(selected_pipeline_path)
-            if selected_pipeline_path is not None
-            else None
+            Path(selected_pipeline_path) if selected_pipeline_path is not None else None
         )
 
         if self.plate_path is None and self.workspace_path is None:
@@ -699,10 +698,10 @@ class PipelineOrchestrator:
             A dictionary mapping well IDs to their execution status (success/error and details).
         """
         if progress_context is None:
-            raise ValueError(
-                "progress_context is required for execute_compiled_plate."
-            )
-        execution_progress_context = ProgressExecutionContext.from_value(progress_context)
+            raise ValueError("progress_context is required for execute_compiled_plate.")
+        execution_progress_context = ProgressExecutionContext.from_value(
+            progress_context
+        )
 
         return execute_compiled_plate_request(
             self,
@@ -841,7 +840,9 @@ class PipelineOrchestrator:
             )
 
             filenames = self.filemanager.list_files(
-                str(self.input_dir), backend_to_use, extensions=LOADABLE_IMAGE_EXTENSIONS
+                str(self.input_dir),
+                backend_to_use,
+                extensions=LOADABLE_IMAGE_EXTENSIONS,
             )
             logger.info(
                 "Component key discovery: listed %d files (extensions=%s)",
@@ -863,12 +864,9 @@ class PipelineOrchestrator:
                 if parsed_info:
                     # Extract all requested components from this filename
                     for component in component_sets:
-                        component_name = component.value
-                        if (
-                            component_name in parsed_info
-                            and parsed_info[component_name] is not None
-                        ):
-                            component_sets[component].add(parsed_info[component_name])
+                        component_value = parsed_info.value_for(component)
+                        if component_value is not None:
+                            component_sets[component].add(component_value)
                 else:
                     logger.warning(
                         "Could not parse filename: %s (backend=%s input_dir=%s)",
@@ -959,12 +957,16 @@ class PipelineOrchestrator:
         previous_config = self._pipeline_config
         previous_source_bindings = None
         if previous_config is not None:
-            previous_source_bindings = ObjectState(
-                previous_config
-            ).to_saved_resolved_object().source_bindings_config
-        current_source_bindings = ObjectState(
-            pipeline_config
-        ).to_saved_resolved_object().source_bindings_config
+            previous_source_bindings = (
+                ObjectState(previous_config)
+                .to_saved_resolved_object()
+                .source_bindings_config
+            )
+        current_source_bindings = (
+            ObjectState(pipeline_config)
+            .to_saved_resolved_object()
+            .source_bindings_config
+        )
         source_bindings_changed = (
             previous_source_bindings is not None
             and previous_source_bindings != current_source_bindings

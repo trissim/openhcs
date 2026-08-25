@@ -17,6 +17,7 @@ from openhcs.constants.constants import (
     AllComponents,
     Backend,
 )
+from openhcs.core.components.parser_metaprogramming import FilenameParseResult
 from openhcs.core.image_file_serialization import prepare_disk_image_payloads
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_array_values import RuntimeArrayData
@@ -150,7 +151,7 @@ def generate_materialized_paths(
 class ZarrBatchItemIdentity:
     """Application-owned semantic identity for one stored image plane."""
 
-    component_values: Mapping[str, str | int]
+    component_values: FilenameParseResult
     filename_qualifier: str | None = None
 
     @classmethod
@@ -159,7 +160,16 @@ class ZarrBatchItemIdentity:
         output_identity: FunctionOutputIdentity,
     ) -> "ZarrBatchItemIdentity":
         return cls(
-            component_values=output_identity.component_values,
+            component_values=FilenameParseResult(
+                (
+                    (
+                        component,
+                        output_identity.component_values.get(component.value),
+                    )
+                    for component in AllComponents
+                ),
+                extension=output_identity.extension or ".tif",
+            ),
             filename_qualifier=output_identity.filename_qualifier,
         )
 
@@ -233,7 +243,7 @@ class ZarrComponentAxisProjection(
         if component is None:
             raise RuntimeError("Zarr axis projection is missing its component owner")
         presence = tuple(
-            identity.component_values.get(component.value) is not None
+            identity.component_values.value_for(component) is not None
             for identity in item_identities
         )
         if not any(presence):
@@ -253,7 +263,7 @@ class ZarrComponentAxisProjection(
         component = cls.strategy_key
         if component is None:
             raise RuntimeError("Zarr axis projection is missing its component owner")
-        value = identity.component_values.get(component.value)
+        value = identity.component_values.value_for(component)
         if value is None:
             raise ValueError(
                 f"Parsed output identity is missing component {component.value!r}"
@@ -391,14 +401,13 @@ def get_all_image_paths(
         extensions=LOADABLE_IMAGE_EXTENSIONS,
         recursive=True,
     )
-    axis_key = MULTIPROCESSING_AXIS.value
     parser = microscope_handler.parser
 
     axis_files = []
     for file_path in all_image_files:
         filename = os.path.basename(str(file_path))
         metadata = parser.parse_filename(filename)
-        if metadata and metadata.component_matches(axis_key, axis_id):
+        if metadata and metadata.component_matches(MULTIPROCESSING_AXIS, axis_id):
             axis_files.append(str(file_path))
 
     full_file_paths = sorted(

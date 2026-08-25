@@ -155,7 +155,9 @@ class SourceImageIdentity:
         parsed = parser.parse_filename(Path(self.path).name)
         if parsed is None:
             return self
-        return self.with_missing_from(type(self)(component_metadata=parsed))
+        return self.with_missing_from(
+            type(self)(component_metadata=parsed.wire_mapping())
+        )
 
 
 @dataclass(slots=True)
@@ -204,7 +206,10 @@ class SourceImageProvenancePlane(ABC, metaclass=AutoRegisterMeta):
                 name
                 for name in (
                     self.source_image_name,
-                    *(contributor.source_image_name for contributor in self.contributors),
+                    *(
+                        contributor.source_image_name
+                        for contributor in self.contributors
+                    ),
                 )
                 if name is not None
             )
@@ -303,10 +308,7 @@ class SourceImageProvenancePlaneRecord:
             )
         return plane_type(
             SourceImageIdentity(self.path, self.component_metadata),
-            tuple(
-                contributor.plane()
-                for contributor in self.contributors
-            ),
+            tuple(contributor.plane() for contributor in self.contributors),
             self.source_image_name,
         )
 
@@ -689,9 +691,7 @@ class SourceImageProvenance:
         for plane in self.source_image_provenance_planes.planes:
             represented = (
                 tuple(
-                    contributor.source_identity.with_missing_from(
-                        plane.source_identity
-                    )
+                    contributor.source_identity.with_missing_from(plane.source_identity)
                     for contributor in plane.contributors
                 )
                 if plane.contributors
@@ -978,9 +978,7 @@ class SourceImageProvenance:
 
         if self.source_plane_count == 0:
             return (
-                ()
-                if source_image_name in self.represented_source_image_names
-                else None
+                () if source_image_name in self.represented_source_image_names else None
             )
         if self.source_image_names:
             if len(self.source_image_names) == 1:
@@ -989,9 +987,7 @@ class SourceImageProvenance:
             elif len(self.source_image_names) == self.source_plane_count:
                 declared_selection = tuple(
                     plane_index
-                    for plane_index, declared_name in enumerate(
-                        self.source_image_names
-                    )
+                    for plane_index, declared_name in enumerate(self.source_image_names)
                     if source_image_name == declared_name
                 )
                 if declared_selection:
@@ -1121,9 +1117,7 @@ class SourceImageProvenance:
                     "one name per runtime plane: "
                     f"{len(names)} name(s) for {self.source_plane_count} plane(s)."
                 )
-            plane_names = (
-                names * self.source_plane_count if len(names) == 1 else names
-            )
+            plane_names = names * self.source_plane_count if len(names) == 1 else names
             renamed_planes: list[SourceImageProvenancePlane] = []
             runtime_index = 0
             for plane in provenance_planes.planes:
@@ -1509,9 +1503,7 @@ def source_component_metadata_consensus(
         return None
     field_names = tuple(
         dict.fromkeys(
-            field_name
-            for metadata in metadata_values
-            for field_name in metadata
+            field_name for metadata in metadata_values for field_name in metadata
         )
     )
     consensus: dict[str, SourceMetadataValue] = {}

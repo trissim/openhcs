@@ -394,7 +394,7 @@ class SourcePatternResolutionContext:
                 metadata,
                 {
                     key: value
-                    for key, value in parsed_metadata.items()
+                    for key, value in parsed_metadata.wire_mapping().items()
                     if key not in metadata
                 },
                 path=path,

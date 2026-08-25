@@ -291,8 +291,8 @@ def _declared_crop_candidates(
             and candidate.component_labels.get(AllComponents.CHANNEL.value)
             == channel_label
             and candidate.declared_address is not None
-            and candidate.declared_address.z_index == "1"
-            and candidate.declared_address.timepoint == "1"
+            and candidate.declared_address.value_for(AllComponents.Z_INDEX) == "1"
+            and candidate.declared_address.value_for(AllComponents.TIMEPOINT) == "1"
         )
         if len(matches) != 1:
             raise ValueError(

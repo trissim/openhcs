@@ -21,6 +21,7 @@ from openhcs.core.artifacts import (
 )
 from openhcs.core.axis_filter import StepAxisFilterResolution, StepAxisFilterSet
 from openhcs.core.compiled_step_plan import CompiledStepPlan, MaterializedOutputPlan
+from openhcs.core.components.parser_metaprogramming import FilenameParseResult
 from openhcs.core.config import WellFilterMode
 from openhcs.core.function_patterns import compile_function_pattern
 from openhcs.core.runtime_image_loading import ImagePayloadSourceMetadataContext
@@ -176,10 +177,16 @@ class StreamingConfigStub(ViewerDisplayConfigABC):
 
 
 class ParserStub:
+    def bind_component_values(self, metadata, *, extension=None):
+        return FilenameParseResult.from_wire_mapping(
+            metadata,
+            extension=extension or ".tif",
+        )
+
     def parse_filename(self, name):
         stem = Path(name).stem
         well, site, channel = stem.split("_")
-        return complete_component_metadata(
+        metadata = complete_component_metadata(
             {
                 "well": well,
                 "site": site.removeprefix("s"),
@@ -187,12 +194,16 @@ class ParserStub:
                 "extension": "".join(Path(name).suffixes),
             }
         )
+        return FilenameParseResult(
+            ((component, metadata.get(component.value)) for component in AllComponents),
+            extension=str(metadata["extension"]),
+        )
 
-    def construct_filename(self, **metadata):
-        extension = metadata.get("extension") or ".tif"
+    def construct_filename(self, components):
+        metadata = components.components.wire_mapping()
         return (
             f"{metadata['well']}_s{metadata['site']}_w{metadata['channel']}"
-            f"{extension}"
+            f"{components.extension}"
         )
 
     def extract_component_coordinates(self, axis_id):
@@ -272,11 +283,11 @@ def record_output_path(
     assert metadata is not None
     output_identity = identity or FunctionOutputIdentity(
         component_values={
-            str(key): value
-            for key, value in metadata.items()
-            if str(key) != "extension"
+            str(component.value): value
+            for component, value in metadata.declared_values()
+            if value is not None
         },
-        extension=metadata.get("extension"),
+        extension=metadata.extension,
         source="test output path",
     )
     step_output_manifest(context).record_outputs(
@@ -757,7 +768,7 @@ def test_stream_outputs_projects_volumetric_source_stack_as_z_planes():
         def parse_filename(self, name):
             stem = Path(name).stem
             well, site, channel, z_index = stem.split("_")
-            return complete_component_metadata(
+            metadata = complete_component_metadata(
                 {
                     "well": well,
                     "site": site.removeprefix("s"),
@@ -766,12 +777,19 @@ def test_stream_outputs_projects_volumetric_source_stack_as_z_planes():
                     "extension": "".join(Path(name).suffixes),
                 }
             )
+            return FilenameParseResult(
+                (
+                    (component, metadata.get(component.value))
+                    for component in AllComponents
+                ),
+                extension=str(metadata["extension"]),
+            )
 
-        def construct_filename(self, **metadata):
-            extension = metadata.get("extension") or ".tif"
+        def construct_filename(self, components):
+            metadata = components.components.wire_mapping()
             return (
                 f"{metadata['well']}_s{metadata['site']}_w{metadata['channel']}"
-                f"_z{metadata['z_index']}{extension}"
+                f"_z{metadata['z_index']}{components.extension}"
             )
 
     path = "/tmp/output/A01_s1_w1_z1.tif"

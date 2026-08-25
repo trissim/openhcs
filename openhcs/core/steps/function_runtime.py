@@ -2785,11 +2785,13 @@ class PatternGroupRuntime:
             return matching_files
 
         parser = self.request.context.microscope_handler.parser
+        group_component_declaration = parser.component_for_name(group_component)
         filtered = [
             filename
             for filename in matching_files
             if (metadata := parser.parse_filename(Path(filename).name))
-            and str(metadata.get(group_component)) == str(component_value)
+            and str(metadata.value_for(group_component_declaration))
+            == str(component_value)
         ]
         if not filtered:
             raise ValueError(

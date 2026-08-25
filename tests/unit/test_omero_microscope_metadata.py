@@ -3,7 +3,37 @@ from __future__ import annotations
 import sys
 from types import ModuleType, SimpleNamespace
 
-from openhcs.microscopes.omero import OMEROMetadataHandler
+from openhcs.microscopes.omero import OMEROFilenameParser, OMEROMetadataHandler
+
+
+def test_omero_filename_parser_projects_polystore_address_declaration() -> None:
+    parser = OMEROFilenameParser()
+
+    filename = parser.construct_filename(
+        parser.bind_component_values(
+            {
+                "well": "AA01",
+                "site": 9,
+                "channel": 2,
+                "z_index": 3,
+                "timepoint": 4,
+            },
+            extension=".ome.tif",
+        )
+    )
+
+    assert filename == "AA01_s009_w2_z003_t004.ome.tif"
+    parsed = parser.parse_filename(filename)
+    assert parsed is not None
+    assert dict(parsed.wire_mapping()) == {
+        "well": "AA01",
+        "site": 9,
+        "channel": 2,
+        "z_index": 3,
+        "timepoint": 4,
+        "extension": ".ome.tif",
+    }
+    assert parser.extract_component_coordinates("AA01") == ("AA", "01")
 
 
 def test_grid_dimensions_follow_canonical_key_across_annotation_namespaces(
