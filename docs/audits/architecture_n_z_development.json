@@ -2420,7 +2420,7 @@
   },
   {
     "path": "docs/source/development/mcp_development.rst",
-    "source_sha256": "064441840bdfee6d8e99a951ae58679283adbebb0fd2f7b1dbeba7b8e24c930a",
+    "source_sha256": "de9684b35661b0f1bfaff91a3b35751e16c8b5f968758fe56643d6392770efb7",
     "audience": [
       "OpenHCS MCP developers"
     ],
@@ -2429,13 +2429,18 @@
     "authority": [
       {
         "path": "openhcs/mcp/dev_client.py",
-        "sha256": "f5d9094cac26f6be331c9a17df44aa97bc17d0f4ee61f7b3add806983b5d22cb",
-        "role": "Current development-client parser and persistent shell entry point."
+        "sha256": "38fae8370065e5dedadf48c9848232f2124afff7f28fefdaf75055cd49449ab8",
+        "role": "Current development-client parser, persistent shell entry point, and persistent-session selected-surface preflight."
+      },
+      {
+        "path": "openhcs/mcp/dev_client_commanding.py",
+        "sha256": "9c7cfd9b2918d9a714c8a04eda02cf30c7013dd18afb19e00500ec0aae193c38",
+        "role": "One-shot command orchestration and selected-surface preflight before subprocess construction."
       },
       {
         "path": "openhcs/mcp/dev_client_core.py",
-        "sha256": "7ea1a327032289633128b2b3c560a161a37a4df81bac9a59487f5c50df3011f2",
-        "role": "MCP dev-client session, receipt decoding, skip-reason-owned summary status, surface, timeout, and workflow-owned terminal-state criteria."
+        "sha256": "a1f5a3b1fadf8bd283eaf6a20ce79bbc9ad24cac03c542f6b0f254f036f35d52",
+        "role": "MCP dev-client session, declaration-derived command surface validation, receipt decoding, skip-reason-owned summary status, timeout, and workflow-owned terminal-state criteria."
       },
       {
         "path": "openhcs/mcp/dev_client_commands/ui.py",
@@ -2449,8 +2454,8 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "d308c73e7281b72fe50328fb87c6a149fc37be2026bf9b3b7c7de0e8f8706d31",
-        "role": "Regression proof for stale-row rejection, idempotent initialization, and every declared or malformed bridge-receipt continuation outcome."
+        "sha256": "6f13c9f0c1e1d4d744f03f94edc90d881fa1dc19144a9fab01a5ad4568feac54",
+        "role": "Regression proof for selected-surface preflight, stale-row rejection, idempotent initialization, and every declared or malformed bridge-receipt continuation outcome."
       },
       {
         "path": "openhcs/mcp/bootstrap.py",
@@ -2524,7 +2529,8 @@
       "The selected-workflow waiter could accept a terminal Plate Manager row from an earlier operation without proving dispatch receipt or a state revision.",
       "Reusing a live UI exposed that idempotent initialization can complete without changing the Plate Manager revision; the workflow criterion now owns that exception while compile and run retain the stale-row guard.",
       "Capability-local stdout guards left delayed imports and background native output able to corrupt the persistent JSON-RPC stream; process stdout is now reserved once by the stdio transport.",
-      "The command examples omitted the bounded ROI-summary and atomic viewer-isolation probes needed to validate current viewer agent workflows."
+      "The command examples omitted the bounded ROI-summary and atomic viewer-isolation probes needed to validate current viewer agent workflows.",
+      "The how-to did not state that the development client validates commands against the selected declaration-derived surface before starting or dispatching; the selected-profile workflow now fails early with compatible registered profiles."
     ],
     "disposition": "revise",
     "validation": [
@@ -2545,7 +2551,8 @@
       "On 2026-08-24, re-read the complete how-to against the new stdio transport owner; the page now rejects service-local redirects and the exact persistent-session regression passed.",
       "On 2026-08-25, re-read the complete how-to against the current viewer command declarations and added the bounded ROI-summary and atomic-isolation probes without duplicating their argument schema.",
       "Three isolated real desktop, MCP, ZMQ, execution, and Napari rehearsals completed all nine acceptance requirements; ROI summaries returned in 0.063-0.485 seconds and bulk isolation in 0.078-1.078 seconds within the 2-second command budget, with no UI-log errors.",
-      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
+      "On 2026-08-25, re-read the complete how-to and revised the fresh and persistent development workflow after declaration-derived selected-surface preflight was added; focused tests and fresh desktop/full probes passed."
     ]
   },
   {

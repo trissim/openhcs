@@ -103,6 +103,11 @@ an installed-client projection. When ``OPENHCS_UI_BRIDGE_DESCRIPTOR`` or
 client forwards that selector to its fresh MCP child. An explicit descriptor
 directory remains authoritative and does not fall back to process discovery.
 
+Each command is validated against the selected declaration-derived surface
+before a one-shot MCP child starts and before a persistent session dispatches
+the call. If the selected surface excludes the tool, the client exits with the
+registered profiles that include it.
+
 Persistent Current-Checkout Session
 -----------------------------------
 

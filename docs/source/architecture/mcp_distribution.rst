@@ -143,6 +143,11 @@ retain separate state owners: a headless session does not create Plate Manager
 rows or ObjectState history. Capability discovery and bound tools/resources are
 filtered by the same ``AgentCapabilitySurfaceSelection`` instance.
 
+The development client resolves each requested tool to its capability
+declaration and validates it against that same selected profile before starting
+a one-shot server or dispatching through a persistent session. An unsupported
+command reports the compatible registered profiles.
+
 Hosted HTTP lane
 ----------------
 
