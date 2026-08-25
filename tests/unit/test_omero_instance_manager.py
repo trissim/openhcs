@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 import yaml
@@ -23,6 +24,15 @@ services: {}
 """,
         encoding="utf-8",
     )
+
+
+def _install_gateway_module(monkeypatch, gateway: object) -> None:
+    gateway_module = ModuleType("omero.gateway")
+    gateway_module.BlitzGateway = lambda *args, **kwargs: gateway
+    omero_module = ModuleType("omero")
+    omero_module.gateway = gateway_module
+    monkeypatch.setitem(sys.modules, "omero", omero_module)
+    monkeypatch.setitem(sys.modules, "omero.gateway", gateway_module)
 
 
 def test_default_compose_declaration_is_a_packaged_resource() -> None:
@@ -203,7 +213,7 @@ def test_connection_requires_declared_table_service(monkeypatch) -> None:
     table_service = SimpleNamespace(
         wait_until_available=observed_connections.append,
     )
-    monkeypatch.setattr("omero.gateway.BlitzGateway", lambda *args, **kwargs: gateway)
+    _install_gateway_module(monkeypatch, gateway)
     monkeypatch.setattr(
         "openhcs.runtime.omero_instance_manager.OMERO_TABLE_SERVICE",
         table_service,
@@ -221,7 +231,7 @@ def test_connection_rejects_unavailable_table_service(monkeypatch) -> None:
     def reject_table_service(_connection) -> None:
         raise OMEROTableServiceUnavailableError("not ready")
 
-    monkeypatch.setattr("omero.gateway.BlitzGateway", lambda *args, **kwargs: gateway)
+    _install_gateway_module(monkeypatch, gateway)
     monkeypatch.setattr(
         "openhcs.runtime.omero_instance_manager.OMERO_TABLE_SERVICE",
         SimpleNamespace(wait_until_available=reject_table_service),

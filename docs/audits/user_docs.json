@@ -1902,7 +1902,7 @@
       },
       {
         "path": "tests/unit/test_omero_instance_manager.py",
-        "sha256": "27de75031bdc58219eabc459519ca05630893cbebeebb4821636d5d468249a86",
+        "sha256": "f1415bb91b2ae81405929685a89f86054337966d6aa292d1675b14a29707ccb0",
         "role": "Proves canonical compose resolution, pinned images, startup failure, table readiness, and fail-closed context entry."
       },
       {
