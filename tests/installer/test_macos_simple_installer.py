@@ -263,6 +263,10 @@ def test_macos_disk_image_cleanup_retains_exact_device_authority() -> None:
     assert "plutil -extract DeviceNode" in lifecycle
     assert 'diskutil unmount "$mounted_volume"' in lifecycle
     assert "DeviceIdentifier" not in lifecycle
+    assert "/bin/sync" in lifecycle
+    assert "local detach_attempt_limit=10" in lifecycle
+    assert "attempt <= detach_attempt_limit" in lifecycle
+    assert "attempt < detach_attempt_limit" in lifecycle
     assert '/usr/bin/hdiutil detach "$mounted_device"' in lifecycle
     assert '/usr/sbin/diskutil info "$mounted_device"' in lifecycle
     assert '/usr/bin/hdiutil detach -force "$mounted_device"' in lifecycle

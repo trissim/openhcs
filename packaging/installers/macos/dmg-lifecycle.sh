@@ -45,19 +45,25 @@ openhcs_attach_readonly_disk_image() {
 openhcs_detach_disk_image() {
   local mounted_device=$1
   local mounted_volume=$2
+  local detach_attempt_limit=10
   local attempt
 
-  if ! /usr/sbin/diskutil unmount "$mounted_volume"; then
-    /usr/sbin/diskutil unmount force "$mounted_volume"
+  /bin/sync
+  if /usr/sbin/diskutil info "$mounted_volume" >/dev/null 2>&1; then
+    if ! /usr/sbin/diskutil unmount "$mounted_volume"; then
+      /usr/sbin/diskutil unmount force "$mounted_volume"
+    fi
   fi
-  for attempt in 1 2 3; do
+  for ((attempt = 1; attempt <= detach_attempt_limit; attempt += 1)); do
     if /usr/bin/hdiutil detach "$mounted_device"; then
       return 0
     fi
     if ! /usr/sbin/diskutil info "$mounted_device" >/dev/null 2>&1; then
       return 0
     fi
-    /bin/sleep 1
+    if ((attempt < detach_attempt_limit)); then
+      /bin/sleep 1
+    fi
   done
   if /usr/bin/hdiutil detach -force "$mounted_device"; then
     return 0
