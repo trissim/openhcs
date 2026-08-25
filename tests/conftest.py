@@ -20,12 +20,13 @@ else:
 def cleanup_test_runtime_resources():
     """Release connection and process resources after every test."""
 
-    yield
-
     from polystore import cleanup_backend_connections
     from zmqruntime import ViewerStateManager
 
+    resolve_viewer_manager = ViewerStateManager.get_instance
+    yield
+
     try:
-        ViewerStateManager.get_instance().stop_all_viewers()
+        resolve_viewer_manager().stop_all_viewers()
     finally:
         cleanup_backend_connections(include_process_resources=True)
