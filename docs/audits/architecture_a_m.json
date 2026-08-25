@@ -561,21 +561,23 @@
         "role": "Implements generic nominal registration and family discovery."
       },
       {
-        "path": "openhcs/core/components/metaprogramming.py",
-        "sha256": "cab8923522c3b753b738d7ed0fc48ee321fb24fa6e44307e8113bf55384a79a4",
-        "role": "Composes those generic mechanisms for OpenHCS component semantics."
+        "path": "openhcs/constants/constants.py",
+        "sha256": "4cd6c29abd8b8e3ecc396b424d2b8b61e819a215fc1d770d3f6852b260a0691d",
+        "role": "Declares the OpenHCS component enum families derived from the domain component configuration."
       }
     ],
     "findings": [
       "The legacy page treated processor metaprogramming as one extracted owner even though signature analysis and nominal registration belong to separate packages.",
-      "python-introspect now also owns generic callable-declaration projection; the transition page now names that boundary."
+      "python-introspect now also owns generic callable-declaration projection; the transition page now names that boundary.",
+      "The unreferenced OpenHCS-local dynamic-interface registry contradicted the extracted ownership boundary and was removed."
     ],
     "disposition": "redirect",
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
       "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
       "On 2026-08-21, re-read the transition against signature_analyzer.py and callable_declaration.py after python-introspect 0.1.10.",
-      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
+      "On 2026-08-25, traced the zero-execution OpenHCS metaprogramming scaffold against every live import and replaced it as an authority with the actual component enum declaration owner."
     ]
   },
   {

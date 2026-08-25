@@ -234,11 +234,6 @@
     "diataxis": "explanation",
     "authority": [
       {
-        "path": "openhcs/core/components/metaprogramming.py",
-        "sha256": "cab8923522c3b753b738d7ed0fc48ee321fb24fa6e44307e8113bf55384a79a4",
-        "role": "Generates component declarations and their nominal identities from the component type definitions."
-      },
-      {
         "path": "openhcs/constants/constants.py",
         "sha256": "4cd6c29abd8b8e3ecc396b424d2b8b61e819a215fc1d770d3f6852b260a0691d",
         "role": "Declares the nominal microscopy dimensions, grouping identities, and shared component enums used by pipelines."
@@ -254,11 +249,14 @@
         "role": "Proves configuration consumers use declaration-owned metadata without parallel field registries."
       }
     ],
-    "findings": [],
+    "findings": [
+      "The previous audit named an unused dynamic-interface scaffold as the component-enum authority; the actual declaration owner is openhcs/constants/constants.py."
+    ],
     "disposition": "keep",
     "validation": [
       "Re-read docs/source/concepts/component_system_concepts.rst in full against repository base 32ca17c17 and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/components/metaprogramming.py; openhcs/constants/constants.py; openhcs/core/component_group_scope.py; tests/unit/test_configuration_mirror_deletion.py.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/constants/constants.py; openhcs/core/component_group_scope.py; tests/unit/test_configuration_mirror_deletion.py.",
+      "On 2026-08-25, traced component-enum construction to openhcs/constants/constants.py and removed the unreferenced parallel dynamic-interface registry from the authority record.",
       "Passed `.venv/bin/python scripts/validate_docs.py docs/source/concepts`: documentation validation passed: 12 files, 7 Python blocks."
     ]
   },
