@@ -4,6 +4,7 @@ Shared fixtures and utilities for integration tests.
 This module contains fixtures that are used across multiple integration tests.
 These fixtures were extracted from test_pipeline_orchestrator.py to avoid circular imports.
 """
+
 import shutil
 import pytest
 import io
@@ -14,18 +15,28 @@ import numpy as np
 from typing import List, Union
 
 from openhcs.core.orchestrator import PipelineOrchestrator
-from openhcs.core.config import GlobalPipelineConfig, VFSConfig, MaterializationBackend, ZarrConfig, PathPlanningConfig
+from openhcs.core.config import (
+    GlobalPipelineConfig,
+    VFSConfig,
+    MaterializationBackend,
+    ZarrConfig,
+    PathPlanningConfig,
+)
+
 # from openhcs.core.config import StitcherConfig, PipelineConfig
 # from openhcs.core.step_base import Step
 # from openhcs.core.step_registry import PositionGenerationStep, ImageStitchingStep, NormStep, CompositeStep
 # from openhcs.backends.position_generator.ashlar_backend import AshlarPositionGeneratorBackend as IP
 from openhcs.demo.synthetic_data import SyntheticMicroscopyGenerator
+
 # from openhcs.core.utils import stack
 from polystore.filemanager import FileManager
+
 # Using a simple list for image extensions
-DEFAULT_IMAGE_EXTENSIONS = ['.tif', '.tiff', '.png', '.jpg', '.jpeg']
+DEFAULT_IMAGE_EXTENSIONS = [".tif", ".tiff", ".png", ".jpg", ".jpeg"]
 # from ezstitcher.io.virtual_path.factory import VirtualPathFactory
 # from ezstitcher.io.virtual_path.base import PhysicalPath
+
 
 # Create a simple mock for IP
 class IP:
@@ -36,6 +47,7 @@ class IP:
     @staticmethod
     def tophat(img):
         return img
+
 
 # Define microscope configurations
 MICROSCOPE_CONFIGS = {
@@ -53,25 +65,28 @@ MICROSCOPE_CONFIGS = {
         "format": "OpenHCS",
         "test_dir_name": "openhcs_pipeline",
         "microscope_type": "auto",  # Use auto-detection (will detect openhcs_metadata.json)
-        "base_format": "ImageXpress"  # Generate ImageXpress data then add OpenHCS metadata
+        "base_format": "ImageXpress",  # Generate ImageXpress data then add OpenHCS metadata
     },
     "OMERO": {
         "format": "OMERO",
         "test_dir_name": "omero_test_plate",  # Will be created dynamically
         "microscope_type": "omero",
         "is_virtual": True,  # Flag to indicate virtual backend
-        "requires_connection": True  # Flag to indicate OMERO connection needed
-    }
+        "requires_connection": True,  # Flag to indicate OMERO connection needed
+    },
 }
 
 # Test parameters
 syn_data_params = {
     "grid_size": (3, 3),
-    "tile_size": (256, 256),  # Increased from 64x64 to 128x128 for patch size compatibility
+    "tile_size": (
+        256,
+        256,
+    ),  # Increased from 64x64 to 128x128 for patch size compatibility
     "overlap_percent": 10,
     "wavelengths": 2,  # Changed from 3 to 2 channels
     "cell_size_range": (3, 6),
-    "wells": ['A01', 'D02', 'B03', 'B06']
+    "wells": ["A01", "D02", "B03", "B06"],
 }
 
 # Test-specific parameters that can be customized per microscope format
@@ -91,7 +106,7 @@ TEST_PARAMS = {
                 "r01c01f2p01-ch1sk1fk1fl1.tiff",  # A01, site 2, z=1, channel 1
                 "r02c02f1p01-ch1sk1fk1fl1.tiff",  # B02, site 1, z=1, channel 1
                 "r02c02f1p01-ch2sk1fk1fl1.tiff",  # B02, site 1, z=1, channel 2
-            ]
+            ],
         }
     },
     "OpenHCS": {
@@ -101,7 +116,7 @@ TEST_PARAMS = {
     "OMERO": {
         "default": syn_data_params
         # OMERO uses same params as base formats
-    }
+    },
 }
 
 # Backend configurations for parametrized testing
@@ -110,7 +125,7 @@ BACKEND_CONFIGS = ["disk", "zarr"]
 # Data type configurations for parametrized testing
 DATA_TYPE_CONFIGS = {
     "2d": {"z_stack_levels": 1, "name": "flat_plate"},
-    "3d": {"z_stack_levels": 3, "name": "zstack_plate"}  # Changed from 5 to 3 z-planes
+    "3d": {"z_stack_levels": 3, "name": "zstack_plate"},  # Changed from 5 to 3 z-planes
 }
 
 # Execution mode configurations for parametrized testing
@@ -131,36 +146,37 @@ SEQUENTIAL_CONFIGS = {
         "name": "none",
         "description": "No sequential processing",
         "sequential_components": [],
-        "should_fail": False
+        "should_fail": False,
     },
     "valid_1_component": {
         "name": "valid_1_component",
         "description": "Sequential with 1 component (TIMEPOINT)",
         "sequential_components": [component1],
-        "should_fail": False
+        "should_fail": False,
     },
     "valid_2_components": {
         "name": "valid_2_components",
         "description": "Sequential with 2 components (TIMEPOINT, CHANNEL)",
         "sequential_components": ["TIMEPOINT", "CHANNEL"],
         "should_fail": False,
-        "note": "CHANNEL will be filtered out for create_composite step (which uses CHANNEL in variable_components), but applied to other steps"
+        "note": "CHANNEL will be filtered out for create_composite step (which uses CHANNEL in variable_components), but applied to other steps",
     },
     "invalid_overlap": {
         "name": "invalid_overlap",
         "description": "CHANNEL conflicts with create_composite's variable_components - will be filtered out",
         "sequential_components": ["CHANNEL"],
         "should_fail": False,
-        "note": "CHANNEL will be filtered out for create_composite step, but applied to other steps"
+        "note": "CHANNEL will be filtered out for create_composite step, but applied to other steps",
     },
     "invalid_duplicates": {
         "name": "invalid_duplicates",
         "description": "Invalid: Duplicate TIMEPOINT in sequential",
         "sequential_components": [component1, component1],
         "should_fail": True,
-        "expected_error": "sequential_components contains duplicates"
-    }
+        "expected_error": "sequential_components contains duplicates",
+    },
 }
+
 
 @pytest.fixture(scope="module")
 def microscope_config(request):
@@ -168,17 +184,20 @@ def microscope_config(request):
     # The actual parameter value is passed by pytest via pytest_generate_tests hook
     return request.param
 
+
 @pytest.fixture(scope="module")
 def backend_config(request):
     """Provide backend configuration - parametrized by pytest_generate_tests."""
     # The actual parameter value is passed by pytest via pytest_generate_tests hook
     return request.param
 
+
 @pytest.fixture(scope="module")
 def data_type_config(request):
     """Provide data type configuration - parametrized by pytest_generate_tests."""
     # The actual parameter value is passed by pytest via pytest_generate_tests hook
     return request.param
+
 
 @pytest.fixture(scope="module")
 def execution_mode(request):
@@ -190,19 +209,20 @@ def execution_mode(request):
     Threading mode is useful for debugging, multiprocessing for production testing.
     """
     # Store original value if it exists
-    original_value = os.environ.get('OPENHCS_USE_THREADING')
+    original_value = os.environ.get("OPENHCS_USE_THREADING")
 
     # Set the execution mode based on parameter
     use_threading = request.param == "threading"
-    os.environ['OPENHCS_USE_THREADING'] = 'true' if use_threading else 'false'
+    os.environ["OPENHCS_USE_THREADING"] = "true" if use_threading else "false"
 
     yield request.param
 
     # Restore original value after test
     if original_value is not None:
-        os.environ['OPENHCS_USE_THREADING'] = original_value
+        os.environ["OPENHCS_USE_THREADING"] = original_value
     else:
-        os.environ.pop('OPENHCS_USE_THREADING', None)
+        os.environ.pop("OPENHCS_USE_THREADING", None)
+
 
 @pytest.fixture(scope="module")
 def zmq_execution_mode(request):
@@ -218,19 +238,20 @@ def zmq_execution_mode(request):
     ZMQ mode tests the full execution stack including client/server communication.
     """
     # Store original value if it exists
-    original_value = os.environ.get('OPENHCS_USE_ZMQ_EXECUTION')
+    original_value = os.environ.get("OPENHCS_USE_ZMQ_EXECUTION")
 
     # Set the ZMQ execution mode based on parameter
     use_zmq = request.param == "zmq"
-    os.environ['OPENHCS_USE_ZMQ_EXECUTION'] = 'true' if use_zmq else 'false'
+    os.environ["OPENHCS_USE_ZMQ_EXECUTION"] = "true" if use_zmq else "false"
 
     yield request.param
 
     # Restore original value after test
     if original_value is not None:
-        os.environ['OPENHCS_USE_ZMQ_EXECUTION'] = original_value
+        os.environ["OPENHCS_USE_ZMQ_EXECUTION"] = original_value
     else:
-        os.environ.pop('OPENHCS_USE_ZMQ_EXECUTION', None)
+        os.environ.pop("OPENHCS_USE_ZMQ_EXECUTION", None)
+
 
 @pytest.fixture(scope="module")
 def sequential_config(request):
@@ -238,11 +259,14 @@ def sequential_config(request):
     # The actual parameter value is passed by pytest via pytest_generate_tests hook
     return request.param
 
+
 @pytest.fixture(scope="module")
 def base_test_dir(microscope_config):
     """Create base test directory for the specific microscope type."""
     # Create the base directory using Path
-    base_dir = Path(__file__).parent.parent / "tests_data" / microscope_config["test_dir_name"]
+    base_dir = (
+        Path(__file__).parent.parent / "tests_data" / microscope_config["test_dir_name"]
+    )
 
     # Suppress stdout and stderr to avoid microscopy data generator output
     with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
@@ -261,12 +285,13 @@ def base_test_dir(microscope_config):
     # if base_dir.exists():
     #     shutil.rmtree(base_dir)
 
+
 @pytest.fixture
 def test_function_dir(base_test_dir, microscope_config, request):
     """Create test directory for a specific test function."""
     pytest.skip("Smell-loop gated - do not run until certified")
     # Get the test function name without the parameter
-    test_name = request.node.originalname or request.node.name.split('[')[0]
+    test_name = request.node.originalname or request.node.name.split("[")[0]
     # Create a directory for this specific test function
     test_dir = base_test_dir / f"{test_name}[{microscope_config['format']}]"
 
@@ -275,13 +300,17 @@ def test_function_dir(base_test_dir, microscope_config, request):
 
     yield test_dir
 
+
 @pytest.fixture(scope="module")
 def test_params(microscope_config):
     """Get test parameters for the specific microscope type."""
     # Use the format key instead of microscope_type
     return TEST_PARAMS[microscope_config["format"]]["default"]
 
-def create_synthetic_plate_data(test_function_dir, microscope_config, test_params, plate_name, z_stack_levels):
+
+def create_synthetic_plate_data(
+    test_function_dir, microscope_config, test_params, plate_name, z_stack_levels
+):
     """Create synthetic plate data for the specified microscope type.
 
     Args:
@@ -312,12 +341,12 @@ def create_synthetic_plate_data(test_function_dir, microscope_config, test_param
             wavelengths=test_params.get("wavelengths", 2),
             z_stack_levels=z_stack_levels,
             cell_size_range=test_params.get("cell_size_range", (5, 10)),
-            wells=test_params.get("wells", ['A01']),
+            wells=test_params.get("wells", ["A01"]),
             format=generator_format,  # Use base format for generation
             # For OpenHCS, include all filename components
             include_all_components=(microscope_config["format"] == "OpenHCS"),
             # Skip files if specified (for testing missing image handling)
-            skip_files=test_params.get("skip_files", None)
+            skip_files=test_params.get("skip_files", None),
         )
         generator.generate_dataset()
 
@@ -334,6 +363,7 @@ def create_synthetic_plate_data(test_function_dir, microscope_config, test_param
     # Return the plate directory
     return plate_dir
 
+
 @pytest.fixture
 def plate_dir(test_function_dir, microscope_config, test_params, data_type_config):
     """
@@ -345,7 +375,9 @@ def plate_dir(test_function_dir, microscope_config, test_params, data_type_confi
     import shutil
 
     # Handle OMERO specially
-    if microscope_config.get("is_virtual") and microscope_config.get("requires_connection"):
+    if microscope_config.get("is_virtual") and microscope_config.get(
+        "requires_connection"
+    ):
         from openhcs.runtime.omero_instance_manager import OMEROInstanceManager
         import tempfile
         from pathlib import Path
@@ -353,14 +385,22 @@ def plate_dir(test_function_dir, microscope_config, test_params, data_type_confi
         # Connect to OMERO (automatically starts docker-compose if needed)
         omero_manager = OMEROInstanceManager()
         print("🔄 Connecting to OMERO (will auto-start if needed)...")
-        if not omero_manager.connect(timeout=120):  # Increased timeout for docker startup
-            pytest.skip("OMERO server not available and could not be started automatically. Check Docker installation.")
+        if not omero_manager.connect(
+            timeout=120
+        ):  # Increased timeout for docker startup
+            pytest.fail(
+                "The explicitly selected OMERO stack did not become fully available."
+            )
 
         # Generate synthetic data using the SAME generator as disk-based tests
         # This ensures identical test data across all backends
         with tempfile.TemporaryDirectory() as tmpdir:
             # OMERO uses ImageXpress-compatible filenames, so generate ImageXpress format
-            generator_format = "ImageXpress" if microscope_config["format"] == "OMERO" else microscope_config["format"]
+            generator_format = (
+                "ImageXpress"
+                if microscope_config["format"] == "OMERO"
+                else microscope_config["format"]
+            )
 
             # Use the same SyntheticMicroscopyGenerator with same parameters
             generator = SyntheticMicroscopyGenerator(
@@ -371,7 +411,7 @@ def plate_dir(test_function_dir, microscope_config, test_params, data_type_confi
                 wavelengths=test_params.get("wavelengths", 2),
                 z_stack_levels=data_type_config["z_stack_levels"],
                 cell_size_range=test_params.get("cell_size_range", (5, 10)),
-                wells=test_params.get("wells", ['A01']),
+                wells=test_params.get("wells", ["A01"]),
                 format=generator_format,  # Use ImageXpress format for OMERO
             )
 
@@ -380,12 +420,15 @@ def plate_dir(test_function_dir, microscope_config, test_params, data_type_confi
 
             # Upload to OMERO with grid dimensions
             from tests.integration.helpers.omero_utils import upload_plate_to_omero
+
             plate_id = upload_plate_to_omero(
                 omero_manager.conn,
                 tmpdir,
                 plate_name=f"Test_{data_type_config['name']}",
                 microscope_format=generator_format,  # Use ImageXpress format
-                grid_dimensions=test_params.get("grid_size", (3, 3))  # Pass grid dimensions
+                grid_dimensions=test_params.get(
+                    "grid_size", (3, 3)
+                ),  # Pass grid dimensions
             )
 
         yield plate_id
@@ -400,7 +443,7 @@ def plate_dir(test_function_dir, microscope_config, test_params, data_type_confi
             microscope_config=microscope_config,
             test_params=test_params,
             plate_name=data_type_config["name"],
-            z_stack_levels=data_type_config["z_stack_levels"]
+            z_stack_levels=data_type_config["z_stack_levels"],
         )
 
         # Clean up workspace directory if it exists from previous runs
@@ -411,6 +454,7 @@ def plate_dir(test_function_dir, microscope_config, test_params, data_type_confi
 
         yield plate_path
 
+
 # Keep legacy fixtures for backward compatibility
 @pytest.fixture
 def flat_plate_dir(test_function_dir, microscope_config, test_params):
@@ -420,9 +464,10 @@ def flat_plate_dir(test_function_dir, microscope_config, test_params):
         microscope_config=microscope_config,
         test_params=test_params,
         plate_name="flat_plate",
-        z_stack_levels=1  # Flat plate has only 1 Z-level
+        z_stack_levels=1,  # Flat plate has only 1 Z-level
     )
     yield plate_path
+
 
 @pytest.fixture
 def zstack_plate_dir(test_function_dir, microscope_config, test_params):
@@ -432,22 +477,26 @@ def zstack_plate_dir(test_function_dir, microscope_config, test_params):
         microscope_config=microscope_config,
         test_params=test_params,
         plate_name="zstack_plate",
-        z_stack_levels=5  # Z-stack plate has 5 Z-levels
+        z_stack_levels=5,  # Z-stack plate has 5 Z-levels
     )
     yield plate_path
+
 
 # Mock thread tracking utilities
 def track_thread_activity(func):
     """Mock decorator for tracking thread activity."""
     return func
 
+
 def clear_thread_activity():
     """Mock function for clearing thread activity."""
     pass
 
+
 def print_thread_activity_report():
     """Mock function for printing thread activity report."""
     pass
+
 
 @pytest.fixture
 def thread_tracker():
@@ -467,19 +516,17 @@ def thread_tracker():
     # Restore the original method
     PipelineOrchestrator.process_well = original_process_well
 
+
 @pytest.fixture
 def base_pipeline_config(microscope_config):
     """Create a base pipeline configuration with default values."""
     # Using a simple dictionary instead of PipelineConfig
     config = {
-        "stitcher": {
-            "tile_overlap": 10.0,
-            "max_shift": 50,
-            "margin_ratio": 0.1
-        },
+        "stitcher": {"tile_overlap": 10.0, "max_shift": 50, "margin_ratio": 0.1},
         "num_workers": 1,
     }
     return config
+
 
 @pytest.fixture
 def debug_global_config(execution_mode, backend_config):
@@ -497,12 +544,13 @@ def debug_global_config(execution_mode, backend_config):
         num_workers=2,  # Changed from 1 to 2 workers
         path_planning=PathPlanningConfig(
             sub_dir="images",  # Default subdirectory for processed data
-            output_dir_suffix="_outputs"  # Suffix for output directories
+            output_dir_suffix="_outputs",  # Suffix for output directories
         ),
         vfs=VFSConfig(materialization_backend=MaterializationBackend(backend_config)),
         zarr=ZarrConfig(),
-        use_threading=use_threading
+        use_threading=use_threading,
     )
+
 
 def create_config(base_config, **kwargs):
     """Create a new configuration by overriding base config values."""
@@ -516,21 +564,30 @@ def create_config(base_config, **kwargs):
     # Return the updated dictionary
     return config_dict
 
+
 def normalize(stack):
     """Apply true histogram equalization to an entire stack."""
-    return IP.stack_percentile_normalize(stack, low_percentile=0.1, high_percentile=99.99)
+    return IP.stack_percentile_normalize(
+        stack, low_percentile=0.1, high_percentile=99.99
+    )
+
 
 def calcein_process(stack):
     """Apply tophat filter to Calcein images."""
     return [IP.tophat(img) for img in stack]
 
+
 def dapi_process(stack):
     """Apply tophat filter to DAPI images."""
-    stack = IP.stack_percentile_normalize(stack, low_percentile=0.1, high_percentile=99.9)
+    stack = IP.stack_percentile_normalize(
+        stack, low_percentile=0.1, high_percentile=99.9
+    )
     return [IP.tophat(img) for img in stack]
 
-def find_image_files(directory: Union[str, Path], pattern: str = "*",
-                  recursive: bool = True) -> List[Path]:
+
+def find_image_files(
+    directory: Union[str, Path], pattern: str = "*", recursive: bool = True
+) -> List[Path]:
     """
     Find all image files in a directory matching a pattern using breadth-first traversal.
 
@@ -560,7 +617,9 @@ def find_image_files(directory: Union[str, Path], pattern: str = "*",
                     if entry.is_file():
                         # Check if file matches pattern and has image extension
                         if fnmatch.fnmatch(entry.name, pattern):
-                            if entry.suffix.lower() in [ext.lower() for ext in DEFAULT_IMAGE_EXTENSIONS]:
+                            if entry.suffix.lower() in [
+                                ext.lower() for ext in DEFAULT_IMAGE_EXTENSIONS
+                            ]:
                                 image_files.append((entry, depth))
                     elif entry.is_dir():
                         # Add subdirectory to queue for later processing

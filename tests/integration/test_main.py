@@ -496,7 +496,9 @@ def _initialize_orchestrator(
         # Connect to OMERO
         omero_manager = OMEROInstanceManager()
         if not omero_manager.connect(timeout=60):
-            pytest.skip("OMERO server not available - skipping OMERO tests")
+            pytest.fail(
+                "The explicitly selected OMERO stack did not become fully available."
+            )
         register_cleanup_callback(omero_manager.close)
 
         # Register OMERO backend with connection in global storage registry
@@ -831,21 +833,6 @@ def test_main(
         test_config = TestConfig(
             Path(plate_dir), backend_config, execution_mode, microscope_config
         )
-
-    # For OMERO tests, connect to OMERO (automatically starts if needed)
-    if test_config.is_omero:
-        from openhcs.runtime.omero_instance_manager import OMEROInstanceManager
-
-        print("� Connecting to OMERO (will auto-start if needed)...")
-        omero_manager = OMEROInstanceManager()
-        if not omero_manager.connect(
-            timeout=120
-        ):  # Increased timeout for docker startup
-            pytest.skip(
-                "OMERO server not available and could not be started automatically. Check Docker installation."
-            )
-        omero_manager.close()
-        print("✅ OMERO server is ready")
 
     print(
         f"{CONSTANTS.START_INDICATOR} with plate: {plate_dir}, backend: {backend_config}, microscope: {microscope_config['format']}, mode: {execution_mode}, zmq: {zmq_execution_mode}, sequential: {sequential_config['name']}"

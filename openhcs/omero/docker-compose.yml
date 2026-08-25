@@ -1,7 +1,9 @@
 services:
 
   database:
-    image: "postgres:16"
+    # Pin the tested database release so a cold installation cannot silently
+    # acquire a different server stack from the same compose declaration.
+    image: "postgres:16.15"
     environment:
       POSTGRES_USER: omero
       POSTGRES_DB: omero
@@ -13,9 +15,9 @@ services:
       - "database:/var/lib/postgresql/data"
 
   omeroserver:
-    # This container uses the tag for the latest server release of OMERO 5
-    # To upgrade to the next major release, increment the major version number
-    image: "openmicroscopy/omero-server:5"
+    # OMERO.server components start independently. Keep the validated release
+    # explicit and upgrade it through the integration suite.
+    image: "openmicroscopy/omero-server:5.6.18"
     environment:
       CONFIG_omero_db_host: database
       CONFIG_omero_db_user: omero

@@ -580,6 +580,15 @@ jobs:
       - name: Show OMERO logs on failure
         if: failure()
         run: |
+          echo "=== OMERO Component Diagnostics ==="
+          sudo docker compose -f openhcs/omero/docker-compose.yml exec -T omeroserver \
+            sh -lc 'cd /opt/omero/server/OMERO.server && bin/omero admin diagnostics' || true
+          echo "=== OMERO Table Service Log ==="
+          sudo docker compose -f openhcs/omero/docker-compose.yml exec -T omeroserver \
+            sh -lc 'cd /opt/omero/server/OMERO.server && cat var/log/Tables-0.log' || true
+          echo "=== OMERO Grid Error Log ==="
+          sudo docker compose -f openhcs/omero/docker-compose.yml exec -T omeroserver \
+            sh -lc 'cd /opt/omero/server/OMERO.server && cat var/log/master.err' || true
           echo "=== OMERO Server Logs ==="
           sudo docker compose -f openhcs/omero/docker-compose.yml logs omeroserver || true
           echo "=== OMERO Web Logs ==="
