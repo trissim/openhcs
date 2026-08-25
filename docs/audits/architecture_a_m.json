@@ -556,7 +556,7 @@
       },
       {
         "path": "external/metaclass-registry/src/metaclass_registry/core.py",
-        "sha256": "92cf0e278ff8447075f687b3f4f99b37ad1650bf2d486c97c376d4436aef5ca3",
+        "sha256": "ed4dd1dfd0e4e05e916fec39f19b4b8bd526e776aa0c96e3abe9b1ffbdff0505",
         "role": "Implements generic nominal registration and family discovery."
       },
       {
@@ -573,7 +573,8 @@
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
       "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
-      "On 2026-08-21, re-read the transition against signature_analyzer.py and callable_declaration.py after python-introspect 0.1.10."
+      "On 2026-08-21, re-read the transition against signature_analyzer.py and callable_declaration.py after python-introspect 0.1.10.",
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
     ]
   },
   {
@@ -966,7 +967,7 @@
   },
   {
     "path": "docs/source/architecture/external_foundations.rst",
-    "source_sha256": "015fae795151e3a0479790c36bc234ea593ba251ffe70a874229297c4a8c9f60",
+    "source_sha256": "7a0ead9662bd7e6573ab7604ac519777def085aefa9db46581fe6f2108ef840c",
     "audience": [
       "OpenHCS maintainers",
       "first-party package integrators"
@@ -976,7 +977,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
+        "sha256": "d6571fa647d121c5100820323d2483ca727b1e8f41a833894f76ee269343a069",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -996,8 +997,8 @@
       },
       {
         "path": "external/metaclass-registry/README.md",
-        "sha256": "7ce7812f506269acd60a81e37fc5002cf6f41ff8f81addcb499b4bc255c7e5c7",
-        "role": "States metaclass-registry ownership of reusable nominal registration."
+        "sha256": "668dab2cc7c536778ca0010f957c85335eda5eb2392e60c62d08b11d79009c37",
+        "role": "States metaclass-registry ownership of reusable nominal registration and host-logging-safe discovery imports."
       },
       {
         "path": "external/PolyStore/README.md",
@@ -1038,6 +1039,11 @@
         "path": "external/pycodify/README.md",
         "sha256": "f32db990f5e1feb01ee3d7adbe1195fd691c8964acd789759901d00170cecf7e",
         "role": "States pycodify ownership of Python-source serialisation and formatter composition."
+      },
+      {
+        "path": "external/arraybridge/src/arraybridge/types.py",
+        "sha256": "17f6892c99d9e3a281982ce21e3b5f924be9ab31e473e9038dbb2e45cf7cb9a9",
+        "role": "Owns declaration-derived child-process environments for optional array frameworks."
       }
     ],
     "findings": [
@@ -1047,7 +1053,8 @@
       "Qt-rendered snapshot capture moved to pyqt-reactive; OpenHCS retains window discovery, authorisation, and domain transport.",
       "Exact spawned endpoint-process ownership moved to ZMQRuntime; OpenHCS retains viewer persistence and application shutdown policy.",
       "ZMQRuntime 0.2.15 made each retained endpoint process observe and reap its own terminal exit without caller polling.",
-      "ZMQRuntime 0.2.17 made owner-requested connection-attempt cancellation a typed generic result and disconnects a connection that wins a late readiness race."
+      "ZMQRuntime 0.2.17 made owner-requested connection-attempt cancellation a typed generic result and disconnects a connection that wins a late readiness race.",
+      "The package catalogue did not name ArrayBridge child-process environment ownership or metaclass-registry host-logging-safe discovery imports."
     ],
     "disposition": "revise",
     "validation": [
@@ -1065,7 +1072,8 @@
       "On 2026-08-23, re-read the complete reference against ZMQRuntime 0.2.15 and its 148-test package suite; process-exit observation and child reaping remain generic package responsibilities.",
       "On 2026-08-24, re-read the complete reference and every page dependent on the OpenHCS package declaration after ZMQRuntime 0.2.16 made IPC cleanup race-safe; generic transport ownership and the documented installation boundaries remain accurate.",
       "On 2026-08-24, re-read the complete reference, README, and every page dependent on the OpenHCS package declaration against ZMQRuntime 0.2.17; 149 package tests, warning-fatal owner docs, built distributions, Python 3.10-3.13 CI, and public package artifacts passed.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
     ]
   },
   {
@@ -1293,7 +1301,7 @@
     "authority": [
       {
         "path": "external/metaclass-registry/src/metaclass_registry/core.py",
-        "sha256": "92cf0e278ff8447075f687b3f4f99b37ad1650bf2d486c97c376d4436aef5ca3",
+        "sha256": "ed4dd1dfd0e4e05e916fec39f19b4b8bd526e776aa0c96e3abe9b1ffbdff0505",
         "role": "Implements AutoRegisterMeta, RegistryConfig, families, and generic registry ownership."
       },
       {
@@ -1308,12 +1316,13 @@
     "disposition": "redirect",
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
-      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
     ]
   },
   {
     "path": "docs/source/architecture/gpu_resource_management.rst",
-    "source_sha256": "df6f50aeb54b99ef1d4e7f2833d647d74a39e1258f4573bcffb12f366b4b423e",
+    "source_sha256": "998a32e50c5ed6c59b44f3f7b0fc686b19fe619c63b459e0be7b273c555bc637",
     "audience": [
       "OpenHCS compiler and runtime maintainers",
       "GPU integration authors"
@@ -1328,8 +1337,8 @@
       },
       {
         "path": "external/arraybridge/src/arraybridge/types.py",
-        "sha256": "d68b691ea1497c673d458e34542ccd0a4aa94e747c71f724858e381e7b86b9d2",
-        "role": "Owns framework import policy, device discovery and scopes, and allocator cleanup on MemoryType declarations."
+        "sha256": "17f6892c99d9e3a281982ce21e3b5f924be9ab31e473e9038dbb2e45cf7cb9a9",
+        "role": "Declares framework capabilities, callable memory metadata, and the child-process import environment owned by each MemoryType member."
       },
       {
         "path": "openhcs/core/callable_contract.py",
@@ -1384,7 +1393,8 @@
     ],
     "findings": [
       "The former process-level GPU scheduler and GPU-memory validator were deleted; capability now descends from ArrayBridge declarations into a pipeline-wide framework assignment and exact per-step bindings, including execution memory.",
-      "Worker execution now consumes the compiled framework/device footprint for device scopes and cleanup instead of a scalar GPU identifier or copied framework registry."
+      "Worker execution now consumes the compiled framework/device footprint for device scopes and cleanup instead of a scalar GPU identifier or copied framework registry.",
+      "The explanation did not state that MemoryType declarations project framework import requirements into fresh catalogue and execution-server processes."
     ],
     "disposition": "revise",
     "validation": [
@@ -1393,7 +1403,8 @@
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
     ]
   },
   {
@@ -1697,7 +1708,7 @@
       },
       {
         "path": "external/arraybridge/src/arraybridge/types.py",
-        "sha256": "d68b691ea1497c673d458e34542ccd0a4aa94e747c71f724858e381e7b86b9d2",
+        "sha256": "17f6892c99d9e3a281982ce21e3b5f924be9ab31e473e9038dbb2e45cf7cb9a9",
         "role": "Declares reusable memory types together with framework capability and device behaviour."
       },
       {
@@ -1732,7 +1743,8 @@
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
     ]
   },
   {

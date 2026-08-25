@@ -17,7 +17,10 @@ the nominal runtime value.
 Callable catalogue placement follows the same rule. A local nominal declaration
 may claim its callables and the public catalogue module that exposes them;
 ``RegistryService`` derives the catalogue projection from that owner. The
-catalogue must not keep a second hand-written function-name or module table.
+catalogue admits only names on that public module surface and must not keep a
+second hand-written function-name or module table. A private decorated helper
+can retain its callable contract for explicit transport without becoming a
+browsable catalogue entry.
 
 Generic code queries these declarations. It must not import concrete backend
 modules merely to learn names, maintain copied feature lists, or add fallback

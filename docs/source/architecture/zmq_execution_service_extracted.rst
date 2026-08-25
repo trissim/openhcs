@@ -46,7 +46,11 @@ The launcher's dedicated capability-preparation mode executes
 ``FunctionCatalogPreparation`` before importing or constructing the execution
 server. A cold registry cache therefore has one preparation process and cannot
 recursively start execution-server launchers while server modules are still
-being imported.
+being imported. Both that process and a newly spawned execution server receive
+the environment projected by ArrayBridge's ``MemoryType`` declarations. The
+same declaration-owned framework requirements therefore govern parent
+admission, catalogue preparation, and server startup; OpenHCS does not rebuild
+NVIDIA wheel paths in either launcher.
 
 ``RegistryService`` admits an optional backend only after that backend's own
 registry declaration proves its runtime warm-up and complete module inventory.
@@ -56,10 +60,12 @@ runtime therefore stays absent instead of reappearing after a failed import and
 invalidating an otherwise usable catalogue.
 
 For native callables, local nominal declarations own any catalogue-module
-projection. Cache identity includes the current source revision and framework
-admission context; a failed projection publishes no partial catalogue, and
-clearing the service removes every derived lookup view. The transport service
-therefore consumes one declaration-derived catalogue instead of synchronizing a
-second function registry.
+projection. Only declarations on that module's public surface enter the
+browsable catalogue; an explicitly transported private decorated callable can
+still be reconstructed from its own contract. Cache identity includes the
+current source revision and framework admission context; a failed projection
+publishes no partial catalogue, and clearing the service removes every derived
+lookup view. The transport service therefore consumes one declaration-derived
+catalogue instead of synchronizing a second function registry.
 
 See :doc:`external_foundations`.

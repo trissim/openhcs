@@ -28,8 +28,9 @@ or agent callables.
 
 ``CellProfilerModule`` is also the nominal callable-catalogue declaration. Each
 subclass owns its ``declared_function_names()``, while the CellProfiler backend
-package lazily projects the union through that registry. Do not add an export
-list beside the module declarations.
+package lazily projects the public union through that registry. Private helpers
+can support an implementation, but they do not become function-browser entries.
+Do not add an export list beside the module declarations.
 
 Source modules
 --------------

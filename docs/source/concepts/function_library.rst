@@ -63,7 +63,9 @@ versions and discovered functions can vary by installed extras and hardware.
 An optional backend appears only when its registry can load its runtime and
 declared module inventory. OpenHCS-native and custom functions are admitted only
 when every declared input, output, and execution framework is installed and
-allowed by the current process policy.
+allowed by the current process policy. The browsable native catalogue contains
+public module declarations; private decorated helpers remain internal unless an
+explicit pipeline transports their callable identity.
 
 Choosing preprocessing
 ----------------------

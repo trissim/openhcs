@@ -50,6 +50,13 @@ cleanup is applied to the exact compiled framework/device footprint. Workers do
 not rediscover framework semantics from function names or use one application-
 owned GPU registry for different framework namespaces.
 
+Fresh capability and execution-server processes receive the environment derived
+by ``MemoryType.subprocess_environment()`` before importing optional frameworks.
+Each memory member owns its import defaults and any native-library path
+projection. OpenHCS launchers consume the combined result; they do not mirror
+framework package layouts or rely on a parent process importing frameworks in a
+particular order.
+
 ``ProcessingContract`` is independent of memory type. It says whether a
 callable is semantically plane-local or stack-dependent. Likewise,
 ``variable_components`` defines the transported stack axis and ``group_by``

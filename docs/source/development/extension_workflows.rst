@@ -26,9 +26,9 @@ that needs the behavior.
      - ObjectState
    * - Memory conversion
      - ArrayBridge
-   * - Array framework or device discovery
-     - ArrayBridge ``MemoryType`` declaration; OpenHCS compiles the callable's
-       declared framework roles into per-step device bindings
+   * - Array framework, child import environment, or device discovery
+     - ArrayBridge ``MemoryType`` declaration; OpenHCS projects its process
+       environment and compiles callable roles into per-step device bindings
    * - Storage, format, or ROI
      - PolyStore
    * - Image pixel/container semantics

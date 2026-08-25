@@ -153,7 +153,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
+        "sha256": "d6571fa647d121c5100820323d2483ca727b1e8f41a833894f76ee269343a069",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -168,7 +168,8 @@
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
-      "On 2026-08-25, re-read the complete troubleshooting how-to after the viewer protocol gained bounded payload and isolation controls; its launch, connection, mismatch, and recovery guidance remains accurate."
+      "On 2026-08-25, re-read the complete troubleshooting how-to after the viewer protocol gained bounded payload and isolation controls; its launch, connection, mismatch, and recovery guidance remains accurate.",
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
     ]
   },
   {
@@ -465,7 +466,7 @@
   },
   {
     "path": "docs/source/concepts/function_library.rst",
-    "source_sha256": "585e2f47f4dac51f8bd3894a16a057bd7b27045e28e9e5ef8b81673ac72fd46c",
+    "source_sha256": "590159310f188990a8c070439a2e01689cef92e4cebe158ca15d1395b9c8e4c0",
     "audience": [
       "imaging scientists",
       "callable authors"
@@ -480,7 +481,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "9159f1b36bba3ee6e97dbe6f14cf3e58cef5e9f75803fce97172486c793291e1",
+        "sha256": "faf8d1fd8c6dc3f4e2cbffd42f19938a0f7af053435cdef4474418a95e5a44eb",
         "role": "Owns backend discovery, availability filtering, and the canonical process catalogue projection."
       },
       {
@@ -500,7 +501,7 @@
       },
       {
         "path": "external/arraybridge/src/arraybridge/types.py",
-        "sha256": "d68b691ea1497c673d458e34542ccd0a4aa94e747c71f724858e381e7b86b9d2",
+        "sha256": "17f6892c99d9e3a281982ce21e3b5f924be9ab31e473e9038dbb2e45cf7cb9a9",
         "role": "Owns framework capabilities and the canonical callable memory-metadata keys used by function declarations."
       },
       {
@@ -510,19 +511,20 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/openhcs_registry.py",
-        "sha256": "602e394c9cd27460839cd1b4f908b02ca752fc51816e314a2a8711b8c46c06c4",
-        "role": "Derives the OpenHCS callable catalogue and admits functions from every declared framework role."
+        "sha256": "aa3079341cb2af8788938e14efee6f9f6c4b6c01874227e74c6340850d525884",
+        "role": "Derives the public native callable catalogue while retaining explicit reconstruction from each callable declaration."
       },
       {
         "path": "tests/unit/test_library_registry_discovery.py",
-        "sha256": "5c2d79e32234454be5d0490b110056850f95653e7954fc4a55e4ee3a9298f471",
+        "sha256": "7e002cad969481c7a8ba30f6dbe64757fe589a7e12642bb3d1ef1956a42bbfd7",
         "role": "Proves declaration-derived catalogue discovery and process policy filtering."
       }
     ],
     "findings": [
       "The page did not explain that optional backend visibility requires a usable runtime and complete declared module inventory.",
       "The callable-contract explanation omitted the independent execution framework and did not state that catalogue admission checks every declared framework role.",
-      "The function-pattern explanation did not state the nominal enum-member requirement enforced by callable keyword validation."
+      "The function-pattern explanation did not state the nominal enum-member requirement enforced by callable keyword validation.",
+      "The function-library explanation did not distinguish public catalogue declarations from private decorated implementation helpers."
     ],
     "disposition": "revise",
     "validation": [
@@ -533,7 +535,8 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-22, re-read the complete explanation against CallableContract and its enum-value regression; the focused OpenHCS documentation-drift suite passed 238 tests.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
-      "On 2026-08-24, re-read the complete explanation after stdout containment moved out of function-catalog discovery and into the MCP transport; callable ownership and discovery guidance remain unchanged."
+      "On 2026-08-24, re-read the complete explanation after stdout containment moved out of function-catalog discovery and into the MCP transport; callable ownership and discovery guidance remain unchanged.",
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
     ]
   },
   {
@@ -612,7 +615,7 @@
   },
   {
     "path": "docs/source/concepts/module_structure.rst",
-    "source_sha256": "5504297b8b43076319b4dc16592bb8a98a11c207a1ee38425a01e3487a43215a",
+    "source_sha256": "04ef6811162bdf665f0f2c6b7bf9c4118e04f703da1df74cad5dac1c89a92102",
     "audience": [
       "contributors",
       "integrators"
@@ -622,7 +625,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
+        "sha256": "d6571fa647d121c5100820323d2483ca727b1e8f41a833894f76ee269343a069",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -667,14 +670,20 @@
       },
       {
         "path": "external/arraybridge/src/arraybridge/types.py",
-        "sha256": "d68b691ea1497c673d458e34542ccd0a4aa94e747c71f724858e381e7b86b9d2",
-        "role": "Declares the framework-local capability leaves and memory-metadata keys summarised in the ownership map."
+        "sha256": "17f6892c99d9e3a281982ce21e3b5f924be9ab31e473e9038dbb2e45cf7cb9a9",
+        "role": "Declares framework capabilities, callable memory metadata, and the child-process import environment owned by each MemoryType member."
+      },
+      {
+        "path": "external/metaclass-registry/src/metaclass_registry/discovery.py",
+        "sha256": "f92c94a448701a8dec278c8c6ce4b0a48c49ffc7df48620c5f2a51bc1734d24b",
+        "role": "Owns registry discovery imports that preserve host-owned root logging."
       }
     ],
     "findings": [
       "The package ownership map reduced ArrayBridge to memory conversion and omitted its callable metadata and framework-local execution capabilities.",
       "The package ownership map omitted python-introspect's callable-declaration projection responsibility.",
-      "The source-checkout note linked to a duplicate Markdown setup procedure instead of the canonical audited repository how-to."
+      "The source-checkout note linked to a duplicate Markdown setup procedure instead of the canonical audited repository how-to.",
+      "The package ownership reference omitted ArrayBridge child environments and metaclass-registry logging-safe discovery imports."
     ],
     "disposition": "revise",
     "validation": [
@@ -687,7 +696,8 @@
       "Rebuilt the python-introspect owner documentation after documenting declaration projection.",
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
       "On 2026-08-23, re-read the complete reference against ZMQRuntime 0.2.15 and the canonical repository-setup how-to; generic process-exit ownership and the setup link are now explicit.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
     ]
   },
   {
@@ -794,7 +804,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
+        "sha256": "d6571fa647d121c5100820323d2483ca727b1e8f41a833894f76ee269343a069",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -916,7 +926,8 @@
       "On 2026-08-24, re-read the complete installation how-to after the startup and update progress injection boundaries moved from structural Protocols to explicit ABCs; documented behavior remains unchanged, and 75 focused launch and update tests passed.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete installation how-to against the Windows and macOS installers, detached update worker, focused regressions, and hostile-index native CI fixture; added practical guidance for managed desktop installs without changing the separate manual-pip procedure.",
-      "On 2026-08-25, the installer and detached-update regression boundary passed 88 tests; documentation validation passed 154 files, 24 Python blocks, and 153 audited sources; Sphinx rendered all 152 included sources with warnings treated as errors."
+      "On 2026-08-25, the installer and detached-update regression boundary passed 88 tests; documentation validation passed 154 files, 24 Python blocks, and 153 audited sources; Sphinx rendered all 152 included sources with warnings treated as errors.",
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
     ]
   },
   {
@@ -1274,7 +1285,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
+        "sha256": "d6571fa647d121c5100820323d2483ca727b1e8f41a833894f76ee269343a069",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1307,7 +1318,8 @@
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete compatibility page after both native installers changed their package-index isolation; retaining one redirect remains correct and avoids a second installation procedure.",
-      "On 2026-08-25, documentation validation and the warning-clean Sphinx build passed with the compatibility redirect intact."
+      "On 2026-08-25, documentation validation and the warning-clean Sphinx build passed with the compatibility redirect intact.",
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
     ]
   },
   {
@@ -1331,7 +1343,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "9159f1b36bba3ee6e97dbe6f14cf3e58cef5e9f75803fce97172486c793291e1",
+        "sha256": "faf8d1fd8c6dc3f4e2cbffd42f19938a0f7af053435cdef4474418a95e5a44eb",
         "role": "Owns backend discovery, availability filtering, and the canonical process catalogue projection."
       },
       {
@@ -1347,7 +1359,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/pipeline/compiler.py; openhcs/interop/cellprofiler/pipeline_import.py; openhcs/processing/backends/lib_registry/registry_service.py; openhcs/pyqt_gui/widgets/plate_manager.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
     ]
   },
   {
@@ -1424,7 +1437,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "22b344e7a6a6d58899c77b26be0b6738eaa4d79492952024cf3ccead3f4debd2",
+        "sha256": "075c3f7ff3b0e205e7a8ee4d698ba5ea66f19b8f406497121d053d97ab5a7f18",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       },
       {
@@ -1522,7 +1535,8 @@
       "On 2026-08-23, re-read the complete how-to after catalogue preparation gained interruptible cancellation; 53 focused catalogue, help, and plate-inspection regressions passed.",
       "On 2026-08-23, re-read the complete how-to against the owning mismatch-restart workflow, detached worker, and installed verifier; 27 focused restart tests and all 66 installer contract tests passed, including a real parent-exit and detached-relaunch subprocess.",
       "On 2026-08-23, re-read the troubleshooting how-to after moving real detached restart acceptance out of the pre-install source contract and retaining it in the installed verifier; the user-facing mismatch and recovery guidance remains accurate.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
     ]
   },
   {
@@ -1684,7 +1698,7 @@
       },
       {
         "path": "external/arraybridge/src/arraybridge/types.py",
-        "sha256": "d68b691ea1497c673d458e34542ccd0a4aa94e747c71f724858e381e7b86b9d2",
+        "sha256": "17f6892c99d9e3a281982ce21e3b5f924be9ab31e473e9038dbb2e45cf7cb9a9",
         "role": "Owns the callable memory metadata and framework capabilities named by the memory-integration route."
       }
     ],
@@ -1699,12 +1713,13 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-24, rechecked the guide index after PolyStore moved OMERO table-column construction into its declaration owner; the integration routes remain accurate.",
-      "On 2026-08-25, re-read the complete guide index after the viewer protocol gained bounded payload and isolation controls; the compiler, memory, viewer, and OMERO routes remain accurate."
+      "On 2026-08-25, re-read the complete guide index after the viewer protocol gained bounded payload and isolation controls; the compiler, memory, viewer, and OMERO routes remain accurate.",
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
     ]
   },
   {
     "path": "docs/source/guides/memory_type_integration.rst",
-    "source_sha256": "bef45b694f4c5df31acc491b07b4c69b30fa2828b98597ce06a8db9c4b38cf91",
+    "source_sha256": "7890c784379b0de4ecc3871068f1acd13de522077d16a7589436ab94a8019adb",
     "audience": [
       "callable authors",
       "compiler contributors"
@@ -1714,8 +1729,8 @@
     "authority": [
       {
         "path": "external/arraybridge/src/arraybridge/types.py",
-        "sha256": "d68b691ea1497c673d458e34542ccd0a4aa94e747c71f724858e381e7b86b9d2",
-        "role": "Owns the canonical memory taxonomy, framework capabilities, and callable memory-metadata keys shared by integration packages."
+        "sha256": "17f6892c99d9e3a281982ce21e3b5f924be9ab31e473e9038dbb2e45cf7cb9a9",
+        "role": "Declares framework capabilities, callable memory metadata, and the child-process import environment owned by each MemoryType member."
       },
       {
         "path": "openhcs/constants/constants.py",
@@ -1789,7 +1804,8 @@
       }
     ],
     "findings": [
-      "The explanation covered only input/output memory boundaries and the removed application-owned GPU model; it now documents execution ownership, framework-local assignment, scoping, and cleanup."
+      "The explanation covered only input/output memory boundaries and the removed application-owned GPU model; it now documents execution ownership, framework-local assignment, scoping, and cleanup.",
+      "The integration explanation omitted the declaration-derived environment used before optional frameworks are imported in fresh child processes."
     ],
     "disposition": "revise",
     "validation": [
@@ -1798,7 +1814,8 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
     ]
   },
   {
@@ -1878,7 +1895,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
+        "sha256": "d6571fa647d121c5100820323d2483ca727b1e8f41a833894f76ee269343a069",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1921,7 +1938,8 @@
       "On 2026-08-24, re-read the explanation against FileManager contextual persistence, declaration-owned OMERO text and table semantics, execution-ledger consolidation, and the pinned cold-deployment image.",
       "On 2026-08-24, rechecked the execution-output paragraphs after consolidation began consuming nominal text output semantics; the documented OMERO backend boundary remains unchanged and accurate.",
       "On 2026-08-24, rechecked the complete explanation after PolyStore made OMERO column projection pandas 3-safe inside the table owner; every documented package boundary remains accurate.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
     ]
   },
   {
@@ -2203,7 +2221,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
+        "sha256": "d6571fa647d121c5100820323d2483ca727b1e8f41a833894f76ee269343a069",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2236,7 +2254,8 @@
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete compatibility page after both native installers changed their package-index isolation; retaining one redirect remains correct and avoids duplicated installer behaviour.",
-      "On 2026-08-25, documentation validation and the warning-clean Sphinx build passed with the compatibility redirect intact."
+      "On 2026-08-25, documentation validation and the warning-clean Sphinx build passed with the compatibility redirect intact.",
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
     ]
   },
   {
@@ -2660,17 +2679,17 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "9159f1b36bba3ee6e97dbe6f14cf3e58cef5e9f75803fce97172486c793291e1",
+        "sha256": "faf8d1fd8c6dc3f4e2cbffd42f19938a0f7af053435cdef4474418a95e5a44eb",
         "role": "Owns backend discovery, availability filtering, and the canonical process catalogue projection."
       },
       {
         "path": "tests/unit/test_library_registry_discovery.py",
-        "sha256": "5c2d79e32234454be5d0490b110056850f95653e7954fc4a55e4ee3a9298f471",
+        "sha256": "7e002cad969481c7a8ba30f6dbe64757fe589a7e12642bb3d1ef1956a42bbfd7",
         "role": "Proves backend discovery and availability filtering produce the expected callable registry."
       },
       {
         "path": "pyproject.toml",
-        "sha256": "d3dd6a60df12d4001f65533ef9ecbf77fa91475724052660186315da6c00e10c",
+        "sha256": "d6571fa647d121c5100820323d2483ca727b1e8f41a833894f76ee269343a069",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -2684,7 +2703,8 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
     ]
   },
   {
@@ -2984,7 +3004,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "22b344e7a6a6d58899c77b26be0b6738eaa4d79492952024cf3ccead3f4debd2",
+        "sha256": "075c3f7ff3b0e205e7a8ee4d698ba5ea66f19b8f406497121d053d97ab5a7f18",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       }
     ],
@@ -2997,7 +3017,8 @@
       "Compared its factual claims directly with the hash-pinned files listed in authority: external/pyqt-reactive/src/pyqt_reactive/widgets/log_viewer.py; external/pyqt-reactive/src/pyqt_reactive/services/coalesced_scan_requests.py; openhcs/pyqt_gui/services/reactor_providers.py; openhcs/pyqt_gui/config.py; openhcs/runtime/zmq_execution_client.py.",
       "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks.",
       "Re-reviewed the complete page after submission timeout ownership changed; its log-selection guidance remains accurate.",
-      "The complete pyqt-reactive suite passed 320 tests, and a live MCP-driven desktop session selected the port 7777 server entry and displayed that server's corresponding log."
+      "The complete pyqt-reactive suite passed 320 tests, and a live MCP-driven desktop session selected the port 7777 server entry and displayed that server's corresponding log.",
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
     ]
   },
   {

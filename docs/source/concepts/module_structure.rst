@@ -37,10 +37,11 @@ Extracted foundations
 The submodules under ``external/`` own reusable behavior:
 
 - ObjectState — lazy config and state/provenance
-- ArrayBridge — array conversion, callable memory metadata, and framework-local
-  device and execution mechanics
+- ArrayBridge — array conversion, callable memory metadata, child import
+  environments, and framework-local device and execution mechanics
 - PolyStore — storage, formats, ROI, and virtual workspace
-- metaclass-registry — generic nominal registry mechanics
+- metaclass-registry — generic nominal registry mechanics and logging-safe
+  discovery imports
 - pyqt-reactive — generic forms/widgets/services
 - python-introspect — callable/signature analysis and declaration projection
 - ZMQRuntime — generic execution and transport protocols

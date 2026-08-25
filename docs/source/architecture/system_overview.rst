@@ -81,9 +81,12 @@ Execution boundary
 transport-safe projection, worker assignments, and the compiled runtime
 environment. The environment includes multiprocessing start method, threading
 choice, and configured worker count. These execution-wide facts belong to the
-bundle. Framework-local device bindings belong to each ``CompiledStepPlan``
-because they are derived from that step's callable contracts. Workers execute
-the bundle without resolving declaration configuration again.
+bundle. ArrayBridge memory declarations separately project framework import
+requirements into fresh child environments; OpenHCS launchers consume that
+projection without maintaining framework-specific path rules. Framework-local
+device bindings belong to each ``CompiledStepPlan`` because they are derived
+from that step's callable contracts. Workers execute the bundle without
+resolving declaration configuration again.
 
 Runtime data is represented by nominal value families and stored under typed
 artifact keys. ``RuntimeValueStore`` is the authority for validated values,
@@ -99,10 +102,10 @@ plans, processing contracts, artifacts, runtime values, and integrations. The
 extracted packages own their generic mechanisms:
 
 - ObjectState: lazy configuration and edit/snapshot machinery
-- ArrayBridge: memory types, callable memory-role metadata, conversion, and
-  framework-local device/execution mechanics
+- ArrayBridge: memory types, callable memory-role metadata, conversion, child
+  import environments, and framework-local device/execution mechanics
 - PolyStore: storage, formats, ROI, and virtual-workspace primitives
-- metaclass-registry: generic nominal registration
+- metaclass-registry: generic nominal registration and logging-safe discovery
 - pyqt-reactive: generic reactive forms and widgets
 - python-introspect: callable/signature analysis and declaration projection
 - ZMQRuntime: generic process and transport protocols

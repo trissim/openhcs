@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from openhcs.core.lazy_gpu_imports import torch
+torch = pytest.importorskip("torch")
+
 from openhcs.processing.backends.assemblers.self_supervised_stitcher import (
     self_supervised_stitcher_func,
 )
-
-pytestmark = pytest.mark.skipif(not torch, reason="PyTorch is not installed")
 
 
 def test_empty_stitcher_result_preserves_declared_return_shape() -> None:

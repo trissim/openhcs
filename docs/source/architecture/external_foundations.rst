@@ -18,16 +18,17 @@ ObjectState
 ArrayBridge
   Owns memory-type taxonomy, callable memory metadata and decorators (including
   input, output, and execution memory), device-neutral array geometry, array
-  conversion, stack utilities, device streams, and OOM behaviour. OpenHCS
-  projects those declarations into callable contracts and owns semantic image
-  shape roles, compiled conversion and framework-device plans, worker resource
-  lifecycle, and resource policy. See
+  conversion, stack utilities, device streams, OOM behaviour, and the child-
+  process environment required to import each framework consistently. OpenHCS
+  projects those declarations into callable contracts and process launches, and
+  owns semantic image shape roles, compiled conversion and framework-device
+  plans, worker resource lifecycle, and resource policy. See
   :external+arraybridge:doc:`ArrayBridge documentation <index>`.
 
 metaclass-registry
   Owns ``AutoRegisterMeta``, ``RegistryConfig``, ``RegistryFamily``, discovery,
-  and generic caching. OpenHCS owns its nominal roots, declarations, and shared
-  selection mixins. See
+  generic caching, and discovery imports that preserve host-owned root logging.
+  OpenHCS owns its nominal roots, declarations, and shared selection mixins. See
   :external+metaclass-registry:doc:`metaclass-registry documentation <index>`.
 
 PolyStore
