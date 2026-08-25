@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PyQt provider contracts. The installed-GUI gate reaches the painted main
   window instead of treating dependency resolution alone as proof of startup
   compatibility.
+- Cold desktop startup no longer imports every optional array runtime while
+  constructing the storage registry. Torch, JAX, CuPy, and TensorFlow now load
+  only when their declared file formats are read or written.
 - Windows and macOS installers ignore inherited workstation package indexes,
   preventing an unreachable optional NVIDIA index from stalling an otherwise
   resolvable OpenHCS installation.
