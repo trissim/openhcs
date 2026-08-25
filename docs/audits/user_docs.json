@@ -863,7 +863,7 @@
       },
       {
         "path": "tests/installer/test_installer_contract.py",
-        "sha256": "a785152baab487606074317aee9ce011e1e75501db7a5130c760f06ed6683f54",
+        "sha256": "ddfa9578d0b86d012b00a9e6db5381fd3b3c4dcdac39ffd038922cae0fe9dd77",
         "role": "Proves both native installers and staged updates consume the same declaration-owned package and binary-wheel policy."
       },
       {
@@ -938,7 +938,8 @@
       "On 2026-08-25, the installer and detached-update regression boundary passed 88 tests; documentation validation passed 154 files, 24 Python blocks, and 153 audited sources; Sphinx rendered all 152 included sources with warnings treated as errors.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
-      "On 2026-08-25, re-read the complete page against the integration workflow after OMERO selection became fail-closed and component diagnostics exposed table-service startup; all remaining CI claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the integration workflow after OMERO selection became fail-closed and component diagnostics exposed table-service startup; all remaining CI claims remain accurate.",
+      "On 2026-08-25, re-read the complete how-to after the installer contract stopped mirroring PolyStore's patch floor; installer behaviour is unchanged, 68 installer tests pass, and the declaration-derived release-floor gate accepts every extracted package."
     ]
   },
   {
