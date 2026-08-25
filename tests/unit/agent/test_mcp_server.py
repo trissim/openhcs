@@ -7447,6 +7447,33 @@ def test_mcp_dev_client_runtime_scan_command_projects_tool_arguments():
     assert call.arguments["timeout_ms"] == 300
 
 
+def test_mcp_dev_client_rejects_command_absent_from_selected_surface_before_start():
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    import openhcs.mcp.dev_client as dev_client
+
+    parser = dev_client._build_parser()
+    args = parser.parse_args(("runtime-scan", "18777"))
+    command = dev_client.McpDevCommandSpec.for_name(args.command)
+
+    async def run_command():
+        return await command.run(
+            dev_client.McpDevServerSpec(
+                sys.executable,
+                module_name="must_not_start",
+                surface_profile=DesktopLocalCapabilitySurfaceProfile(),
+            ),
+            args,
+        )
+
+    with pytest.raises(
+        dev_client.McpDevCliUsageError,
+        match=("openhcs_scan_runtime_servers.*desktop.*" "--surface full"),
+    ):
+        asyncio.run(run_command())
+
+
 def test_mcp_dev_client_runtime_scan_accepts_comma_separated_ports():
     if importlib.util.find_spec("mcp") is None:
         return

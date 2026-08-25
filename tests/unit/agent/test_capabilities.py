@@ -18,6 +18,7 @@ from openhcs.agent.capabilities import (
     FullLocalCapabilitySurfaceProfile,
     HeadlessExecutionCapability,
     HostedTransportCapabilityMixin,
+    LocalCapabilitySurfaceProfile,
     PipelineDraftCapability,
     PlatePathCapability,
     RuntimeServerCliConnectionCapability,
@@ -240,6 +241,18 @@ def test_local_surface_profiles_filter_declaration_metadata_without_name_lists()
     assert "openhcs_create_orchestrator_session" in core_names
     assert "openhcs_stream_plate_files_to_viewer" not in core_names
     assert "openhcs_ui_bridge_status" not in core_names
+
+
+def test_local_surface_profiles_project_names_from_inclusion_policy():
+    runtime_capability = next(
+        capability
+        for capability in get_capability_registry().capabilities
+        if capability.cli_command == "runtime-scan"
+    )
+
+    assert LocalCapabilitySurfaceProfile.names_including(runtime_capability) == (
+        FullLocalCapabilitySurfaceProfile.name,
+    )
 
 
 def test_desktop_distribution_extras_derive_from_selected_capabilities():

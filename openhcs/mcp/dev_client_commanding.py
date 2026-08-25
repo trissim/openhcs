@@ -130,6 +130,8 @@ class McpDevCommandSpec(ABC, metaclass=AutoRegisterMeta):
         args: argparse.Namespace,
     ) -> McpDevToolBatchResponse | McpDevToolListResponse:
         """Execute this command through one freshly initialized stdio session."""
+        for call in self.calls_from_args(args):
+            call.require_surface_profile(server_spec.surface_profile)
         phase = McpDevClientPhase.START_SERVER
         with tempfile.TemporaryFile(
             mode="w+",

@@ -24,6 +24,7 @@ from openhcs.agent.capabilities import (
     AgentCapabilitySpec,
     FullLocalCapabilitySurfaceProfile,
     LocalCapabilitySurfaceProfile,
+    get_agent_capability,
 )
 from openhcs.agent.dto.common import (
     AgentCliRequest,
@@ -212,6 +213,29 @@ class McpDevToolCall:
 
     name: str
     arguments: dict[str, JsonValue]
+
+    def require_surface_profile(
+        self,
+        profile: LocalCapabilitySurfaceProfile,
+    ) -> None:
+        """Reject a call absent from the selected declaration-derived surface."""
+
+        try:
+            capability = get_agent_capability(self.name)
+        except KeyError as exc:
+            raise McpDevCliUsageError(
+                f"{self.name!r} is not a declared current-source OpenHCS capability."
+            ) from exc
+        if capability.supports_surface_profile(profile):
+            return
+        supported_profiles = LocalCapabilitySurfaceProfile.names_including(capability)
+        surface_options = ", ".join(
+            f"--surface {surface_name}" for surface_name in supported_profiles
+        )
+        raise McpDevCliUsageError(
+            f"{self.name!r} is not available on the {profile.name!r} MCP surface. "
+            f"Use one of: {surface_options}."
+        )
 
 
 class McpToolArgumentRecord(ABC):
@@ -984,6 +1008,7 @@ async def call_mcp_tool(
     call: McpDevToolCall,
     timeout_seconds: float,
 ) -> McpDevToolResult:
+    call.require_surface_profile(session.server_spec.surface_profile)
     result = await session.call_tool(
         call.name,
         call.arguments,

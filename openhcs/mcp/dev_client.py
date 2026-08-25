@@ -159,6 +159,8 @@ class McpDevClient:
         args: argparse.Namespace,
         timeout_seconds: float | None,
     ) -> McpDevToolBatchResponse | McpDevToolListResponse:
+        for call in command_spec.calls_from_args(args):
+            call.require_surface_profile(self.server_spec.surface_profile)
         command = command_spec.run_session(self._session, args)
         if timeout_seconds is None:
             return await command

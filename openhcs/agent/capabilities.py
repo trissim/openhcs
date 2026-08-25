@@ -291,6 +291,19 @@ class LocalCapabilitySurfaceProfile(ABC, metaclass=AutoRegisterMeta):
     def names(cls) -> tuple[str, ...]:
         return tuple(cls.__registry__)
 
+    @classmethod
+    def names_including(
+        cls,
+        capability: "AgentCapabilitySpec",
+    ) -> tuple[str, ...]:
+        """Return registered surface names that include one capability."""
+
+        return tuple(
+            name
+            for name in cls.names()
+            if capability.supports_surface_profile(cls.for_name(name))
+        )
+
     def includes(self, capability: "AgentCapabilitySpec") -> bool:
         """Return whether this profile includes one nominal capability."""
         del capability
