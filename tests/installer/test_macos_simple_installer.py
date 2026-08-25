@@ -236,6 +236,8 @@ def test_macos_release_is_one_verified_disk_image() -> None:
     assert "-srcfolder" not in dmg_builder
     assert '-size "${image_size_kib}k"' in dmg_builder
     assert "-fs APFS" in dmg_builder
+    assert "-type UDIF" in dmg_builder
+    assert "-format UDRW" not in dmg_builder
     assert 'ditto "$installer_app" "$mount_point/OpenHCS Installer.app"' in dmg_builder
     assert "-format UDZO" in dmg_builder
     assert "hdiutil verify" in dmg_builder

@@ -55,7 +55,7 @@ hdiutil create \
   -volname "OpenHCS Installer" \
   -size "${image_size_kib}k" \
   -fs APFS \
-  -format UDRW \
+  -type UDIF \
   "$writable_dmg"
 attachment=$(openhcs_attach_writable_disk_image \
   "$writable_dmg" \

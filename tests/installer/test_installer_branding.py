@@ -99,7 +99,8 @@ def test_macos_installer_bundle_and_window_share_the_packaged_icon() -> None:
     assert '"$mount_point/.VolumeIcon.icns"' in dmg_builder
     assert 'xcrun SetFile -a C "$mount_point"' in dmg_builder
     assert 'xcrun GetFileInfo -a "$mount_point" | grep -q C' in dmg_builder
-    assert "-format UDRW" in dmg_builder
+    assert "-type UDIF" in dmg_builder
+    assert "-format UDRW" not in dmg_builder
     assert "-format UDZO" in dmg_builder
     assert "packaging/installers/macos/build-dmg.sh" in publish
     assert "packaging/installers/macos/build-dmg.sh" in integration
