@@ -5,6 +5,7 @@ Called during application initialization.
 """
 
 import logging
+import re
 from typing import TYPE_CHECKING, Optional
 
 from PyQt6.QtWidgets import QWidget
@@ -38,8 +39,9 @@ def pipeline_scope_window_id(scope_id: str) -> str:
 
 
 def global_config_window_scope_id(scope_id: str) -> str:
-    """Resolve legacy global config scope requests to the stable window id."""
-    return OpenHCSUiWindowId.agent_window_id_for_manager_scope(scope_id)
+    """Resolve every config ObjectState route to the shared stable window id."""
+    del scope_id
+    return OpenHCSUiWindowId.global_config
 
 
 class OpenHCSWindowCreationAuthority:
@@ -127,7 +129,7 @@ class OpenHCSWindowCreationAuthority:
                 ),
             ),
             scope_id=OpenHCSUiWindowId.canonical_manager_scope_for_agent_window_id(
-                request.scope_id
+                global_config_window_scope_id(request.scope_id)
             ),
             title_text="Configure OpenHCS",
         )
@@ -415,6 +417,13 @@ def register_openhcs_window_handlers():
     )
     ScopeWindowRegistry.register_handler(
         pattern=rf"^{OpenHCSUiWindowId.global_config}$",
+        handler=window_authority.create_global_config_window,
+        window_scope_resolver=global_config_window_scope_id,
+    )
+    from openhcs.pyqt_gui.config import UIConfig
+
+    ScopeWindowRegistry.register_handler(
+        pattern=rf"^{re.escape(UIConfig.object_state_scope_id())}$",
         handler=window_authority.create_global_config_window,
         window_scope_resolver=global_config_window_scope_id,
     )

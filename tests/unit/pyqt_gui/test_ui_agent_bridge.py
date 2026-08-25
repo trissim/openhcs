@@ -81,6 +81,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowFocusRequest,
     UiWindowIdentity,
     UiWindowManagerScope,
+    UiWindowNavigateRequest,
     UiWindowOpenPolicy,
     UiWindowSnapshotRequest,
     UiWindowSummary,
@@ -185,6 +186,7 @@ from openhcs.pyqt_gui.services.ui_bridge_windows import (
     MainWindowBridgeProviderSet,
     ManagedWindowAction,
     UiWidgetTreeResultFactory,
+    UiWindowProjectionService,
 )
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 from openhcs.pyqt_gui.widgets.debug_toolbar import DebugToolbarWidget
@@ -1668,6 +1670,34 @@ def test_widget_tree_request_projects_transport_bounds_into_live_traversal() -> 
     assert policy.maximum_nodes == 17
     assert policy.maximum_text_length == request.maximum_text_length
     assert policy.maximum_item_model_nodes == request.maximum_item_model_nodes
+
+
+def test_window_navigation_result_reports_unsupported_target() -> None:
+    request = UiWindowNavigateRequest.from_fields(
+        window_id=OpenHCSUiWindowId.global_config,
+        field_path="not_a_declared_field",
+    )
+    summary = UiWindowSummary(
+        schema_version=SCHEMA_VERSION,
+        identity=UiWindowIdentity(window_id=OpenHCSUiWindowId.global_config),
+        window_kind="scope",
+        title="Configure OpenHCS",
+        visible=True,
+        focusable=True,
+        manager_scope=UiWindowManagerScope(OpenHCSUiWindowId.global_config),
+    )
+
+    result = UiWindowProjectionService._navigate_result(
+        request,
+        focused=True,
+        created=False,
+        navigated=False,
+        summary=summary,
+    )
+
+    assert not result.navigated
+    assert result.errors[0].code == "ui_window_navigation_target_unsupported"
+    assert result.errors[0].path == "not_a_declared_field"
 
 
 def test_widget_tree_result_filters_non_actionable_paths() -> None:

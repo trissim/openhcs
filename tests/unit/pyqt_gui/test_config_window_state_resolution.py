@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 import pytest
 from objectstate import (
@@ -17,6 +17,9 @@ from pyqt_reactive.services.scope_window_factory import (
     ScopeWindowCreationRequest,
     ScopeWindowRegistry,
 )
+from pyqt_reactive.services.scope_window_navigation import ScopeWindowNavigationService
+from pyqt_reactive.services.window_manager import WindowManager
+from pyqt_reactive.services.window_navigation import WindowNavigationRequest
 from pyqt_reactive.theming.color_scheme import ColorScheme
 
 from openhcs.constants.constants import VariableComponents
@@ -346,7 +349,10 @@ def test_config_window_page_count_and_visual_scope_own_presentation(qapp) -> Non
         global_window.close()
 
 
-def test_pipeline_config_header_owns_live_tab_actions_and_commit_groups(qapp) -> None:
+def test_pipeline_config_header_owns_live_tab_actions_and_commit_groups(
+    qapp,
+    qtbot,
+) -> None:
     from PyQt6.QtWidgets import QPushButton
 
     state = ObjectState(PipelineConfig(), scope_id="/tmp/plate")
@@ -357,8 +363,15 @@ def test_pipeline_config_header_owns_live_tab_actions_and_commit_groups(qapp) ->
 
     try:
         window.show()
-        for _ in range(4):
-            qapp.processEvents()
+        window.resize(1200, window.height())
+        qtbot.waitUntil(
+            lambda: (
+                window.active_tab.actions.isVisible()
+                and window._action_header._layout_widget._last_row1
+                == ["title", "group_auxiliary", "group_commit"]
+            ),
+            timeout=3000,
+        )
         header = window._action_header
         layout = header._layout_widget
         header_labels = {"Cancel", "Save", "Help"}
@@ -953,11 +966,14 @@ def test_window_registry_routes_global_config_to_stable_window_id() -> None:
 
     legacy_handler = ScopeWindowRegistry.find_handler("")
     stable_handler = ScopeWindowRegistry.find_handler(OpenHCSUiWindowId.global_config)
+    ui_handler = ScopeWindowRegistry.find_handler(UIConfig.object_state_scope_id())
 
     assert legacy_handler is not None
     assert stable_handler is not None
+    assert ui_handler is not None
     assert legacy_handler.handler.__name__ == "create_global_config_window"
     assert stable_handler.handler.__name__ == "create_global_config_window"
+    assert ui_handler.handler.__name__ == "create_global_config_window"
     assert (
         legacy_handler.navigation_target("").window_scope_id
         == OpenHCSUiWindowId.global_config
@@ -968,3 +984,101 @@ def test_window_registry_routes_global_config_to_stable_window_id() -> None:
         ).window_scope_id
         == OpenHCSUiWindowId.global_config
     )
+    assert (
+        ui_handler.navigation_target(UIConfig.object_state_scope_id()).window_scope_id
+        == OpenHCSUiWindowId.global_config
+    )
+
+
+def test_ui_config_scope_navigation_selects_owning_config_tab(qapp, qtbot) -> None:
+    global_state = ObjectState(GlobalPipelineConfig(), scope_id="")
+    ui_state = ObjectState(
+        get_default_ui_config(),
+        scope_id=UIConfig.object_state_scope_id(),
+    )
+    window = ConfigWindow(
+        tabs=(
+            ConfigWindowTabSpec(state=global_state),
+            ConfigWindowTabSpec(state=ui_state),
+        ),
+        scope_id="",
+        title_text="Configure OpenHCS",
+    )
+    register_openhcs_window_handlers()
+
+    try:
+        window.show()
+        qapp.processEvents()
+
+        result = ScopeWindowNavigationService.navigate(
+            WindowNavigationRequest(
+                scope_id=UIConfig.object_state_scope_id(),
+                field_path="logging",
+            )
+        )
+        qtbot.waitUntil(lambda: window.active_tab.state is ui_state, timeout=3000)
+
+        assert result.window is window
+        assert result.window_scope_id == OpenHCSUiWindowId.global_config
+        assert result.target_accepted
+        assert result.navigated
+        assert window.active_tab.state is ui_state
+        assert window.active_tab.view is not None
+
+        rejected = ScopeWindowNavigationService.navigate(
+            WindowNavigationRequest(
+                scope_id=UIConfig.object_state_scope_id(),
+                field_path="not_a_declared_field",
+            )
+        )
+        assert rejected.focused
+        assert not rejected.target_accepted
+        assert not rejected.navigated
+    finally:
+        window.close()
+        qapp.processEvents()
+
+
+def test_config_navigation_rejects_ambiguous_field_without_state_scope(qapp) -> None:
+    @dataclass(frozen=True)
+    class FirstConfig:
+        shared: int = 1
+
+    @dataclass(frozen=True)
+    class SecondConfig:
+        shared: int = 2
+
+    first_state = ObjectState(FirstConfig(), scope_id="first_config")
+    second_state = ObjectState(SecondConfig(), scope_id="second_config")
+    window = ConfigWindow(
+        tabs=(
+            ConfigWindowTabSpec(state=first_state),
+            ConfigWindowTabSpec(state=second_state),
+        ),
+        scope_id=OpenHCSUiWindowId.global_config,
+    )
+
+    try:
+        window.show()
+        qapp.processEvents()
+
+        ambiguous = WindowManager.focus_and_navigate_result(
+            OpenHCSUiWindowId.global_config,
+            field_path="shared",
+            requested_scope_id=OpenHCSUiWindowId.global_config,
+        )
+        assert ambiguous.focused
+        assert not ambiguous.target_accepted
+        assert not ambiguous.navigated
+
+        declared = WindowManager.focus_and_navigate_result(
+            OpenHCSUiWindowId.global_config,
+            field_path="shared",
+            requested_scope_id=second_state.scope_id,
+        )
+        qapp.processEvents()
+        assert declared.navigated
+        assert window.active_tab.state is second_state
+    finally:
+        window.close()
+        qapp.processEvents()

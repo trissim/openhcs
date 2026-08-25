@@ -269,6 +269,17 @@ class WindowProjectionResultAuthority:
             message=f"Unknown or closed UI window: {identity.window_id!r}",
         )
 
+    @staticmethod
+    def unsupported_navigation_target(request: UiWindowNavigateRequest) -> AgentError:
+        return AgentError(
+            code="ui_window_navigation_target_unsupported",
+            message=(
+                f"UI window {request.window_id!r} does not own the requested "
+                "item or field target."
+            ),
+            path=request.field_path,
+        )
+
 
 class WindowCloseResultBoundaryPolicy:
     """Single result boundary for UI window close operations."""
@@ -2386,18 +2397,18 @@ class UiWindowProjectionService(
 
         open_scope_id = self._open_window_manager_scope_id(identity)
         if open_scope_id is not None:
-            focused = WindowManager.focus_and_navigate(
+            dispatch = WindowManager.focus_and_navigate_result(
                 open_scope_id,
                 item_id=request.item_id,
                 field_path=request.field_path,
+                requested_scope_id=identity.window_id,
             )
-            if focused:
+            if dispatch.focused:
                 return self._navigate_result(
                     request,
                     focused=True,
                     created=False,
-                    navigated=request.item_id is not None
-                    or request.field_path is not None,
+                    navigated=dispatch.navigated,
                     summary=self._dynamic_scope_projection().summary(
                         identity,
                         open_scope_id,
@@ -2414,7 +2425,7 @@ class UiWindowProjectionService(
                 request,
                 focused=True,
                 created=False,
-                navigated=request.item_id is not None or request.field_path is not None,
+                navigated=False,
                 summary=embedded_route.focus(),
             )
         managed_route = self._managed_route_resolution(
@@ -2427,7 +2438,7 @@ class UiWindowProjectionService(
                 request,
                 focused=True,
                 created=False,
-                navigated=request.item_id is not None or request.field_path is not None,
+                navigated=False,
                 summary=managed_route.focus(),
             )
 
@@ -2604,6 +2615,15 @@ class UiWindowProjectionService(
             created=created,
             navigated=navigated,
             summary=summary,
+            errors=(
+                ()
+                if navigated or not request.has_target
+                else (
+                    WindowProjectionResultAuthority.unsupported_navigation_target(
+                        request
+                    ),
+                )
+            ),
         )
 
 

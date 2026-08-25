@@ -126,17 +126,30 @@ class DualEditorWindowNavigationDriver(WindowNavigationDriver):
             )
         return driver.readiness(request)
 
-    def build_complete_callbacks(self):
-        step_editor = self.owner.step_editor
-        if step_editor is None:
-            return ()
-        return step_editor.window_navigation_driver().build_complete_callbacks()
+    def accepts_field_path(
+        self,
+        request: RegisteredWindowNavigationRequest,
+    ) -> bool:
+        driver = self.driver_for_field_path(request.field_path)
+        return driver is not None and driver.accepts_field_path(request)
+
+    def prepare(self, request: RegisteredWindowNavigationRequest) -> None:
+        self.select_tab_for_field_path(request.field_path)
+
+    def register_readiness_callback(
+        self,
+        request: RegisteredWindowNavigationRequest,
+        callback: Callable[[], None],
+    ) -> bool:
+        driver = self.driver_for_field_path(request.field_path)
+        if driver is None:
+            return False
+        return driver.register_readiness_callback(request, callback)
 
     def execute(self, request: RegisteredWindowNavigationRequest) -> None:
         driver = self.driver_for_field_path(request.field_path)
         if driver is None:
             return
-        self.select_tab_for_field_path(request.field_path)
         driver.execute(request)
 
     def driver_for_field_path(

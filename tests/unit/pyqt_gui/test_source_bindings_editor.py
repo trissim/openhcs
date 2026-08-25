@@ -93,11 +93,15 @@ from pyqt_reactive.animation.flash_mixin import create_groupbox_element
 from pyqt_reactive.widgets.shared.clickable_help_components import HelpButton
 from pyqt_reactive.widgets.shared.clickable_help_components import HelpContext
 from pyqt_reactive.widgets.shared.clickable_help_components import HelpIndicator
-from pyqt_reactive.widgets.shared.clickable_help_components import InlineDataclassGroupBox
+from pyqt_reactive.widgets.shared.clickable_help_components import (
+    InlineDataclassGroupBox,
+)
 from pyqt_reactive.widgets.shared.clickable_help_components import ProvenanceLabel
 from pyqt_reactive.widgets.no_scroll_spinbox import NoScrollComboBox, NoneAwareCheckBox
 from pyqt_reactive.widgets.shared.scoped_table_widget import ScopedTableWidget
 from pyqt_reactive.widgets.shared.scope_color_utils import get_scope_color_scheme
+
+
 class QtApplicationHarness:
     """Nominal owner for the QApplication singleton used by GUI smoke tests."""
 
@@ -460,23 +464,32 @@ def test_inline_source_bindings_root_reset_all_resets_child_fields() -> None:
         )
         for _ in range(10):
             QApplication.processEvents()
-        assert DataclassFieldAccess.raw_value(
-            state.parameters["source_bindings_config"],
-            "source_filters",
-        ) is not None
+        assert (
+            DataclassFieldAccess.raw_value(
+                state.parameters["source_bindings_config"],
+                "source_filters",
+            )
+            is not None
+        )
 
         root_reset_buttons[0].click()
         for _ in range(10):
             QApplication.processEvents()
 
-        assert DataclassFieldAccess.raw_value(
-            state.parameters["source_bindings_config"],
-            "source_filters",
-        ) is None
-        assert DataclassFieldAccess.raw_value(
-            widget.get_value(),
-            "source_filters",
-        ) is None
+        assert (
+            DataclassFieldAccess.raw_value(
+                state.parameters["source_bindings_config"],
+                "source_filters",
+            )
+            is None
+        )
+        assert (
+            DataclassFieldAccess.raw_value(
+                widget.get_value(),
+                "source_filters",
+            )
+            is None
+        )
     finally:
         manager.deleteLater()
         ObjectStateRegistry.clear()
@@ -585,10 +598,13 @@ def test_pipeline_source_bindings_table_edits_recreate_container_and_children() 
             edited_config,
             "metadata_rules",
         ) == (expected_rule,)
-        assert DataclassFieldAccess.raw_value(
-            edited_config,
-            "match_plan",
-        ) == expected_match_plan
+        assert (
+            DataclassFieldAccess.raw_value(
+                edited_config,
+                "match_plan",
+            )
+            == expected_match_plan
+        )
         assert state.parameters["source_bindings_config.source_filters"] == (
             expected_filter,
         )
@@ -645,13 +661,16 @@ def test_pipeline_source_bindings_edit_refreshes_step_lazy_preview() -> None:
 
         assert state.parameters["source_bindings_config.bindings"] == (binding,)
         assert state.parameters["step_source_bindings_config.bindings"] is None
-        assert state.get_resolved_value(
-            "step_source_bindings_config.bindings"
-        ) == (binding,)
-        assert DataclassFieldAccess.raw_value(
-            step_widget.get_value(),
-            "bindings",
-        ) is None
+        assert state.get_resolved_value("step_source_bindings_config.bindings") == (
+            binding,
+        )
+        assert (
+            DataclassFieldAccess.raw_value(
+                step_widget.get_value(),
+                "bindings",
+            )
+            is None
+        )
         assert tuple(
             inherited.alias
             for inherited in step_widget._create_step_bindings_dialog().bindings()
@@ -724,13 +743,14 @@ def test_pipeline_step_source_bindings_refresh_open_step_editor_preview() -> Non
             binding,
         )
         assert step_state.parameters["source_bindings.bindings"] is None
-        assert step_state.get_resolved_value("source_bindings.bindings") == (
-            binding,
+        assert step_state.get_resolved_value("source_bindings.bindings") == (binding,)
+        assert (
+            DataclassFieldAccess.raw_value(
+                step_widget.get_value(),
+                "bindings",
+            )
+            is None
         )
-        assert DataclassFieldAccess.raw_value(
-            step_widget.get_value(),
-            "bindings",
-        ) is None
         assert tuple(
             inherited.alias
             for inherited in step_widget._create_step_bindings_dialog().bindings()
@@ -804,11 +824,14 @@ def test_pipeline_step_source_filter_time_travel_refreshes_open_step_editor() ->
             first_filter,
         )
         assert step_widget.source_filters_table is not None
-        assert table_cell_text(
-            step_widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.MATCH_TYPE),
-        ) == "contains"
+        assert (
+            table_cell_text(
+                step_widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.MATCH_TYPE),
+            )
+            == "contains"
+        )
 
         assert pipeline_widget.source_filters_table is not None
         set_combo_cell_text(
@@ -833,33 +856,42 @@ def test_pipeline_step_source_filter_time_travel_refreshes_open_step_editor() ->
         assert step_state.get_resolved_value("source_bindings.source_filters") == (
             second_filter,
         )
-        assert table_cell_text(
-            step_widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.MATCH_TYPE),
-        ) == "equals"
+        assert (
+            table_cell_text(
+                step_widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.MATCH_TYPE),
+            )
+            == "equals"
+        )
 
         assert ObjectStateRegistry.time_travel_back()
         QApplication.processEvents()
         assert step_state.get_resolved_value("source_bindings.source_filters") == (
             first_filter,
         )
-        assert table_cell_text(
-            step_widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.MATCH_TYPE),
-        ) == "contains"
+        assert (
+            table_cell_text(
+                step_widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.MATCH_TYPE),
+            )
+            == "contains"
+        )
 
         assert ObjectStateRegistry.time_travel_forward()
         QApplication.processEvents()
         assert step_state.get_resolved_value("source_bindings.source_filters") == (
             second_filter,
         )
-        assert table_cell_text(
-            step_widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.MATCH_TYPE),
-        ) == "equals"
+        assert (
+            table_cell_text(
+                step_widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.MATCH_TYPE),
+            )
+            == "equals"
+        )
     finally:
         pipeline_manager.deleteLater()
         step_manager.deleteLater()
@@ -910,10 +942,8 @@ def test_source_bindings_enableable_chrome_uses_nominal_step_config() -> None:
 
         registered = []
         full_groupbox_registrations = []
-        manager.register_flash_masked_container = (
-            lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
-                (key, container, mask_rects, label_widget)
-            )
+        manager.register_flash_masked_container = lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
+            (key, container, mask_rects, label_widget)
         )
         manager.register_flash_groupbox_full = (
             lambda *args, **kwargs: full_groupbox_registrations.append((args, kwargs))
@@ -953,7 +983,9 @@ def test_source_bindings_enableable_chrome_uses_nominal_step_config() -> None:
             QApplication.processEvents()
 
         assert state.parameters["step_source_bindings_config.enabled"] is None
-        assert DataclassFieldAccess.raw_value(step_widget.get_value(), "enabled") is None
+        assert (
+            DataclassFieldAccess.raw_value(step_widget.get_value(), "enabled") is None
+        )
         assert step_widget.source_filters_table is original_source_filters_table
         assert refresh_calls == []
     finally:
@@ -1032,7 +1064,9 @@ def test_source_bindings_enableable_reset_to_inherited_true_is_path_scoped() -> 
 
         assert state.parameters["step_source_bindings_config.enabled"] is None
         assert state.get_resolved_value("step_source_bindings_config.enabled") is True
-        assert DataclassFieldAccess.raw_value(step_widget.get_value(), "enabled") is None
+        assert (
+            DataclassFieldAccess.raw_value(step_widget.get_value(), "enabled") is None
+        )
         assert step_widget.graphicsEffect() is None
         assert refresh_calls == []
         assert set_value_calls == []
@@ -1046,7 +1080,9 @@ def test_source_bindings_enableable_reset_to_inherited_true_is_path_scoped() -> 
         ObjectStateRegistry.clear()
 
 
-def test_source_bindings_enableable_reset_from_false_to_inherited_value_is_path_scoped() -> None:
+def test_source_bindings_enableable_reset_from_false_to_inherited_value_is_path_scoped() -> (
+    None
+):
     QtApplicationHarness.app()
 
     for inherited_enabled in (True, False):
@@ -1112,7 +1148,10 @@ def test_source_bindings_enableable_reset_from_false_to_inherited_value_is_path_
                 state.get_resolved_value("step_source_bindings_config.enabled")
                 is inherited_enabled
             )
-            assert DataclassFieldAccess.raw_value(step_widget.get_value(), "enabled") is None
+            assert (
+                DataclassFieldAccess.raw_value(step_widget.get_value(), "enabled")
+                is None
+            )
             if inherited_enabled:
                 assert step_widget.graphicsEffect() is None
             else:
@@ -1156,8 +1195,12 @@ def test_pipeline_source_bindings_preview_preserves_inherited_table_rows() -> No
         step_widget = step_container._inline_value_widget
         assert isinstance(source_widget, SourceBindingsEditorWidget)
         assert isinstance(step_widget, SourceBindingsEditorWidget)
-        assert step_widget.child_field_section_group("bindings").graphicsEffect() is None
-        assert step_widget.child_field_section_group("match_plan").graphicsEffect() is None
+        assert (
+            step_widget.child_field_section_group("bindings").graphicsEffect() is None
+        )
+        assert (
+            step_widget.child_field_section_group("match_plan").graphicsEffect() is None
+        )
 
         source_widget.add_source_filter_row()
         assert source_widget.source_filters_table is not None
@@ -1198,7 +1241,10 @@ def test_pipeline_source_bindings_preview_preserves_inherited_table_rows() -> No
             )
             == "contains"
         )
-        assert step_widget.child_field_section_group("source_filters").graphicsEffect() is None
+        assert (
+            step_widget.child_field_section_group("source_filters").graphicsEffect()
+            is None
+        )
         inherited_match_type_widget = step_widget.source_filters_table.cellWidget(
             0,
             int(SourceFilterColumn.MATCH_TYPE),
@@ -1251,9 +1297,10 @@ def test_pipeline_source_bindings_preview_preserves_inherited_table_rows() -> No
                 ),
             ),
         )
-        assert state.get_resolved_value(
-            "step_source_bindings_config.match_plan"
-        ) == expected_plan
+        assert (
+            state.get_resolved_value("step_source_bindings_config.match_plan")
+            == expected_plan
+        )
         assert step_widget.match_plan_table is not None
         assert step_widget.match_plan_table.rowCount() == 2
     finally:
@@ -1298,7 +1345,9 @@ def test_source_bindings_enableable_only_updates_skip_table_rebuild() -> None:
         widget.deleteLater()
 
 
-def test_source_bindings_refresh_detaches_obsolete_subtrees_before_flash_replay() -> None:
+def test_source_bindings_refresh_detaches_obsolete_subtrees_before_flash_replay() -> (
+    None
+):
     from pyqt_reactive.animation.flash_mixin import WindowFlashOverlay
     from PyQt6.QtWidgets import QDialog, QVBoxLayout
 
@@ -1343,7 +1392,9 @@ def test_source_bindings_refresh_detaches_obsolete_subtrees_before_flash_replay(
         dialog.deleteLater()
 
 
-def test_source_bindings_table_child_reset_restores_inherited_placeholder_rows() -> None:
+def test_source_bindings_table_child_reset_restores_inherited_placeholder_rows() -> (
+    None
+):
     QtApplicationHarness.app()
     ObjectStateRegistry.clear()
     ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
@@ -1538,14 +1589,14 @@ def test_source_bindings_inherited_table_combo_activation_materializes_child() -
         ]
         assert len(activation_history) == 1
         assert (
-            "step_source_bindings_config.source_filters"
-            in activation_history[0].label
+            "step_source_bindings_config.source_filters" in activation_history[0].label
         )
-        assert (
-            DataclassFieldAccess.raw_value(step_widget.get_value(), "source_filters")
-            == (inherited_filter,)
-        )
-        assert step_widget.child_field_label("source_filters")._dirty_label_state.is_dirty
+        assert DataclassFieldAccess.raw_value(
+            step_widget.get_value(), "source_filters"
+        ) == (inherited_filter,)
+        assert step_widget.child_field_label(
+            "source_filters"
+        )._dirty_label_state.is_dirty
 
         assert ObjectStateRegistry.time_travel_back()
         QApplication.processEvents()
@@ -1634,17 +1685,22 @@ def test_source_bindings_inherited_table_value_edit_undo_restores_lazy_child() -
             DataclassFieldAccess.raw_value(step_widget.get_value(), "source_filters")
             is None
         )
-        assert table_cell_text(
-            step_widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.VALUE),
-        ) == "DNA"
+        assert (
+            table_cell_text(
+                step_widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.VALUE),
+            )
+            == "DNA"
+        )
     finally:
         manager.deleteLater()
         ObjectStateRegistry.clear()
 
 
-def test_source_bindings_inherited_table_first_edit_materializes_second_edit_flashes_cell() -> None:
+def test_source_bindings_inherited_table_first_edit_materializes_second_edit_flashes_cell() -> (
+    None
+):
     QtApplicationHarness.app()
     ObjectStateRegistry.clear()
     ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
@@ -1713,20 +1769,21 @@ def test_source_bindings_inherited_table_first_edit_materializes_second_edit_fla
         assert value_item is not None
         assert value_item.data(Qt.ItemDataRole.UserRole) == "RNA"
         assert value_item.data(Qt.ItemDataRole.EditRole) == "RNA"
-        assert value_item.text() == '*_RNA'
-        assert table_cell_text(
-            step_widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.VALUE),
-        ) == "RNA"
+        assert value_item.text() == "*_RNA"
+        assert (
+            table_cell_text(
+                step_widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.VALUE),
+            )
+            == "RNA"
+        )
 
         queued: list[str] = []
         registered = []
         manager.queue_flash_local_batch = queued.extend
-        manager.register_flash_masked_container = (
-            lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
-                (key, container, mask_rects, label_widget)
-            )
+        manager.register_flash_masked_container = lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
+            (key, container, mask_rects, label_widget)
         )
 
         set_editable_cell_text(
@@ -1753,7 +1810,7 @@ def test_source_bindings_inherited_table_first_edit_materializes_second_edit_fla
         assert value_item is not None
         assert value_item.data(Qt.ItemDataRole.UserRole) == "RNA2"
         assert value_item.data(Qt.ItemDataRole.EditRole) == "RNA2"
-        assert value_item.text() == '*_RNA2'
+        assert value_item.text() == "*_RNA2"
 
         flash_key = "step_source_bindings_config.source_filters[0].value"
         assert flash_key in queued
@@ -1807,7 +1864,9 @@ def test_source_bindings_child_chrome_and_reset_use_flat_state_paths() -> None:
             QApplication.processEvents()
 
         assert state.parameters["source_bindings_config.bindings"] is None
-        assert not source_widget.child_field_label("bindings")._dirty_label_state.is_dirty
+        assert not source_widget.child_field_label(
+            "bindings"
+        )._dirty_label_state.is_dirty
         assert not source_widget.child_field_reset_button("bindings").font().underline()
     finally:
         manager.deleteLater()
@@ -1871,7 +1930,9 @@ def test_source_bindings_child_path_resolves_inline_scroll_target() -> None:
         assert target is not None
         assert target.section_path == "source_bindings_config"
         assert target.leaf_name == "bindings"
-        assert isinstance(target.structural_flash_target, StructuralMaskedContainerTarget)
+        assert isinstance(
+            target.structural_flash_target, StructuralMaskedContainerTarget
+        )
         assert target.target_widget is source_widget.child_field_label("bindings")
         assert target.structural_flash_target.scroll_widget() is target.target_widget
         assert not target.is_field
@@ -1909,7 +1970,9 @@ def test_source_bindings_owner_path_resolves_structural_container_target() -> No
         assert target.field_name == "source_bindings_config"
         assert target.section_path == "source_bindings_config"
         assert target.target_widget is source_container
-        assert isinstance(target.structural_flash_target, StructuralDescendantMaskTarget)
+        assert isinstance(
+            target.structural_flash_target, StructuralDescendantMaskTarget
+        )
         assert target.structural_flash_target.container is source_container
         assert not target.is_field
     finally:
@@ -2003,6 +2066,7 @@ def test_source_bindings_navigation_falls_back_to_visible_owner_section() -> Non
             owner = Owner(manager, scroll_area)
             request = RegisteredWindowNavigationRequest(
                 window=scroll_area.window(),
+                requested_scope_id="source_bindings_scope",
                 field_path="source_bindings_config.source_filters",
             )
             driver = owner.window_navigation_driver()
@@ -2059,6 +2123,7 @@ def test_source_bindings_child_navigation_waits_for_stable_geometry() -> None:
         driver = owner.window_navigation_driver()
         request = RegisteredWindowNavigationRequest(
             window=scroll_area.window(),
+            requested_scope_id="source_bindings_scope",
             field_path="source_bindings_config.source_filters",
         )
 
@@ -2159,7 +2224,9 @@ def test_source_bindings_table_row_value_read_does_not_emit_item_changed() -> No
     assert emitted == []
 
 
-def test_source_bindings_editor_editing_inherited_table_makes_lazy_child_concrete() -> None:
+def test_source_bindings_editor_editing_inherited_table_makes_lazy_child_concrete() -> (
+    None
+):
     QtApplicationHarness.app()
     inherited_filter = SourceFilterClause(
         SourceFilterSubject.FILE,
@@ -2244,17 +2311,24 @@ def test_source_bindings_child_reset_restores_lazy_inheritance_slot() -> None:
         QApplication.processEvents()
 
         assert state.parameters["source_bindings.source_filters"] is None
-        assert DataclassFieldAccess.raw_value(
-            state.parameters["source_bindings"],
-            "source_filters",
-        ) is None
-        assert not widget.child_field_label("source_filters")._dirty_label_state.is_dirty
+        assert (
+            DataclassFieldAccess.raw_value(
+                state.parameters["source_bindings"],
+                "source_filters",
+            )
+            is None
+        )
+        assert not widget.child_field_label(
+            "source_filters"
+        )._dirty_label_state.is_dirty
     finally:
         manager.deleteLater()
         ObjectStateRegistry.clear()
 
 
-def test_source_bindings_child_reset_noops_for_already_inherited_table_preview() -> None:
+def test_source_bindings_child_reset_noops_for_already_inherited_table_preview() -> (
+    None
+):
     QtApplicationHarness.app()
     ObjectStateRegistry.clear()
     ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
@@ -2326,10 +2400,13 @@ def test_source_bindings_child_reset_noops_for_already_inherited_table_preview()
         assert step_state.get_resolved_value("source_bindings.source_filters") == (
             inherited_filter,
         )
-        assert DataclassFieldAccess.raw_value(
-            step_widget.get_value(),
-            "source_filters",
-        ) is None
+        assert (
+            DataclassFieldAccess.raw_value(
+                step_widget.get_value(),
+                "source_filters",
+            )
+            is None
+        )
         assert step_widget.source_filters_table.rowCount() == 1
         assert (
             table_cell_text(
@@ -2393,9 +2470,7 @@ def test_source_bindings_editor_uses_compact_inline_step_binding_summary() -> No
         )
     )
 
-    button_labels = tuple(
-        button.text() for button in widget.findChildren(QPushButton)
-    )
+    button_labels = tuple(button.text() for button in widget.findChildren(QPushButton))
     assert widget.step_bindings_table is None
     assert "Edit bindings..." in button_labels
 
@@ -2415,8 +2490,7 @@ def test_source_bindings_editor_tables_expand_without_vertical_scrollbars() -> N
     assert not table.verticalHeader().isHidden()
     assert table.verticalHeaderItem(int(SourceBindingColumn.ALIAS)).text() == "Alias"
     expected_minimum_height = table.horizontalHeader().height() + sum(
-        table.rowHeight(row)
-        for row in range(table.rowCount())
+        table.rowHeight(row) for row in range(table.rowCount())
     )
     assert table.height() >= expected_minimum_height
     assert table.viewport().height() >= sum(
@@ -2426,7 +2500,9 @@ def test_source_bindings_editor_tables_expand_without_vertical_scrollbars() -> N
     assert table.visualRect(final_index).bottom() <= table.viewport().rect().bottom()
 
 
-def test_editable_table_layout_keeps_final_row_visible_with_or_without_scrollbar() -> None:
+def test_editable_table_layout_keeps_final_row_visible_with_or_without_scrollbar() -> (
+    None
+):
     app = QtApplicationHarness.app()
     table = ScopedTableWidget(2, 2)
     table.setItem(0, 0, QTableWidgetItem("field"))
@@ -2442,9 +2518,7 @@ def test_editable_table_layout_keeps_final_row_visible_with_or_without_scrollbar
     EditableTableLayout.fit_to_rows(table)
     app.processEvents()
 
-    expected_rows_height = sum(
-        table.rowHeight(row) for row in range(table.rowCount())
-    )
+    expected_rows_height = sum(table.rowHeight(row) for row in range(table.rowCount()))
     final_index = table.model().index(table.rowCount() - 1, 0)
     assert table.horizontalScrollBar().isVisible()
     assert table.viewport().height() >= expected_rows_height
@@ -2478,9 +2552,7 @@ def test_pipeline_sources_preview_fits_rows_and_bar_in_reflowing_config_body() -
     widget = SourceBindingsEditorWidget.from_bindings(StepSourceBindingsConfig())
     widget.set_preview_context(source_bindings=SourceBindingsConfig())
     scroll_area = ReflowingVerticalScrollArea()
-    scroll_area.setStyleSheet(
-        ColorScheme().styles.generate_config_window_style()
-    )
+    scroll_area.setStyleSheet(ColorScheme().styles.generate_config_window_style())
     scroll_area.setWidget(widget)
     scroll_area.show()
 
@@ -2492,9 +2564,7 @@ def test_pipeline_sources_preview_fits_rows_and_bar_in_reflowing_config_body() -
                 app.processEvents()
 
             table = pipeline_sources_table
-            rows_height = sum(
-                table.rowHeight(row) for row in range(table.rowCount())
-            )
+            rows_height = sum(table.rowHeight(row) for row in range(table.rowCount()))
             viewport_vertical_margin = 2 * table.style().pixelMetric(
                 QStyle.PixelMetric.PM_FocusFrameVMargin,
                 None,
@@ -2513,9 +2583,7 @@ def test_pipeline_sources_preview_fits_rows_and_bar_in_reflowing_config_body() -
             final_index = table.model().index(table.rowCount() - 1, 0)
 
             assert table.height() >= expected_height
-            assert table.viewport().height() >= (
-                rows_height + viewport_vertical_margin
-            )
+            assert table.viewport().height() >= (rows_height + viewport_vertical_margin)
             assert (
                 table.visualRect(final_index).bottom()
                 <= table.viewport().rect().bottom()
@@ -2555,13 +2623,9 @@ def test_source_filters_fit_complete_rows_and_bar_inside_scoped_section() -> Non
         StepSourceBindingsConfig(source_filters=filters)
     )
     scroll_area = ReflowingVerticalScrollArea()
-    scroll_area.setStyleSheet(
-        ColorScheme().styles.generate_config_window_style()
-    )
+    scroll_area.setStyleSheet(ColorScheme().styles.generate_config_window_style())
     scroll_area.setWidget(widget)
-    widget.set_scope_color_scheme(
-        get_scope_color_scheme("plate::step_0", step_index=0)
-    )
+    widget.set_scope_color_scheme(get_scope_color_scheme("plate::step_0", step_index=0))
     scroll_area.show()
 
     try:
@@ -2575,9 +2639,7 @@ def test_source_filters_fit_complete_rows_and_bar_inside_scoped_section() -> Non
             for _ in range(8):
                 app.processEvents()
 
-            rows_height = sum(
-                table.rowHeight(row) for row in range(table.rowCount())
-            )
+            rows_height = sum(table.rowHeight(row) for row in range(table.rowCount()))
             viewport_vertical_margin = 2 * table.style().pixelMetric(
                 QStyle.PixelMetric.PM_FocusFrameVMargin,
                 None,
@@ -2601,9 +2663,7 @@ def test_source_filters_fit_complete_rows_and_bar_inside_scoped_section() -> Non
 
             assert table.rowCount() == len(filters)
             assert horizontal_bar.isVisible()
-            assert table.viewport().height() >= (
-                rows_height + viewport_vertical_margin
-            )
+            assert table.viewport().height() >= (rows_height + viewport_vertical_margin)
             assert all(
                 table.visualRect(table.model().index(row, 0)).bottom()
                 <= table.viewport().rect().bottom()
@@ -2667,7 +2727,10 @@ def test_step_metadata_rule_cells_show_inherited_and_local_edit_markers() -> Non
         assert source_widget.currentText() == "_file_name"
         assert pattern_item.text() == f"_{inherited_rule.pattern}"
         assert table_cell_text(table, 0, int(MetadataRuleColumn.SOURCE)) == "file_name"
-        assert table_cell_text(table, 0, int(MetadataRuleColumn.PATTERN)) == inherited_rule.pattern
+        assert (
+            table_cell_text(table, 0, int(MetadataRuleColumn.PATTERN))
+            == inherited_rule.pattern
+        )
 
         local_pattern = r"(?P<well>B\d{2})_(?P<channel>RNA)\.tif"
         set_editable_cell_text(
@@ -2683,7 +2746,9 @@ def test_step_metadata_rule_cells_show_inherited_and_local_edit_markers() -> Non
         assert pattern_item is not None
         assert pattern_item.text() == f"*_{local_pattern}"
         assert pattern_item.data(Qt.ItemDataRole.UserRole) == local_pattern
-        assert table_cell_text(table, 0, int(MetadataRuleColumn.PATTERN)) == local_pattern
+        assert (
+            table_cell_text(table, 0, int(MetadataRuleColumn.PATTERN)) == local_pattern
+        )
         assert state.parameters["step_source_bindings_config.metadata_rules"] == (
             MetadataExtractionRule(
                 source=MetadataSource.FILE_NAME,
@@ -2710,9 +2775,7 @@ def test_source_bindings_editor_explains_binding_selector_and_roles() -> None:
     select_metadata = table.verticalHeaderItem(int(SourceBindingColumn.METADATA))
     assign_axes = table.verticalHeaderItem(int(SourceBindingColumn.IDENTITY))
     set_role = table.verticalHeaderItem(int(SourceBindingColumn.SET_ROLE))
-    projection_role = table.verticalHeaderItem(
-        int(SourceBindingColumn.PROJECTION_ROLE)
-    )
+    projection_role = table.verticalHeaderItem(int(SourceBindingColumn.PROJECTION_ROLE))
 
     assert select_axes.text() == "Select Axes"
     assert "choose sources" in select_axes.toolTip()
@@ -2740,9 +2803,7 @@ def test_source_bindings_editor_explains_image_set_pairing_table() -> None:
     fields_header = widget.match_plan_table.horizontalHeaderItem(
         int(MatchPlanColumn.FIELDS)
     )
-    button_labels = tuple(
-        button.text() for button in widget.findChildren(QPushButton)
-    )
+    button_labels = tuple(button.text() for button in widget.findChildren(QPushButton))
     section_titles = tuple(label.text() for label in widget.findChildren(QLabel))
 
     assert method_header.text() == "Pairing Method"
@@ -2976,11 +3037,14 @@ def test_inline_step_source_bindings_time_travel_preserves_dirty_marker() -> Non
         )
         QApplication.processEvents()
         assert widget.source_filters_table is not None
-        assert table_cell_text(
-            widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.MATCH_TYPE),
-        ) == "equals"
+        assert (
+            table_cell_text(
+                widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.MATCH_TYPE),
+            )
+            == "equals"
+        )
 
         set_combo_cell_text(
             widget.source_filters_table,
@@ -2994,7 +3058,7 @@ def test_inline_step_source_bindings_time_travel_preserves_dirty_marker() -> Non
             int(SourceFilterColumn.MATCH_TYPE),
         )
         assert isinstance(match_type_widget, QComboBox)
-        assert match_type_widget.currentText() == '*_contains'
+        assert match_type_widget.currentText() == "*_contains"
         assert match_type_widget.property("objectstate_dirty") is True
 
         assert ObjectStateRegistry.time_travel_back()
@@ -3012,7 +3076,7 @@ def test_inline_step_source_bindings_time_travel_preserves_dirty_marker() -> Non
         )
         assert isinstance(match_type_widget, QComboBox)
         assert match_type_widget.currentData() is SourceFilterMatchType.EQUALS
-        assert match_type_widget.currentText() == '*_equals'
+        assert match_type_widget.currentText() == "*_equals"
         assert match_type_widget.property("objectstate_dirty") is True
         assert "source_bindings.source_filters" in state.dirty_fields
     finally:
@@ -3020,7 +3084,9 @@ def test_inline_step_source_bindings_time_travel_preserves_dirty_marker() -> Non
         ObjectStateRegistry.clear()
 
 
-def test_inline_step_source_bindings_undo_one_of_two_cell_edits_keeps_owner_dirty() -> None:
+def test_inline_step_source_bindings_undo_one_of_two_cell_edits_keeps_owner_dirty() -> (
+    None
+):
     QtApplicationHarness.app()
     ObjectStateRegistry.clear()
     saved_filter = SourceFilterClause(
@@ -3069,7 +3135,7 @@ def test_inline_step_source_bindings_undo_one_of_two_cell_edits_keeps_owner_dirt
             int(SourceFilterColumn.MATCH_TYPE),
         )
         assert isinstance(match_type_widget, QComboBox)
-        assert match_type_widget.currentText() == '*_contains'
+        assert match_type_widget.currentText() == "*_contains"
 
         set_editable_cell_text(
             widget.source_filters_table,
@@ -3080,7 +3146,7 @@ def test_inline_step_source_bindings_undo_one_of_two_cell_edits_keeps_owner_dirt
         QApplication.processEvents()
         value_item = widget.source_filters_table.item(0, int(SourceFilterColumn.VALUE))
         assert value_item is not None
-        assert value_item.text() == '*_RNA'
+        assert value_item.text() == "*_RNA"
         assert "source_bindings.source_filters" in state.dirty_fields
 
         assert ObjectStateRegistry.time_travel_back()
@@ -3099,7 +3165,7 @@ def test_inline_step_source_bindings_undo_one_of_two_cell_edits_keeps_owner_dirt
         )
         assert isinstance(match_type_widget, QComboBox)
         assert match_type_widget.currentData() is SourceFilterMatchType.CONTAINS
-        assert match_type_widget.currentText() == '*_contains'
+        assert match_type_widget.currentText() == "*_contains"
         assert match_type_widget.property("objectstate_dirty") is True
 
         value_item = widget.source_filters_table.item(0, int(SourceFilterColumn.VALUE))
@@ -3177,10 +3243,8 @@ def test_inline_source_bindings_dropdown_edit_queues_child_section_flash() -> No
         queued: list[str] = []
         registered = []
         manager.queue_flash_local_batch = queued.extend
-        manager.register_flash_masked_container = (
-            lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
-                (key, container, mask_rects, label_widget)
-            )
+        manager.register_flash_masked_container = lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
+            (key, container, mask_rects, label_widget)
         )
         assert widget.source_filters_table is not None
         set_combo_cell_text(
@@ -3274,10 +3338,8 @@ def test_inline_source_bindings_provenance_navigation_masks_child_section() -> N
         queued: list[str] = []
         registered = []
         manager.queue_flash_local = queued.append
-        manager.register_flash_masked_container = (
-            lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
-                (key, container, mask_rects, label_widget)
-            )
+        manager.register_flash_masked_container = lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
+            (key, container, mask_rects, label_widget)
         )
 
         harness._flash_scroll_target(target)
@@ -3317,7 +3379,9 @@ def test_inline_source_bindings_provenance_navigation_masks_child_section() -> N
         manager.deleteLater()
 
 
-def test_inline_source_bindings_initial_source_filter_cells_show_signature_diff() -> None:
+def test_inline_source_bindings_initial_source_filter_cells_show_signature_diff() -> (
+    None
+):
     QtApplicationHarness.app()
     ObjectStateRegistry.clear()
     step = FunctionStep(
@@ -3423,10 +3487,8 @@ def test_inline_source_bindings_structural_path_flash_targets_table_cell() -> No
         queued: list[str] = []
         registered = []
         manager.queue_flash_local = queued.append
-        manager.register_flash_masked_container = (
-            lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
-                (key, container, mask_rects, label_widget)
-            )
+        manager.register_flash_masked_container = lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
+            (key, container, mask_rects, label_widget)
         )
 
         manager._queue_leaf_flash_for_path(
@@ -3460,7 +3522,9 @@ def test_inline_source_bindings_structural_path_flash_targets_table_cell() -> No
         manager.deleteLater()
 
 
-def test_inline_source_bindings_structural_provenance_navigation_flashes_table_cell() -> None:
+def test_inline_source_bindings_structural_provenance_navigation_flashes_table_cell() -> (
+    None
+):
     app = QtApplicationHarness.app()
     state = ObjectState(PipelineConfig())
     manager = ParameterFormManager(
@@ -3561,10 +3625,8 @@ def test_inline_source_bindings_structural_provenance_navigation_flashes_table_c
         queued: list[str] = []
         registered = []
         manager.queue_flash_local = queued.append
-        manager.register_flash_masked_container = (
-            lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
-                (key, container, mask_rects, label_widget)
-            )
+        manager.register_flash_masked_container = lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
+            (key, container, mask_rects, label_widget)
         )
 
         harness._flash_scroll_target(target)
@@ -3634,9 +3696,7 @@ def test_source_bindings_cell_flash_element_masks_cell_and_child_label() -> None
         cell_window_pos = manager.mapFromGlobal(
             widget.source_filters_table.viewport().mapToGlobal(cell_rect.topLeft())
         )
-        expected_cell_rect = cell_rect.translated(
-            cell_window_pos - cell_rect.topLeft()
-        )
+        expected_cell_rect = cell_rect.translated(cell_window_pos - cell_rect.topLeft())
         label_widget = widget.child_field_label("source_filters")
         label_window_pos = manager.mapFromGlobal(
             label_widget.mapToGlobal(label_widget.rect().topLeft())
@@ -3683,10 +3743,8 @@ def test_source_bindings_child_section_flash_masks_changed_child_section() -> No
         queued: list[str] = []
         registered = []
         manager.queue_flash_local = queued.append
-        manager.register_flash_masked_container = (
-            lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
-                (key, container, mask_rects, label_widget)
-            )
+        manager.register_flash_masked_container = lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
+            (key, container, mask_rects, label_widget)
         )
 
         manager._queue_leaf_flash_for_path("source_bindings_config.source_filters")
@@ -3768,10 +3826,8 @@ def test_source_bindings_owner_flash_masks_descendant_fields() -> None:
             return original_register_flash_groupbox(*args, **kwargs)
 
         manager.register_flash_groupbox = record_groupbox_flash
-        manager.register_flash_masked_container = (
-            lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
-                (key, container, mask_rects, label_widget)
-            )
+        manager.register_flash_masked_container = lambda key, container, mask_rects, *, label_widget=None, layout_watch_widgets=(): registered.append(
+            (key, container, mask_rects, label_widget)
         )
 
         groupbox_call_count = len(groupbox_calls)
@@ -3833,11 +3889,14 @@ def test_source_bindings_dropdown_time_travel_restores_widget_value() -> None:
         )
         QApplication.processEvents()
         assert widget.source_filters_table is not None
-        assert table_cell_text(
-            widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.MATCH_TYPE),
-        ) == "equals"
+        assert (
+            table_cell_text(
+                widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.MATCH_TYPE),
+            )
+            == "equals"
+        )
 
         set_combo_cell_text(
             widget.source_filters_table,
@@ -3846,18 +3905,21 @@ def test_source_bindings_dropdown_time_travel_restores_widget_value() -> None:
             "contains",
         )
         QApplication.processEvents()
-        assert table_cell_text(
-            widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.MATCH_TYPE),
-        ) == "contains"
+        assert (
+            table_cell_text(
+                widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.MATCH_TYPE),
+            )
+            == "contains"
+        )
         match_type_widget = widget.source_filters_table.cellWidget(
             0,
             int(SourceFilterColumn.MATCH_TYPE),
         )
         assert isinstance(match_type_widget, QComboBox)
         assert match_type_widget.currentData() is SourceFilterMatchType.CONTAINS
-        assert match_type_widget.currentText() == '*_contains'
+        assert match_type_widget.currentText() == "*_contains"
         assert match_type_widget.property("objectstate_dirty") is True
         assert (
             state.last_changed_field
@@ -3873,18 +3935,21 @@ def test_source_bindings_dropdown_time_travel_restores_widget_value() -> None:
                 "DNA",
             ),
         )
-        assert table_cell_text(
-            widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.MATCH_TYPE),
-        ) == "equals"
+        assert (
+            table_cell_text(
+                widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.MATCH_TYPE),
+            )
+            == "equals"
+        )
         match_type_widget = widget.source_filters_table.cellWidget(
             0,
             int(SourceFilterColumn.MATCH_TYPE),
         )
         assert isinstance(match_type_widget, QComboBox)
         assert match_type_widget.currentData() is SourceFilterMatchType.EQUALS
-        assert match_type_widget.currentText() == '*_equals'
+        assert match_type_widget.currentText() == "*_equals"
         assert match_type_widget.property("objectstate_dirty") is True
         assert (
             state.last_changed_field
@@ -3900,18 +3965,21 @@ def test_source_bindings_dropdown_time_travel_restores_widget_value() -> None:
                 "DNA",
             ),
         )
-        assert table_cell_text(
-            widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.MATCH_TYPE),
-        ) == "contains"
+        assert (
+            table_cell_text(
+                widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.MATCH_TYPE),
+            )
+            == "contains"
+        )
         match_type_widget = widget.source_filters_table.cellWidget(
             0,
             int(SourceFilterColumn.MATCH_TYPE),
         )
         assert isinstance(match_type_widget, QComboBox)
         assert match_type_widget.currentData() is SourceFilterMatchType.CONTAINS
-        assert match_type_widget.currentText() == '*_contains'
+        assert match_type_widget.currentText() == "*_contains"
         assert match_type_widget.property("objectstate_dirty") is True
         assert (
             state.last_changed_field
@@ -3956,11 +4024,14 @@ def test_source_bindings_text_time_travel_restores_widget_value() -> None:
         )
         QApplication.processEvents()
         assert widget.source_filters_table is not None
-        assert table_cell_text(
-            widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.VALUE),
-        ) == "DNA"
+        assert (
+            table_cell_text(
+                widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.VALUE),
+            )
+            == "DNA"
+        )
 
         set_editable_cell_text(
             widget.source_filters_table,
@@ -3969,15 +4040,18 @@ def test_source_bindings_text_time_travel_restores_widget_value() -> None:
             "RNA",
         )
         QApplication.processEvents()
-        assert table_cell_text(
-            widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.VALUE),
-        ) == "RNA"
+        assert (
+            table_cell_text(
+                widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.VALUE),
+            )
+            == "RNA"
+        )
         item = widget.source_filters_table.item(0, int(SourceFilterColumn.VALUE))
         assert item is not None
         assert item.data(Qt.ItemDataRole.UserRole) == "RNA"
-        assert item.text() == '*_RNA'
+        assert item.text() == "*_RNA"
 
         assert ObjectStateRegistry.time_travel_back()
         QApplication.processEvents()
@@ -3988,15 +4062,18 @@ def test_source_bindings_text_time_travel_restores_widget_value() -> None:
                 "DNA",
             ),
         )
-        assert table_cell_text(
-            widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.VALUE),
-        ) == "DNA"
+        assert (
+            table_cell_text(
+                widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.VALUE),
+            )
+            == "DNA"
+        )
         item = widget.source_filters_table.item(0, int(SourceFilterColumn.VALUE))
         assert item is not None
         assert item.data(Qt.ItemDataRole.UserRole) == "DNA"
-        assert item.text() == '*_DNA'
+        assert item.text() == "*_DNA"
 
         assert ObjectStateRegistry.time_travel_forward()
         QApplication.processEvents()
@@ -4007,15 +4084,18 @@ def test_source_bindings_text_time_travel_restores_widget_value() -> None:
                 "RNA",
             ),
         )
-        assert table_cell_text(
-            widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.VALUE),
-        ) == "RNA"
+        assert (
+            table_cell_text(
+                widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.VALUE),
+            )
+            == "RNA"
+        )
         item = widget.source_filters_table.item(0, int(SourceFilterColumn.VALUE))
         assert item is not None
         assert item.data(Qt.ItemDataRole.UserRole) == "RNA"
-        assert item.text() == '*_RNA'
+        assert item.text() == "*_RNA"
     finally:
         manager.deleteLater()
         ObjectStateRegistry.clear()
@@ -4063,22 +4143,31 @@ def test_source_bindings_child_state_update_refreshes_widget_value() -> None:
         QApplication.processEvents()
 
         source_config = state.parameters["source_bindings_config"]
-        assert DataclassFieldAccess.raw_value(
-            source_config,
-            "source_filters",
-        ) == first_filters
+        assert (
+            DataclassFieldAccess.raw_value(
+                source_config,
+                "source_filters",
+            )
+            == first_filters
+        )
         assert widget.get_value().source_filters == first_filters
         assert widget.source_filters_table is not None
-        assert table_cell_text(
-            widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.MATCH_TYPE),
-        ) == "equals"
-        assert table_cell_text(
-            widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.VALUE),
-        ) == "DNA"
+        assert (
+            table_cell_text(
+                widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.MATCH_TYPE),
+            )
+            == "equals"
+        )
+        assert (
+            table_cell_text(
+                widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.VALUE),
+            )
+            == "DNA"
+        )
         history_len_before_second_update = len(ObjectStateRegistry.get_branch_history())
 
         second_filters = (
@@ -4098,21 +4187,30 @@ def test_source_bindings_child_state_update_refreshes_widget_value() -> None:
         QApplication.processEvents()
 
         source_config = state.parameters["source_bindings_config"]
-        assert DataclassFieldAccess.raw_value(
-            source_config,
-            "source_filters",
-        ) == second_filters
+        assert (
+            DataclassFieldAccess.raw_value(
+                source_config,
+                "source_filters",
+            )
+            == second_filters
+        )
         assert widget.get_value().source_filters == second_filters
-        assert table_cell_text(
-            widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.MATCH_TYPE),
-        ) == "contains"
-        assert table_cell_text(
-            widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.VALUE),
-        ) == "RNA"
+        assert (
+            table_cell_text(
+                widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.MATCH_TYPE),
+            )
+            == "contains"
+        )
+        assert (
+            table_cell_text(
+                widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.VALUE),
+            )
+            == "RNA"
+        )
 
         new_history = ObjectStateRegistry.get_branch_history()[
             history_len_before_second_update:
@@ -4122,18 +4220,26 @@ def test_source_bindings_child_state_update_refreshes_widget_value() -> None:
 
         assert ObjectStateRegistry.time_travel_back()
         QApplication.processEvents()
-        assert state.parameters["source_bindings_config.source_filters"] == first_filters
+        assert (
+            state.parameters["source_bindings_config.source_filters"] == first_filters
+        )
         assert widget.get_value().source_filters == first_filters
-        assert table_cell_text(
-            widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.MATCH_TYPE),
-        ) == "equals"
-        assert table_cell_text(
-            widget.source_filters_table,
-            0,
-            int(SourceFilterColumn.VALUE),
-        ) == "DNA"
+        assert (
+            table_cell_text(
+                widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.MATCH_TYPE),
+            )
+            == "equals"
+        )
+        assert (
+            table_cell_text(
+                widget.source_filters_table,
+                0,
+                int(SourceFilterColumn.VALUE),
+            )
+            == "DNA"
+        )
     finally:
         manager.deleteLater()
         ObjectStateRegistry.clear()
@@ -4228,7 +4334,8 @@ def test_source_bindings_flash_masks_nested_section_titles() -> None:
     section_title_labels = [
         label
         for label in widget.findChildren(QLabel)
-        if label.text() in {
+        if label.text()
+        in {
             "Bindings",
             "Source Filters",
             "Metadata Rules",
@@ -4298,19 +4405,25 @@ def test_source_bindings_editor_set_value_resets_stale_preview_table() -> None:
     assert widget.source_filters_table is not None
 
     widget.set_resolved_value_preview(preview_config)
-    assert table_cell_text(
-        widget.source_filters_table,
-        0,
-        int(SourceFilterColumn.SUBJECT),
-    ) == "extension"
+    assert (
+        table_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.SUBJECT),
+        )
+        == "extension"
+    )
 
     widget.set_value(raw_config)
 
-    assert table_cell_text(
-        widget.source_filters_table,
-        0,
-        int(SourceFilterColumn.SUBJECT),
-    ) == "file"
+    assert (
+        table_cell_text(
+            widget.source_filters_table,
+            0,
+            int(SourceFilterColumn.SUBJECT),
+        )
+        == "file"
+    )
 
 
 def test_source_bindings_editor_renders_preview_context(tmp_path) -> None:
@@ -4415,9 +4528,7 @@ def test_source_bindings_editor_preserves_binding_identity_on_basic_edits() -> N
 
     edited = widget.get_value().bindings[0]
     assert edited.alias == "OrigDNA"
-    assert edited.component_identity == (
-        ComponentSelector(AllComponents.CHANNEL, "1"),
-    )
+    assert edited.component_identity == (ComponentSelector(AllComponents.CHANNEL, "1"),)
     assert edited.projection_role is SourceProjectionRole.SOURCE_ARTIFACT
 
 
@@ -4557,10 +4668,7 @@ def test_source_bindings_editor_removes_selected_binding_row() -> None:
     dialog.editor.remove_selected_binding_rows()
     widget._apply_step_bindings(dialog.bindings())
 
-    remaining_aliases = tuple(
-        binding.alias
-        for binding in widget.get_value().bindings
-    )
+    remaining_aliases = tuple(binding.alias for binding in widget.get_value().bindings)
     assert remaining_aliases == ("GFP",)
 
 

@@ -1320,6 +1320,10 @@ class UiWindowNavigateRequest(UiWindowOperationRequest):
     item_id: str | None = None
     field_path: str | None = None
 
+    @property
+    def has_target(self) -> bool:
+        return self.item_id is not None or self.field_path is not None
+
     @classmethod
     def from_fields(
         cls,

@@ -61,7 +61,9 @@ def test_time_travel_navigation_filters_unrelated_dirty_scopes() -> None:
     )
 
 
-def test_time_travel_navigation_keeps_legacy_global_refresh_when_scope_unknown() -> None:
+def test_time_travel_navigation_keeps_legacy_global_refresh_when_scope_unknown() -> (
+    None
+):
     assert should_include_time_travel_scope(
         TimeTravelSourceScope(
             changed_scope_id="/tmp/plate::functionstep_9",
@@ -99,7 +101,9 @@ def test_time_travel_plate_scope_does_not_open_step_descendants() -> None:
     )
 
 
-def test_time_travel_unknown_trigger_does_not_create_missing_windows(monkeypatch) -> None:
+def test_time_travel_unknown_trigger_does_not_create_missing_windows(
+    monkeypatch,
+) -> None:
     _reset_registry()
     step_scope = "/tmp/plate::functionstep_5"
     step_state = ObjectState(
@@ -317,8 +321,10 @@ def test_dual_editor_navigation_uses_step_editor_readiness_for_step_fields() -> 
                 wait_reason=NavigationWaitReason.FIELD_TARGET
             )
 
-        def build_complete_callbacks(self):
-            return (self.callbacks,)
+        def register_readiness_callback(self, request, callback):
+            del request
+            self.callbacks.append(callback)
+            return True
 
         def execute(self, request):
             self.executed.append(request.field_path)
@@ -348,16 +354,86 @@ def test_dual_editor_navigation_uses_step_editor_readiness_for_step_fields() -> 
     driver = DualEditorWindowNavigationDriver(owner)
     request = RegisteredWindowNavigationRequest(
         window=None,
+        requested_scope_id="step_scope",
         field_path="source_bindings.source_filters",
     )
 
     assert driver.readiness(request).wait_reason is NavigationWaitReason.FIELD_TARGET
-    assert driver.build_complete_callbacks() == (step_driver.callbacks,)
 
+    def retry_callback() -> None:
+        pass
+
+    assert driver.register_readiness_callback(request, retry_callback)
+    assert step_driver.callbacks == [retry_callback]
+
+    driver.prepare(request)
     driver.execute(request)
 
     assert owner.tab_widget.indices == [0]
     assert step_driver.executed == ["source_bindings.source_filters"]
+
+
+def test_dual_editor_function_navigation_does_not_use_step_build_callbacks(
+    qapp,
+) -> None:
+    from PyQt6.QtWidgets import QWidget
+
+    class StepDriver(WindowNavigationDriver):
+        def __init__(self) -> None:
+            self.callbacks: list[object] = []
+
+        def register_readiness_callback(self, request, callback):
+            del request
+            self.callbacks.append(callback)
+            return True
+
+    class StepEditor:
+        def __init__(self, driver: StepDriver) -> None:
+            self.driver = driver
+
+        def window_navigation_driver(self):
+            return self.driver
+
+    class FunctionEditor:
+        def __init__(self) -> None:
+            self.selected: list[str] = []
+
+        def select_and_scroll_to_field(self, field_path: str) -> None:
+            self.selected.append(field_path)
+
+    class TabWidget:
+        def __init__(self) -> None:
+            self.indices: list[int] = []
+
+        def setCurrentIndex(self, index: int) -> None:
+            self.indices.append(index)
+
+    class Owner:
+        def __init__(self) -> None:
+            self.step_driver = StepDriver()
+            self.step_editor = StepEditor(self.step_driver)
+            self.func_editor = FunctionEditor()
+            self.tab_widget = TabWidget()
+
+    owner = Owner()
+    driver = DualEditorWindowNavigationDriver(owner)
+    window = QWidget()
+    request = RegisteredWindowNavigationRequest(
+        window=window,
+        requested_scope_id="step_scope",
+        field_path="func.threshold",
+    )
+
+    assert driver.accepts(request)
+    assert not driver.register_readiness_callback(request, lambda: None)
+
+    driver.prepare(request)
+    driver.execute(request)
+
+    assert owner.tab_widget.indices == [1]
+    assert owner.func_editor.selected == ["func.threshold"]
+    assert owner.step_driver.callbacks == []
+    window.close()
 
 
 def test_time_travel_step_field_target_replaces_stale_function_target() -> None:
@@ -368,7 +444,9 @@ def test_time_travel_step_field_target_replaces_stale_function_target() -> None:
     assert not should_replace_navigation_target(field_target, function_target)
 
 
-def test_time_travel_unknown_trigger_prefers_source_bindings_field_over_function_scope() -> None:
+def test_time_travel_unknown_trigger_prefers_source_bindings_field_over_function_scope() -> (
+    None
+):
     _reset_registry()
     step_scope = "/tmp/plate::functionstep_5"
     function_scope = f"{step_scope}::function_0"

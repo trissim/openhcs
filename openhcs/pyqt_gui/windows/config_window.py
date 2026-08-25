@@ -35,6 +35,11 @@ from pyqt_reactive.services.window_code_document import (
     WindowCodeDocument,
     WindowCodeDocumentDriver,
 )
+from pyqt_reactive.services.window_navigation import (
+    ObjectStateNavigationTargetAuthority,
+    RegisteredWindowNavigationRequest,
+    WindowNavigationDriver,
+)
 from pyqt_reactive.theming import ColorScheme, WidgetTheme
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
 from pyqt_reactive.widgets.shared import (
@@ -60,7 +65,10 @@ from pyqt_reactive.widgets.shared.config_hierarchy_tree import (
 from pyqt_reactive.widgets.shared.form_window_action_header import (
     HeaderActionGroupRole,
 )
-from pyqt_reactive.widgets.shared.scrollable_form_mixin import ScrollableFormMixin
+from pyqt_reactive.widgets.shared.scrollable_form_mixin import (
+    ScrollableFormMixin,
+    ScrollableFormWindowNavigationDriver,
+)
 
 from openhcs.pyqt_gui.services.config_window_code_document import (
     ConfigCodeDocumentDriver,
@@ -163,6 +171,52 @@ class _ActiveConfigCodeDocumentDriver(WindowCodeDocumentDriver):
 
     def apply_source(self, source: str) -> None:
         self._active_driver().apply_source(source)
+
+
+class ConfigWindowNavigationDriver(ScrollableFormWindowNavigationDriver):
+    """Navigate fields through the config tab whose ObjectState owns them."""
+
+    _owner: ConfigWindow
+
+    def __init__(self, owner: "ConfigWindow") -> None:
+        super().__init__(owner)
+
+    def accepts_field_path(
+        self,
+        request: RegisteredWindowNavigationRequest,
+    ) -> bool:
+        return self._tab_index(request) is not None
+
+    def prepare(self, request: RegisteredWindowNavigationRequest) -> None:
+        tab_index = self._tab_index(request)
+        if tab_index is not None:
+            self._owner._tab_body.set_current_index(tab_index)
+
+    def _tab_index(
+        self,
+        request: RegisteredWindowNavigationRequest,
+    ) -> int | None:
+        field_path = request.field_path
+        if field_path is None:
+            return None
+
+        scoped_indices = tuple(
+            index
+            for index, tab in enumerate(self._owner._tabs)
+            if tab.state.scope_id == request.requested_scope_id
+        )
+        candidate_indices = scoped_indices or tuple(range(len(self._owner._tabs)))
+        matching_indices = tuple(
+            index
+            for index in candidate_indices
+            if ObjectStateNavigationTargetAuthority.owns_field_path(
+                self._owner._tabs[index].state,
+                field_path,
+            )
+        )
+        if len(matching_indices) != 1:
+            return None
+        return matching_indices[0]
 
 
 class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
@@ -426,6 +480,9 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
 
     def window_code_document_driver(self) -> WindowCodeDocumentDriver:
         return self._code_document_driver
+
+    def window_navigation_driver(self) -> WindowNavigationDriver:
+        return ConfigWindowNavigationDriver(self)
 
     def window_manager_scope_id(self) -> str | None:
         if self.scope_id is None:

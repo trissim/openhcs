@@ -14,7 +14,10 @@ from pyqt_reactive.forms.parameter_form_manager import FormManagerConfig
 from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
 from pyqt_reactive.protocols.widget_adapters import CheckboxGroupAdapter
 from pyqt_reactive.protocols.widget_protocols import ValueSettable
-from pyqt_reactive.services.field_change_dispatcher import FieldChangeDispatcher, FieldChangeEvent
+from pyqt_reactive.services.field_change_dispatcher import (
+    FieldChangeDispatcher,
+    FieldChangeEvent,
+)
 from pyqt_reactive.theming.color_scheme import ColorScheme
 
 
@@ -294,20 +297,14 @@ def test_chrome_sync_refreshes_widgets_by_exact_objectstate_path() -> None:
     well_filter.form_tree = form_tree
     path_planning.form_tree = form_tree
 
-    root.chrome_sync.refresh_widgets_for_paths(
-        {"well_filter_config.well_filter"}
-    )
+    root.chrome_sync.refresh_widgets_for_paths({"well_filter_config.well_filter"})
 
-    assert widget_service.calls == [
-        ("well_filter_config", "well_filter", "A01", False)
-    ]
+    assert widget_service.calls == [("well_filter_config", "well_filter", "A01", False)]
     assert well_filter.widgets["well_filter"].values == ["A01"]
     assert path_planning.widgets["well_filter"].values == []
     assert placeholder_service.calls == []
 
-    root.chrome_sync.refresh_widgets_for_paths(
-        {"path_planning_config.well_filter"}
-    )
+    root.chrome_sync.refresh_widgets_for_paths({"path_planning_config.well_filter"})
 
     assert widget_service.calls[-1] == (
         "path_planning_config",
@@ -315,12 +312,10 @@ def test_chrome_sync_refreshes_widgets_by_exact_objectstate_path() -> None:
         None,
         True,
     )
-    assert placeholder_service.calls == [
-        ("path_planning_config", "well_filter")
-    ]
+    assert placeholder_service.calls == [("path_planning_config", "well_filter")]
 
 
-def test_resolved_change_refreshes_widget_values_outside_time_travel() -> None:
+def test_resolved_change_refreshes_widget_values_outside_time_travel(qapp) -> None:
     """External ObjectState edits update visible widgets without time travel."""
     from PyQt6.QtCore import QEventLoop, QTimer
 
@@ -337,11 +332,12 @@ def test_resolved_change_refreshes_widget_values_outside_time_travel() -> None:
             del refreshed_compound_owner_paths
             self.state_paths.append(set(paths))
 
-    class FakeManager:
+    class FakeManager(QObject):
         _parent_manager = None
         field_id = ""
 
         def __init__(self) -> None:
+            super().__init__()
             self.state = SimpleNamespace(scope_id="fake_scope")
             self.chrome_sync = FakeChromeSync()
             self.flash_registrations = []
@@ -350,6 +346,13 @@ def test_resolved_change_refreshes_widget_values_outside_time_travel() -> None:
             self._resolved_changed_flush_scheduled = False
             self._locally_applied_model_paths = set()
             self._pending_path_scoped_state_refresh = None
+
+        def schedule_lifecycle_callback(self, delay_ms, callback):
+            return ParameterFormManager.schedule_lifecycle_callback(
+                self,
+                delay_ms,
+                callback,
+            )
 
         def _queue_leaf_flash_for_path(self, path, *, queue_flash=True):
             self.flash_registrations.append((path, queue_flash))
@@ -391,16 +394,12 @@ def test_resolved_change_refreshes_widget_values_outside_time_travel() -> None:
         loop.exec()
     finally:
         ObjectStateRegistry._in_time_travel = previous
+        manager.deleteLater()
+        qapp.processEvents()
 
-    assert manager.chrome_sync.widget_paths == [
-        {"well_filter_config.well_filter"}
-    ]
-    assert manager.chrome_sync.state_paths == [
-        {"well_filter_config.well_filter"}
-    ]
-    assert manager.flash_registrations == [
-        ("well_filter_config.well_filter", False)
-    ]
+    assert manager.chrome_sync.widget_paths == [{"well_filter_config.well_filter"}]
+    assert manager.chrome_sync.state_paths == [{"well_filter_config.well_filter"}]
+    assert manager.flash_registrations == [("well_filter_config.well_filter", False)]
     assert manager.flash_batches == [("well_filter_config.well_filter",)]
 
 
@@ -427,7 +426,9 @@ def test_resolved_child_path_flashes_inline_dataclass_container() -> None:
     """Inline dataclass child updates flash by ObjectState path."""
     from openhcs.core.source_bindings import NamedSourceBinding
     from openhcs.core.steps.function_step import FunctionStep
-    from openhcs.pyqt_gui.widgets.source_bindings_editor import SourceBindingsEditorWidget
+    from openhcs.pyqt_gui.widgets.source_bindings_editor import (
+        SourceBindingsEditorWidget,
+    )
 
     QtApplicationHarness.app()
 
