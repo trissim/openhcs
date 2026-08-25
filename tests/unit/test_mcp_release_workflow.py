@@ -464,6 +464,7 @@ def test_real_viewer_smoke_validates_native_qt_and_prewarms_managed_fiji():
     bioformats_smoke = steps[bioformats_index]["run"]
     assert "scripts/run_installed_tests.py" in bioformats_smoke
     assert "test_bioformats_imagexpress_synthetic.py" in bioformats_smoke
+    assert "for smoke_attempt in 1 2 3" in bioformats_smoke
 
 
 def test_native_macos_installer_uses_native_qt_smoke_harness():

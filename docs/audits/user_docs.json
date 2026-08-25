@@ -152,7 +152,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "6e55bc63b713e75124e2e3fe7bb46bf0e7d2f53d2fca95143a3d64a7eac5f4d3",
+        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -620,7 +620,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "6e55bc63b713e75124e2e3fe7bb46bf0e7d2f53d2fca95143a3d64a7eac5f4d3",
+        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -792,7 +792,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "6e55bc63b713e75124e2e3fe7bb46bf0e7d2f53d2fca95143a3d64a7eac5f4d3",
+        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -877,7 +877,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "ca21b5715c1cec586e42fcc00f66eb6d36cefb860f30da8963bf8d64a28053b1",
+        "sha256": "accec40f4cf6d6bcd78cffde88af3e2f2fd7f1aa4271905cd06e472fb285d008",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -1267,7 +1267,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "6e55bc63b713e75124e2e3fe7bb46bf0e7d2f53d2fca95143a3d64a7eac5f4d3",
+        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1867,7 +1867,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "6e55bc63b713e75124e2e3fe7bb46bf0e7d2f53d2fca95143a3d64a7eac5f4d3",
+        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1986,7 +1986,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "ca21b5715c1cec586e42fcc00f66eb6d36cefb860f30da8963bf8d64a28053b1",
+        "sha256": "accec40f4cf6d6bcd78cffde88af3e2f2fd7f1aa4271905cd06e472fb285d008",
         "role": "Defines the operating-system integration matrix, dependency setup, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
@@ -2170,7 +2170,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "6e55bc63b713e75124e2e3fe7bb46bf0e7d2f53d2fca95143a3d64a7eac5f4d3",
+        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2635,7 +2635,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "6e55bc63b713e75124e2e3fe7bb46bf0e7d2f53d2fca95143a3d64a7eac5f4d3",
+        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],

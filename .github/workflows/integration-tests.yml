@@ -1921,10 +1921,13 @@ jobs:
           PY
 
       - name: Run real Bio-Formats ImageXpress source smoke
-        run: >-
-          python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" --
-          tests/integration/test_bioformats_imagexpress_synthetic.py
-          -v --tb=short
+        run: |
+          for smoke_attempt in 1 2 3; do
+            printf 'Bio-Formats process-exit smoke %s/3\n' "$smoke_attempt"
+            python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" -- \
+              tests/integration/test_bioformats_imagexpress_synthetic.py \
+              -v --tb=short
+          done
 
       - name: Configure deterministic NumPy dispatch
         run: |
