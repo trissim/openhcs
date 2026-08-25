@@ -172,7 +172,10 @@ class DebugInspectorWindow(QDialog):
         if section.table is not None:
             if not section.table.rows:
                 layout.addWidget(
-                    QLabel(section.table.empty_message or section_declaration.empty_message())
+                    QLabel(
+                        section.table.empty_message
+                        or section_declaration.empty_message()
+                    )
                 )
             layout.addWidget(self._table_widget(section.table))
         if section.text is not None:
@@ -203,9 +206,7 @@ class DebugInspectorWindow(QDialog):
         for row_index, row in enumerate(table.rows):
             for column_index, value in enumerate(row):
                 item = QTableWidgetItem(value)
-                item.setFlags(
-                    item.flags() & ~Qt.ItemFlag.ItemIsEditable
-                )
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 widget.setItem(row_index, column_index, item)
         widget.resizeColumnsToContents()
         widget.resizeRowsToContents()
@@ -268,7 +269,5 @@ def is_debug_inspector_export(name: str, value: object) -> bool:
 
 
 __all__ = tuple(
-    name
-    for name, value in globals().items()
-    if is_debug_inspector_export(name, value)
+    name for name, value in globals().items() if is_debug_inspector_export(name, value)
 )

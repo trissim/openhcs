@@ -51,8 +51,8 @@ class SyntheticPlateGenerationService:
         profile: SyntheticPlateGenerationProfile = SYNTHETIC_PLATE_GENERATION_PROFILE,
     ) -> None:
         self._path_policy = path_policy or AgentPathPolicy.from_environment()
-        self._plate_inspection_service = plate_inspection_service or PlateInspectionService(
-            self._path_policy
+        self._plate_inspection_service = (
+            plate_inspection_service or PlateInspectionService(self._path_policy)
         )
         self._profile = profile
 
@@ -219,7 +219,9 @@ class SyntheticPlateGenerationService:
     ) -> SyntheticPlateGenerationResult:
         return SyntheticPlateGenerationResult(
             schema_version=SCHEMA_VERSION,
-            output_dir=str(output_dir) if output_dir is not None else request.output_dir,
+            output_dir=(
+                str(output_dir) if output_dir is not None else request.output_dir
+            ),
             requested_format=self._result_format(request),
             grid_size=(request.grid_rows, request.grid_cols),
             tile_size=(request.tile_width, request.tile_height),

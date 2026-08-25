@@ -26,7 +26,9 @@ from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.runtime_pattern_cache import RuntimePatternDiscoveryCache
 from openhcs.core.runtime_stack_cache import RuntimeImageStackCache
 from openhcs.core.runtime_source_binding_cache import RuntimeSourceBindingContextCache
-from openhcs.core.source_workspace_projection import VirtualWorkspaceSourceProjectionCache
+from openhcs.core.source_workspace_projection import (
+    VirtualWorkspaceSourceProjectionCache,
+)
 from openhcs.core.source_matching import SourceImageSetIdentityPolicy
 from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.core.axis_filter import StepAxisFilterMap

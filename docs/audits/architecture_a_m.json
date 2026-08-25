@@ -135,7 +135,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares AnalysisConsolidationConfig and its standalone consolidation policy."
       },
       {
@@ -519,7 +519,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares OpenHCS domain configuration that consumes ObjectState mechanics."
       }
     ],
@@ -714,7 +714,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares the OpenHCS global, pipeline, step, and standalone configuration hierarchy."
       }
     ],
@@ -927,7 +927,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares standalone ExperimentalAnalysisConfig options and all directory-workflow filenames."
       },
       {
@@ -1489,7 +1489,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares the WellFilterConfig family preview policy and WellFilterMode member operators."
       },
       {

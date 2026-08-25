@@ -11,7 +11,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -245,7 +245,7 @@
       },
       {
         "path": "tests/unit/test_configuration_mirror_deletion.py",
-        "sha256": "cc890c6cccd6b76a2663ae79ec258686782c0367ff5cf780a36f56792f67f926",
+        "sha256": "26002ddfbbf89bf06ae54888645c6b8c90154536a16e93feee1a2fae713c4963",
         "role": "Proves configuration consumers use declaration-owned metadata without parallel field registries."
       }
     ],
@@ -431,7 +431,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -488,7 +488,7 @@
       },
       {
         "path": "openhcs/agent/services/function_catalog_service.py",
-        "sha256": "f0d5fa083fd6fc5ddeb51d3b47d4ebcd2b60865c8ecc17c449da6b698786b315",
+        "sha256": "3b67afbe1606127d801a2d79235f15f8271288efab111056c60a4991d69e8d55",
         "role": "Projects callable contracts from the unified function registry for agent discovery and selection."
       },
       {
@@ -589,7 +589,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -635,7 +635,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -709,7 +709,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -745,7 +745,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -1012,7 +1012,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -1047,7 +1047,7 @@
       },
       {
         "path": "tests/unit/test_configuration_mirror_deletion.py",
-        "sha256": "cc890c6cccd6b76a2663ae79ec258686782c0367ff5cf780a36f56792f67f926",
+        "sha256": "26002ddfbbf89bf06ae54888645c6b8c90154536a16e93feee1a2fae713c4963",
         "role": "Proves configuration consumers use declaration-owned metadata without parallel field registries."
       },
       {
@@ -1144,7 +1144,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       }
     ],
@@ -2217,7 +2217,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -2383,7 +2383,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -2427,7 +2427,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -2473,7 +2473,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -2785,7 +2785,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {
@@ -2843,7 +2843,7 @@
       },
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares the default directory filenames and replicate-local normalization method."
       },
       {
@@ -3040,7 +3040,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Declares the supported OpenHCS configuration dataclasses, nested scopes, defaults, and field help metadata."
       },
       {

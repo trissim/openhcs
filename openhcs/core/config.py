@@ -1101,9 +1101,7 @@ class StreamingConfig(StreamingDefaults, ABC, metaclass=StreamingConfigMeta):
         """Return registered viewer identities from their enum owner."""
 
         return tuple(
-            viewer_type
-            for viewer_type in ViewerType
-            if viewer_type in cls.__registry__
+            viewer_type for viewer_type in ViewerType if viewer_type in cls.__registry__
         )
 
     @classmethod

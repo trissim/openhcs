@@ -448,7 +448,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Pipeline, global, step, processing, and source configuration declarations."
       },
       {
@@ -723,7 +723,7 @@
     "authority": [
       {
         "path": "openhcs/core/config.py",
-        "sha256": "10f78f5f5b728e17a648c76bc5939c4b8dac818b4e3ddc3b010cbb2bd9d044ae",
+        "sha256": "5621bd82c17a1c5dd18cc1738a8dd4f4c44be22561196f5e5835ef7bfa1c865d",
         "role": "Pipeline, global, step, processing, and source configuration declarations."
       },
       {
@@ -1903,7 +1903,7 @@
       },
       {
         "path": "openhcs/agent/services/synthetic_plate_service.py",
-        "sha256": "2b0d36e04650778a6ec4c7c0e878f985e0889b5b7e8f319ef6872cc7040b0293",
+        "sha256": "2860714a9f1f2e66df403bc72331195d912cb180600889a1b4f4207642cc776b",
         "role": "Production synthetic-plate request service delegating deterministic fixture generation to the installed demo package."
       },
       {
@@ -2904,7 +2904,7 @@
       },
       {
         "path": "tests/unit/test_configuration_mirror_deletion.py",
-        "sha256": "cc890c6cccd6b76a2663ae79ec258686782c0367ff5cf780a36f56792f67f926",
+        "sha256": "26002ddfbbf89bf06ae54888645c6b8c90154536a16e93feee1a2fae713c4963",
         "role": "Deletion gate proving obsolete parallel configuration and browser modules remain absent."
       }
     ],

@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING
 
 from polystore.base import ImageSamplingRequest
 
-from openhcs.agent.dto.common import AgentError, AgentWarning, JsonObject, SCHEMA_VERSION
+from openhcs.agent.dto.common import (
+    AgentError,
+    AgentWarning,
+    JsonObject,
+    SCHEMA_VERSION,
+)
 from openhcs.agent.dto.plate import (
     PlateFileQueryRecordSummary,
     PlateFileQueryRequest,
@@ -84,14 +89,20 @@ class PlateInspectionText:
     DIRECTORY_HINT = "The inspection target must be a local directory."
     HANDLER_HINT = "Check microscope_type or make sure microscope metadata is present."
     LISTING_HINT = "The selected handler could not list image files read-only."
-    NO_IMAGES_HINT = "Check that image files exist under the plate root or selected source layout."
+    NO_IMAGES_HINT = (
+        "Check that image files exist under the plate root or selected source layout."
+    )
     RESULT_FILES_AVAILABLE_HINT = (
         "This root has analysis result artifacts but no inspectable image "
         "inventory. Query result files, or inspect viewer payloads if the run "
         "streamed images."
     )
-    PARSER_HINT = "The selected handler has no filename parser available for read-only parsing."
-    PARSE_LIMIT_HINT = "Increase max_files_to_parse if full filename coverage is needed."
+    PARSER_HINT = (
+        "The selected handler has no filename parser available for read-only parsing."
+    )
+    PARSE_LIMIT_HINT = (
+        "Increase max_files_to_parse if full filename coverage is needed."
+    )
     LOW_PARSE_COVERAGE_HINT = (
         "This may be the wrong folder, microscope_type, or pattern_format. "
         "Inspect a more specific image folder or pass an explicit microscope_type."
@@ -760,9 +771,7 @@ class PlateInspectionWorkflowAdvicePolicy:
         cls,
         handler: "MicroscopeHandler",
         *,
-        format_specific_candidates: tuple[
-            PlateInspectionHandlerCandidate, ...
-        ] = (),
+        format_specific_candidates: tuple[PlateInspectionHandlerCandidate, ...] = (),
         requested_microscope_type: str = PlateInspectionDefaults.MICROSCOPE_AUTO,
     ) -> PlateInspectionWorkflowAdvice:
         from openhcs.microscopes.microscope_base import (
@@ -842,10 +851,7 @@ class PlateInspectionWorkflowAdvicePolicy:
                 "projects them, and are not a replacement vendor decoder."
                 f"{unsupported_note}"
             )
-        elif (
-            selection_role
-            is MicroscopeSourceSelectionRole.DECLARED_FILE_FALLBACK
-        ):
+        elif selection_role is MicroscopeSourceSelectionRole.DECLARED_FILE_FALLBACK:
             ingestion_route = PlateInspectionIngestionRoute.SOURCE_BINDINGS_HANDLER
             source_binding_role = PlateInspectionSourceBindingRole.INGESTION_OWNER
             message = (
@@ -869,8 +875,7 @@ class PlateInspectionWorkflowAdvicePolicy:
             selection_message = type(handler).source_selection_guidance()
             initialization_message = (
                 f"initialize with explicit microscope_type={ingestion_owner!r}"
-                if requested_microscope_type
-                != PlateInspectionDefaults.MICROSCOPE_AUTO
+                if requested_microscope_type != PlateInspectionDefaults.MICROSCOPE_AUTO
                 else "initialize with auto-detection"
             )
             message = (
@@ -970,7 +975,9 @@ class PlateInspectionService:
         path_config_provider: PlateInspectionPathPlanningConfigProvider | None = None,
     ) -> None:
         self._path_policy = path_policy or AgentPathPolicy.from_environment()
-        self._filemanager_factory = filemanager_factory or PlateInspectionFileManagerFactory()
+        self._filemanager_factory = (
+            filemanager_factory or PlateInspectionFileManagerFactory()
+        )
         self._path_config_provider = (
             path_config_provider or PlateInspectionPathPlanningConfigProvider()
         )
@@ -1002,18 +1009,24 @@ class PlateInspectionService:
     def open_context(
         self,
         request: PlatePathInspectionRequest,
-    ) -> tuple[PlateInspectionContext | None, tuple[AgentError, ...], tuple[AgentWarning, ...]]:
+    ) -> tuple[
+        PlateInspectionContext | None, tuple[AgentError, ...], tuple[AgentWarning, ...]
+    ]:
         """Resolve the plate handler/filemanager context without querying files."""
         return self._open_context(request)
 
-    def resolve_plate_path(self, plate_path: str) -> tuple[Path | None, tuple[AgentError, ...]]:
+    def resolve_plate_path(
+        self, plate_path: str
+    ) -> tuple[Path | None, tuple[AgentError, ...]]:
         """Resolve and validate a local plate path without creating a handler."""
         return self._resolve_plate_path(plate_path)
 
     def _open_context(
         self,
         request: PlatePathInspectionRequest,
-    ) -> tuple[PlateInspectionContext | None, tuple[AgentError, ...], tuple[AgentWarning, ...]]:
+    ) -> tuple[
+        PlateInspectionContext | None, tuple[AgentError, ...], tuple[AgentWarning, ...]
+    ]:
         plate_path, path_errors = self._resolve_plate_path(request.plate_path)
         if path_errors:
             return None, path_errors, ()
@@ -1024,26 +1037,36 @@ class PlateInspectionService:
         try:
             handler = self._create_handler(request, plate_path, filemanager)
         except Exception as exc:
-            return None, (
-                AgentError.from_exception(
-                    PlateInspectionIssueCode.HANDLER_DETECTION_FAILED.value,
-                    exc,
-                    hint=PlateInspectionText.HANDLER_HINT,
-                    path=str(plate_path),
+            return (
+                None,
+                (
+                    AgentError.from_exception(
+                        PlateInspectionIssueCode.HANDLER_DETECTION_FAILED.value,
+                        exc,
+                        hint=PlateInspectionText.HANDLER_HINT,
+                        path=str(plate_path),
+                    ),
                 ),
-            ), ()
+                (),
+            )
 
         warnings: list[AgentWarning] = []
         parser = self._parser(handler, warnings, warn=True)
-        return PlateInspectionContext(
-            plate_path=plate_path,
-            filemanager=filemanager,
-            handler=handler,
-            parser=parser,
-            warnings=tuple(warnings),
-        ), (), tuple(warnings)
+        return (
+            PlateInspectionContext(
+                plate_path=plate_path,
+                filemanager=filemanager,
+                handler=handler,
+                parser=parser,
+                warnings=tuple(warnings),
+            ),
+            (),
+            tuple(warnings),
+        )
 
-    def _resolve_plate_path(self, plate_path: str) -> tuple[Path | None, tuple[AgentError, ...]]:
+    def _resolve_plate_path(
+        self, plate_path: str
+    ) -> tuple[Path | None, tuple[AgentError, ...]]:
         try:
             resolved_path = self._path_policy.assert_readable(plate_path)
             if not resolved_path.is_dir():
@@ -1431,7 +1454,9 @@ class PlateInspectionService:
     ) -> PlateFileQueryResult:
         return PlateFileQueryResult(
             schema_version=SCHEMA_VERSION,
-            plate_path=str(plate_path) if plate_path is not None else request.plate_path,
+            plate_path=(
+                str(plate_path) if plate_path is not None else request.plate_path
+            ),
             requested_microscope_type=request.microscope_type,
             errors=(error,),
         )
@@ -1616,8 +1641,7 @@ class PlateInspectionService:
         )
         if format_specific_candidates:
             candidate_names = ", ".join(
-                candidate.microscope_type
-                for candidate in format_specific_candidates
+                candidate.microscope_type for candidate in format_specific_candidates
             )
             supports_partial = all(
                 PlateInspectionHandlerCandidateProjection.supports_explicit_incomplete_export(
@@ -2023,7 +2047,9 @@ class PlateInspectionService:
         return PlateResultFileInventory(
             plate_path=plate_path,
             records=tuple(
-                sorted(records_by_path.values(), key=lambda record: record.relative_path)
+                sorted(
+                    records_by_path.values(), key=lambda record: record.relative_path
+                )
             ),
             scanned_file_count=scanned_file_count,
         )
@@ -2164,7 +2190,9 @@ class PlateInspectionService:
     ) -> PlatePathInspectionResult:
         return PlatePathInspectionResult(
             schema_version=SCHEMA_VERSION,
-            plate_path=str(plate_path) if plate_path is not None else request.plate_path,
+            plate_path=(
+                str(plate_path) if plate_path is not None else request.plate_path
+            ),
             requested_microscope_type=request.microscope_type,
             status=PlateInspectionStatus.ERROR,
             confidence=PlateInspectionConfidence.NONE,
@@ -2182,7 +2210,9 @@ class PlateInspectionService:
     ) -> PlateImageSampleResult:
         return PlateImageSampleResult(
             schema_version=SCHEMA_VERSION,
-            plate_path=str(plate_path) if plate_path is not None else request.plate_path,
+            plate_path=(
+                str(plate_path) if plate_path is not None else request.plate_path
+            ),
             requested_image_path=request.image_path,
             errors=(error,),
         )

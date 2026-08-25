@@ -7,7 +7,6 @@ import re
 import textwrap
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).parents[2]
 SCANNED_ROOTS = (
     PROJECT_ROOT / "openhcs",
@@ -96,9 +95,7 @@ def test_dtype_conversion_remains_owned_only_by_arraybridge() -> None:
         target.id
         for node in constants_tree.body
         if isinstance(node, (ast.Assign, ast.AnnAssign))
-        for target in (
-            node.targets if isinstance(node, ast.Assign) else (node.target,)
-        )
+        for target in (node.targets if isinstance(node, ast.Assign) else (node.target,))
         if isinstance(target, ast.Name)
         and target.id in {"DtypeConversion", "LiteralDtype"}
     }
@@ -123,22 +120,15 @@ def test_dtype_conversion_remains_owned_only_by_arraybridge() -> None:
                 forbidden_imports.append(
                     f"{path.relative_to(PROJECT_ROOT)}:{node.lineno}"
                 )
-            if (
-                isinstance(node, ast.Constant)
-                and isinstance(node.value, str)
-            ):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
                 for embedded_import in _embedded_imports(node.value):
-                    if (
-                        embedded_import.module
-                        in {
-                            "openhcs.constants",
-                            "openhcs.constants.constants",
-                            "openhcs.core.memory",
-                        }
-                        and any(
-                            alias.name in {"DtypeConversion", "LiteralDtype"}
-                            for alias in embedded_import.names
-                        )
+                    if embedded_import.module in {
+                        "openhcs.constants",
+                        "openhcs.constants.constants",
+                        "openhcs.core.memory",
+                    } and any(
+                        alias.name in {"DtypeConversion", "LiteralDtype"}
+                        for alias in embedded_import.names
                     ):
                         forbidden_embedded_imports.append(
                             f"{path.relative_to(PROJECT_ROOT)}:{node.lineno}"
@@ -151,10 +141,7 @@ def test_dtype_conversion_remains_owned_only_by_arraybridge() -> None:
 
 
 def test_cpu_cell_counter_has_no_false_segmentation_output_toggle() -> None:
-    path = (
-        PROJECT_ROOT
-        / "openhcs/processing/backends/analysis/cell_counting_cpu.py"
-    )
+    path = PROJECT_ROOT / "openhcs/processing/backends/analysis/cell_counting_cpu.py"
     tree = ast.parse(path.read_text(), filename=str(path))
     function = next(
         node
@@ -180,10 +167,11 @@ def test_experimental_analysis_is_not_a_global_pipeline_config() -> None:
     analysis_config = next(
         node
         for node in tree.body
-        if isinstance(node, ast.ClassDef)
-        and node.name == "ExperimentalAnalysisConfig"
+        if isinstance(node, ast.ClassDef) and node.name == "ExperimentalAnalysisConfig"
     )
-    decorators = {ast.unparse(decorator) for decorator in analysis_config.decorator_list}
+    decorators = {
+        ast.unparse(decorator) for decorator in analysis_config.decorator_list
+    }
 
     assert not any(
         decorator == "global_pipeline_config"
@@ -248,8 +236,7 @@ def test_deleted_lazy_registry_and_name_resolver_symbols_do_not_recur() -> None:
 
 def test_python_introspection_compatibility_aliases_remain_deleted() -> None:
     path = (
-        PROJECT_ROOT
-        / "external/python-introspect/src/python_introspect/"
+        PROJECT_ROOT / "external/python-introspect/src/python_introspect/"
         "unified_parameter_analyzer.py"
     )
     tree = ast.parse(path.read_text(), filename=str(path))
@@ -263,11 +250,7 @@ def test_python_introspection_compatibility_aliases_remain_deleted() -> None:
         target.id
         for node in tree.body
         if isinstance(node, (ast.Assign, ast.AnnAssign))
-        for target in (
-            node.targets
-            if isinstance(node, ast.Assign)
-            else (node.target,)
-        )
+        for target in (node.targets if isinstance(node, ast.Assign) else (node.target,))
         if isinstance(target, ast.Name)
     }
     assert not forbidden & (declarations | assignments)
@@ -441,18 +424,12 @@ def test_viewer_identity_is_owned_by_the_streaming_declaration_type() -> None:
                 and node.module == "openhcs.runtime.viewer_protocol"
                 and any(alias.name == "ViewerType" for alias in node.names)
             ):
-                stale_imports.append(
-                    f"{path.relative_to(PROJECT_ROOT)}:{node.lineno}"
-                )
+                stale_imports.append(f"{path.relative_to(PROJECT_ROOT)}:{node.lineno}")
 
-    assert definitions == [
-        "openhcs/core/streaming_config_declarations.py"
-    ]
+    assert definitions == ["openhcs/core/streaming_config_declarations.py"]
     assert stale_imports == []
 
-    declarations_path = (
-        PROJECT_ROOT / "openhcs/core/streaming_config_declarations.py"
-    )
+    declarations_path = PROJECT_ROOT / "openhcs/core/streaming_config_declarations.py"
     declarations_tree = ast.parse(
         declarations_path.read_text(),
         filename=str(declarations_path),

@@ -124,6 +124,7 @@ class AgentFunctionSearchPolicy:
             "with",
         }
     )
+
     @classmethod
     def accepts_token(cls, token: str) -> bool:
         return token not in cls.stop_words
@@ -232,9 +233,7 @@ class CatalogFilterText:
             # the same phrase buried in a long imported docstring. This remains
             # backend-neutral and lets callable owners improve discovery by
             # documenting their purpose precisely.
-            density_bonus = round(
-                100 * len(self.tokens) / max(1, len(text.split()))
-            )
+            density_bonus = round(100 * len(self.tokens) / max(1, len(text.split())))
             return 1000 + len(self.tokens) + density_bonus
         matched_count = sum(
             (1 for token in self.tokens if self._token_matches_text(token, text))
