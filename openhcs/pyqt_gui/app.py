@@ -75,6 +75,9 @@ class MainWindowStartupReadiness(QtCore.QObject):
             self._on_failure(error)
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if watched is self._main_window and event.type() == QtCore.QEvent.Type.Close:
+            self._finish()
+            return super().eventFilter(watched, event)
         if (
             watched is self._main_window
             and self._state is MainWindowStartupReadinessState.WAITING_INITIALIZED_PAINT
@@ -358,6 +361,7 @@ class OpenHCSPyQtApp(QApplication):
 
         def _startup_ready() -> None:
             nonlocal startup_complete
+            self.main_window.start_background_services()
             startup_complete = True
             if on_main_window_ready is not None:
                 on_main_window_ready()

@@ -81,6 +81,48 @@ def test_progress_window_implements_nominal_reporter_contract() -> None:
         desktop_update_worker.DesktopUpdateProgressReporterABC()
 
 
+def test_progress_events_own_nominal_presentation_dispatch() -> None:
+    calls: list[tuple[str, object]] = []
+
+    class _ProgressWindowProbe(desktop_update_worker.DesktopUpdateProgressWindow):
+        def __init__(self) -> None:
+            pass
+
+        def _present_phase(self, phase) -> None:
+            calls.append(("phase", phase))
+
+        def _append_output(self, message: str) -> None:
+            calls.append(("output", message))
+
+        def _show_failure(self, message: str) -> None:
+            calls.append(("failure", message))
+
+        def _show_complete(self, message: str) -> None:
+            calls.append(("complete", message))
+
+    with pytest.raises(TypeError):
+        desktop_update_worker.DesktopUpdateProgressEventABC()
+
+    window = _ProgressWindowProbe()
+    events: tuple[desktop_update_worker.DesktopUpdateProgressEventABC, ...] = (
+        desktop_update_worker.DesktopUpdatePhaseEvent(
+            desktop_update_worker.DesktopUpdatePhase.INSTALLING
+        ),
+        desktop_update_worker.DesktopUpdateOutputEvent("install output"),
+        desktop_update_worker.DesktopUpdateFailureEvent("install failed"),
+        desktop_update_worker.DesktopUpdateCompleteEvent(),
+    )
+    for event in events:
+        event.apply(window)
+
+    assert calls == [
+        ("phase", desktop_update_worker.DesktopUpdatePhase.INSTALLING),
+        ("output", "install output"),
+        ("failure", "install failed"),
+        ("complete", "OpenHCS updated successfully"),
+    ]
+
+
 def _progress_arguments(tmp_path: Path) -> list[str]:
     return [
         "--progress-theme-file",

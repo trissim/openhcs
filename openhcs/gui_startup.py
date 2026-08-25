@@ -15,10 +15,12 @@ import subprocess
 import sys
 import traceback
 from abc import ABC, abstractmethod
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
 from importlib import import_module
 from threading import Event, Lock, Thread
-from typing import IO, Callable
+from typing import IO
 
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 
@@ -40,14 +42,88 @@ class GuiStartupProgressReporterABC(ABC):
         """Keep the progress surface open and expose a startup failure."""
 
 
-class _StartupEventKind(str, Enum):
-    """Closed event axis for the startup-window IPC protocol."""
+class _StartupEventPresentationABC(ABC):
+    """Nominal presentation boundary for parent-to-window startup events."""
 
-    OUTPUT = "output"
+    @abstractmethod
+    def present_output(self, message: str) -> None:
+        """Present one line emitted during startup."""
+
+    @abstractmethod
+    def present_failure(self, message: str, detail: str) -> None:
+        """Present a terminal startup failure."""
+
+    @abstractmethod
+    def present_ready(self) -> None:
+        """Close the window after the main application is ready."""
+
+    @abstractmethod
+    def present_parent_stream_closed(self) -> None:
+        """Close a non-failure window after its parent stream ends."""
+
+
+@dataclass(frozen=True, slots=True)
+class _StartupEventSemantics:
+    """Wire identity and leaf presentation owned by one event kind."""
+
+    wire_kind: str
+    present: Callable[[_StartupEventPresentationABC, dict[str, object]], None]
+
+
+class _StartupEventKind(Enum):
+    """Closed parent-to-window events carrying their presentation behavior."""
+
+    OUTPUT = _StartupEventSemantics(
+        "output",
+        lambda presenter, event: presenter.present_output(
+            str(event.get("message", ""))
+        ),
+    )
+    FAILURE = _StartupEventSemantics(
+        "failure",
+        lambda presenter, event: presenter.present_failure(
+            str(event.get("message", "")),
+            str(event.get("detail", "")),
+        ),
+    )
+    READY = _StartupEventSemantics(
+        "ready",
+        lambda presenter, _event: presenter.present_ready(),
+    )
+
+    @property
+    def wire_kind(self) -> str:
+        return self.value.wire_kind
+
+    def present(
+        self,
+        presenter: _StartupEventPresentationABC,
+        event: dict[str, object],
+    ) -> None:
+        self.value.present(presenter, event)
+
+    @classmethod
+    def from_wire_kind(cls, value: object) -> _StartupEventKind | None:
+        return next((member for member in cls if member.wire_kind == value), None)
+
+
+class _StartupWindowSignal(str, Enum):
+    """Closed child-to-parent startup-window signals."""
+
     PAINTED = "painted"
-    READY = "ready"
-    FAILURE = "failure"
-    EOF = "eof"
+
+
+def _present_startup_event(
+    presenter: _StartupEventPresentationABC,
+    event: dict[str, object],
+) -> bool:
+    """Present one recognized wire event through its declaration owner."""
+
+    kind = _StartupEventKind.from_wire_kind(event.get("kind"))
+    if kind is None:
+        return False
+    kind.present(presenter, event)
+    return True
 
 
 class GuiStartupProgressController(GuiStartupProgressReporterABC):
@@ -65,7 +141,7 @@ class GuiStartupProgressController(GuiStartupProgressReporterABC):
         self._finish_callbacks: list[Callable[[], None]] = []
 
     @classmethod
-    def start(cls) -> "GuiStartupProgressController":
+    def start(cls) -> GuiStartupProgressController:
         """Start the lightweight progress window without blocking GUI startup."""
         if os.environ.get(_STARTUP_PROGRESS_ENVIRONMENT, "1") == "0":
             return cls(None)
@@ -162,7 +238,7 @@ class GuiStartupProgressController(GuiStartupProgressReporterABC):
                         event = json.loads(line)
                     except (json.JSONDecodeError, TypeError):
                         continue
-                    if event.get("kind") == _StartupEventKind.PAINTED.value:
+                    if event.get("kind") == _StartupWindowSignal.PAINTED.value:
                         painted.set()
                         _signal_native_startup_handoff()
                         return
@@ -187,7 +263,7 @@ class GuiStartupProgressController(GuiStartupProgressReporterABC):
         with self._lock:
             if self._closed or self._stream is None:
                 return
-            event = {"kind": kind.value, **payload}
+            event = {"kind": kind.wire_kind, **payload}
             try:
                 self._stream.write(json.dumps(event, ensure_ascii=False) + "\n")
                 self._stream.flush()
@@ -404,11 +480,11 @@ def _run_startup_window_child() -> int:
 
     class _EventBridge(QObject):
         event_received = pyqtSignal(dict)
+        parent_stream_closed = pyqtSignal()
 
     class _StartupWindow(QDialog):
         def __init__(self, color_scheme) -> None:
             super().__init__()
-            self._failed = False
             self._first_paint_reported = False
             self._color_scheme = color_scheme
             self.setWindowTitle("Starting OpenHCS")
@@ -511,7 +587,7 @@ def _run_startup_window_child() -> int:
                 """
             )
 
-        def paintEvent(self, event) -> None:  # noqa: N802
+        def paintEvent(self, event) -> None:
             super().paintEvent(event)
             if self._first_paint_reported:
                 return
@@ -520,41 +596,11 @@ def _run_startup_window_child() -> int:
                 return
             try:
                 sys.stdout.write(
-                    json.dumps({"kind": _StartupEventKind.PAINTED.value}) + "\n"
+                    json.dumps({"kind": _StartupWindowSignal.PAINTED.value}) + "\n"
                 )
                 sys.stdout.flush()
             except (BrokenPipeError, OSError, ValueError):
                 pass
-
-        def apply_event(self, event: dict) -> None:
-            kind = event.get("kind")
-            message = str(event.get("message", ""))
-            if kind == _StartupEventKind.OUTPUT.value:
-                status = message if len(message) <= 180 else f"{message[:179]}…"
-                self.phase_label.setText(status)
-                self._append_detail(message)
-            elif kind == _StartupEventKind.FAILURE.value:
-                self._failed = True
-                self.setWindowTitle("OpenHCS startup failed")
-                self.phase_label.setText(message or "OpenHCS could not start.")
-                self.phase_label.setStyleSheet(
-                    "color: "
-                    f"{self._color_scheme.to_hex(self._color_scheme.status_error)};"
-                    " font-size: 13px; font-weight: 600;"
-                )
-                self.progress.setRange(0, 1)
-                self.progress.setValue(0)
-                self._append_detail(message)
-                detail = str(event.get("detail", ""))
-                if detail:
-                    self._append_detail(detail)
-                self.close_button.show()
-                self.raise_()
-                self.activateWindow()
-            elif kind == _StartupEventKind.READY.value:
-                self.close()
-            elif kind == _StartupEventKind.EOF.value and not self._failed:
-                self.close()
 
         def _append_detail(self, message: str) -> None:
             if not message:
@@ -562,6 +608,41 @@ def _run_startup_window_child() -> int:
             self.details.appendPlainText(message)
             scrollbar = self.details.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
+
+    class _StartupWindowPresentation(_StartupEventPresentationABC):
+        def __init__(self, window: _StartupWindow) -> None:
+            self._window = window
+            self._failed = False
+
+        def present_output(self, message: str) -> None:
+            status = message if len(message) <= 180 else f"{message[:179]}…"
+            self._window.phase_label.setText(status)
+            self._window._append_detail(message)
+
+        def present_failure(self, message: str, detail: str) -> None:
+            self._failed = True
+            self._window.setWindowTitle("OpenHCS startup failed")
+            self._window.phase_label.setText(message or "OpenHCS could not start.")
+            color_scheme = self._window._color_scheme
+            self._window.phase_label.setStyleSheet(
+                "color: "
+                f"{color_scheme.to_hex(color_scheme.status_error)};"
+                " font-size: 13px; font-weight: 600;"
+            )
+            self._window.progress.setRange(0, 1)
+            self._window.progress.setValue(0)
+            self._window._append_detail(message)
+            self._window._append_detail(detail)
+            self._window.close_button.show()
+            self._window.raise_()
+            self._window.activateWindow()
+
+        def present_ready(self) -> None:
+            self._window.close()
+
+        def present_parent_stream_closed(self) -> None:
+            if not self._failed:
+                self._window.close()
 
     app = QApplication([sys.argv[0]])
     app.setApplicationName("OpenHCS Startup")
@@ -572,8 +653,12 @@ def _run_startup_window_child() -> int:
     theme_manager.apply_color_scheme(color_scheme)
     window = _StartupWindow(color_scheme)
     window.setWindowIcon(application_icon)
+    presentation = _StartupWindowPresentation(window)
     bridge = _EventBridge()
-    bridge.event_received.connect(window.apply_event)
+    bridge.event_received.connect(
+        lambda event: _present_startup_event(presentation, event)
+    )
+    bridge.parent_stream_closed.connect(presentation.present_parent_stream_closed)
 
     def _read_parent_events() -> None:
         for line in sys.stdin:
@@ -583,7 +668,7 @@ def _run_startup_window_child() -> int:
                 continue
             if isinstance(event, dict):
                 bridge.event_received.emit(event)
-        bridge.event_received.emit({"kind": _StartupEventKind.EOF.value})
+        bridge.parent_stream_closed.emit()
 
     Thread(
         target=_read_parent_events,

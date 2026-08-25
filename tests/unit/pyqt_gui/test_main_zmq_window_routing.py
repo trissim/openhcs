@@ -319,7 +319,7 @@ def test_version_replacement_is_deferred_until_manager_is_idle(qapp) -> None:
     assert confirmations == [compatibility]
 
 
-def test_deferred_initialization_prepares_execution_services() -> None:
+def test_background_initialization_prepares_execution_services() -> None:
     calls = []
 
     async def prepare_execution_services() -> None:
@@ -339,6 +339,7 @@ def test_deferred_initialization_prepares_execution_services() -> None:
     )
 
     OpenHCSMainWindow.deferred_initialization(window)
+    OpenHCSMainWindow.start_background_services(window)
 
     assert calls == [
         ("show_window", "log_viewer"),

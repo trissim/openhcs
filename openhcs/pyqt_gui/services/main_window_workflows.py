@@ -839,7 +839,6 @@ class MainWindowLifecycleWorkflow:
                 failures.append(exc)
 
         attempt("stopping UI bridge server", self.ui_bridge_lifecycle.close)
-        attempt("closing asynchronous UI services", self.ui_services.close)
         attempt(
             "stopping system monitor",
             lambda: self.embedded_widgets.require_system_monitor().stop_monitoring(),
@@ -887,6 +886,9 @@ class MainWindowLifecycleWorkflow:
             if widget is self.main_window:
                 continue
             attempt("closing top-level widget", widget.close)
+
+        # Fence shared dispatch only after every UI producer has been retired.
+        attempt("closing asynchronous UI services", self.ui_services.close)
 
         if failures:
             raise ExceptionGroup("Main-window cleanup failed", failures)

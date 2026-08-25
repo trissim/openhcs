@@ -463,10 +463,10 @@ def test_lifecycle_workflow_cleans_embedded_resource_owners_before_qt_teardown(
 
     assert calls == [
         "ui_bridge",
-        "async_services",
         "system_monitor",
         "plate_manager",
         "zmq_manager",
+        "async_services",
     ]
 
 
@@ -533,7 +533,6 @@ def test_lifecycle_workflow_attempts_every_owner_before_reporting_failures(
     ]
     assert calls == [
         "ui_bridge",
-        "async_services",
         "system_monitor",
         "plate_manager",
         "zmq_manager",
@@ -541,6 +540,7 @@ def test_lifecycle_workflow_attempts_every_owner_before_reporting_failures(
         "floating_window",
         "floating_delete",
         "top_level",
+        "async_services",
     ]
     assert workflow.floating_windows == {}
 

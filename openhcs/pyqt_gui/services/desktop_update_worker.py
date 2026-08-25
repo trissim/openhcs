@@ -32,13 +32,11 @@ class DesktopUpdatePhase(Enum):
     RESTARTING = "Restarting OpenHCS"
 
 
-class DesktopUpdateProgressEventKind(Enum):
-    """Closed event axis sent from worker orchestration to its progress UI."""
+class DesktopUpdateProgressMode(Enum):
+    """Tk progress modes used by the detached update lifecycle."""
 
-    PHASE = "phase"
-    OUTPUT = "output"
-    FAILURE = "failure"
-    COMPLETE = "complete"
+    ACTIVE = "indeterminate"
+    COMPLETE = "determinate"
 
 
 class DesktopUpdateProgressAction(Enum):
@@ -52,13 +50,52 @@ class DesktopUpdateProgressUnavailable(RuntimeError):
     """Raised before mutation when the detached progress surface cannot start."""
 
 
-@dataclass(frozen=True, slots=True)
-class DesktopUpdateProgressEvent:
-    """One typed progress projection emitted by real worker activity."""
+class DesktopUpdateProgressEventABC(ABC):
+    """One nominal progress event that owns its presentation dispatch."""
 
-    kind: DesktopUpdateProgressEventKind
+    @abstractmethod
+    def apply(self, window: DesktopUpdateProgressWindow) -> None:
+        """Apply this event to the detached progress window."""
+
+
+@dataclass(frozen=True, slots=True)
+class DesktopUpdatePhaseEvent(DesktopUpdateProgressEventABC):
+    """Present one declared update phase."""
+
+    phase: DesktopUpdatePhase
+
+    def apply(self, window: DesktopUpdateProgressWindow) -> None:
+        window._present_phase(self.phase)
+
+
+@dataclass(frozen=True, slots=True)
+class DesktopUpdateOutputEvent(DesktopUpdateProgressEventABC):
+    """Append one line emitted by the active update command."""
+
     message: str
-    phase: DesktopUpdatePhase | None = None
+
+    def apply(self, window: DesktopUpdateProgressWindow) -> None:
+        window._append_output(self.message)
+
+
+@dataclass(frozen=True, slots=True)
+class DesktopUpdateFailureEvent(DesktopUpdateProgressEventABC):
+    """Present one terminal update failure."""
+
+    message: str
+
+    def apply(self, window: DesktopUpdateProgressWindow) -> None:
+        window._show_failure(self.message)
+
+
+@dataclass(frozen=True, slots=True)
+class DesktopUpdateCompleteEvent(DesktopUpdateProgressEventABC):
+    """Present successful publication and restart."""
+
+    message: str = "OpenHCS updated successfully"
+
+    def apply(self, window: DesktopUpdateProgressWindow) -> None:
+        window._show_complete(self.message)
 
 
 @dataclass(frozen=True, slots=True)
@@ -538,7 +575,7 @@ class DesktopUpdateProgressWindow(DesktopUpdateProgressReporterABC):
         from tkinter import ttk
 
         self._tk = tk
-        self._events: queue.Queue[DesktopUpdateProgressEvent] = queue.Queue()
+        self._events: queue.Queue[DesktopUpdateProgressEventABC] = queue.Queue()
         self._actions: queue.Queue[DesktopUpdateProgressAction] = queue.Queue()
         self._theme = theme
         self._completed = False
@@ -617,7 +654,7 @@ class DesktopUpdateProgressWindow(DesktopUpdateProgressReporterABC):
 
         self._progress_bar = ttk.Progressbar(
             content,
-            mode="indeterminate",
+            mode=DesktopUpdateProgressMode.ACTIVE.value,
             style="OpenHCS.Horizontal.TProgressbar",
         )
         self._progress_bar.grid(
@@ -686,38 +723,17 @@ class DesktopUpdateProgressWindow(DesktopUpdateProgressReporterABC):
         self._root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def phase(self, phase: DesktopUpdatePhase) -> None:
-        self._events.put(
-            DesktopUpdateProgressEvent(
-                kind=DesktopUpdateProgressEventKind.PHASE,
-                phase=phase,
-                message=phase.value,
-            )
-        )
+        self._events.put(DesktopUpdatePhaseEvent(phase))
 
     def output(self, message: str) -> None:
-        self._events.put(
-            DesktopUpdateProgressEvent(
-                kind=DesktopUpdateProgressEventKind.OUTPUT,
-                message=message,
-            )
-        )
+        self._events.put(DesktopUpdateOutputEvent(message))
 
     def failure(self, message: str) -> DesktopUpdateProgressAction:
-        self._events.put(
-            DesktopUpdateProgressEvent(
-                kind=DesktopUpdateProgressEventKind.FAILURE,
-                message=message,
-            )
-        )
+        self._events.put(DesktopUpdateFailureEvent(message))
         return self._actions.get()
 
     def complete(self) -> None:
-        self._events.put(
-            DesktopUpdateProgressEvent(
-                kind=DesktopUpdateProgressEventKind.COMPLETE,
-                message="OpenHCS updated successfully",
-            )
-        )
+        self._events.put(DesktopUpdateCompleteEvent())
 
     def run(self, operation: Callable[[], int]) -> int:
         """Run orchestration off the Tk main thread and return its exit code."""
@@ -767,30 +783,29 @@ class DesktopUpdateProgressWindow(DesktopUpdateProgressReporterABC):
         self._reopen_button.grid(row=0, column=0, padx=(0, 8))
         self._exit_button.grid(row=0, column=1)
 
-    def _apply_event(self, event: DesktopUpdateProgressEvent) -> None:
-        if event.kind is DesktopUpdateProgressEventKind.PHASE:
-            self._phase_label.configure(
-                text=event.message,
-                foreground=self._theme.text_primary,
-            )
-            self._status_label.configure(
-                text="Update in progress",
-                foreground=self._theme.text_secondary,
-            )
-        elif event.kind is DesktopUpdateProgressEventKind.OUTPUT:
-            self._append_output(event.message)
-        elif event.kind is DesktopUpdateProgressEventKind.FAILURE:
-            self._show_failure(event.message)
-        elif event.kind is DesktopUpdateProgressEventKind.COMPLETE:
-            self._completed = True
-            self._progress_bar.stop()
-            self._progress_bar.configure(mode="determinate", value=100)
-            self._phase_label.configure(
-                text=event.message,
-                foreground=self._theme.text_accent,
-            )
-            self._status_label.configure(text="OpenHCS is reopening.")
-            self._root.after(700, self._root.destroy)
+    def _present_phase(self, phase: DesktopUpdatePhase) -> None:
+        self._phase_label.configure(
+            text=phase.value,
+            foreground=self._theme.text_primary,
+        )
+        self._status_label.configure(
+            text="Update in progress",
+            foreground=self._theme.text_secondary,
+        )
+
+    def _show_complete(self, message: str) -> None:
+        self._completed = True
+        self._progress_bar.stop()
+        self._progress_bar.configure(
+            mode=DesktopUpdateProgressMode.COMPLETE.value,
+            value=100,
+        )
+        self._phase_label.configure(
+            text=message,
+            foreground=self._theme.text_accent,
+        )
+        self._status_label.configure(text="OpenHCS is reopening.")
+        self._root.after(700, self._root.destroy)
 
     def _poll_events(self) -> None:
         while True:
@@ -798,7 +813,7 @@ class DesktopUpdateProgressWindow(DesktopUpdateProgressReporterABC):
                 event = self._events.get_nowait()
             except queue.Empty:
                 break
-            self._apply_event(event)
+            event.apply(self)
         self._root.after(40, self._poll_events)
 
     def _finish_with(self, action: DesktopUpdateProgressAction) -> None:

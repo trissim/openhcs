@@ -324,25 +324,22 @@ class OpenHCSMainWindow(QMainWindow):
         self.config_services = value
 
     def deferred_initialization(self):
-        """
-        Deferred initialization that happens after window is visible.
+        """Initialize visible UI state before the authoritative ready paint."""
 
-        This includes:
-        - Log viewer initialization (file I/O) - IMMEDIATE
-        - Default Plate Manager and Pipeline Editor windows - IMMEDIATE
-
-        Note: System monitor is now created during __init__ so startup screen appears immediately
-        """
-        # Initialize log viewer (hidden) for continuous log monitoring - IMMEDIATE
+        # Initialize the hidden log viewer for continuous log monitoring.
         self.show_window("log_viewer")
-
-        # Show default windows (plate manager and pipeline editor visible by default) - IMMEDIATE
         self.show_default_windows()
+
+        logger.info("Deferred UI initialization complete")
+
+    def start_background_services(self) -> None:
+        """Start non-visual services after the initialized window has painted."""
+
         self.window_services.execute_async_operation(self._prepare_execution_services)
         self._start_ui_bridge_if_enabled()
         self._check_for_updates_on_startup()
 
-        logger.info("Deferred initialization complete (UI ready)")
+        logger.info("Background service initialization started")
 
     async def _prepare_execution_services(self) -> None:
         """Start the shared endpoint, then prewarm its callable catalog."""

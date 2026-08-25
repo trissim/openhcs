@@ -59,6 +59,47 @@ def test_startup_progress_controller_implements_nominal_reporter_contract() -> N
         gui_startup.GuiStartupProgressReporterABC()
 
 
+def test_startup_event_members_own_wire_presentation_behavior() -> None:
+    calls: list[tuple[object, ...]] = []
+
+    class _PresentationProbe(gui_startup._StartupEventPresentationABC):
+        def present_output(self, message: str) -> None:
+            calls.append(("output", message))
+
+        def present_failure(self, message: str, detail: str) -> None:
+            calls.append(("failure", message, detail))
+
+        def present_ready(self) -> None:
+            calls.append(("ready",))
+
+        def present_parent_stream_closed(self) -> None:
+            calls.append(("closed",))
+
+    with pytest.raises(TypeError):
+        gui_startup._StartupEventPresentationABC()
+
+    presenter = _PresentationProbe()
+    assert gui_startup._present_startup_event(
+        presenter,
+        {"kind": "output", "message": "loading"},
+    )
+    assert gui_startup._present_startup_event(
+        presenter,
+        {"kind": "failure", "message": "failed", "detail": "traceback"},
+    )
+    assert gui_startup._present_startup_event(presenter, {"kind": "ready"})
+    assert not gui_startup._present_startup_event(
+        presenter,
+        {"kind": "unknown"},
+    )
+
+    assert calls == [
+        ("output", "loading"),
+        ("failure", "failed", "traceback"),
+        ("ready",),
+    ]
+
+
 def test_controller_uses_current_interpreter_and_streams_structured_events(
     monkeypatch,
 ) -> None:
@@ -626,7 +667,13 @@ def test_application_reports_ready_after_deferred_initialization() -> None:
 
     events = []
 
+    class _MainWindow:
+        def start_background_services(self):
+            events.append("background")
+
     class _ApplicationHarness:
+        main_window = _MainWindow()
+
         def show_main_window(
             self,
             *,
@@ -649,7 +696,7 @@ def test_application_reports_ready_after_deferred_initialization() -> None:
     )
 
     assert result == 0
-    assert events == ["show", "ready", "exec", "cleanup"]
+    assert events == ["show", "background", "ready", "exec", "cleanup"]
 
 
 def test_show_main_window_reports_ready_only_after_deferred_work(
@@ -793,6 +840,30 @@ def test_readiness_gate_routes_ready_callback_failure_once(qapp) -> None:
 
     assert len(failures) == 1
     assert str(failures[0]) == "restore failed"
+
+
+def test_readiness_gate_cancels_when_window_closes_before_ready(qapp) -> None:
+    from PyQt6 import QtCore, QtGui, QtWidgets
+
+    from openhcs.pyqt_gui.app import MainWindowStartupReadiness
+
+    events = []
+    main_window = QtWidgets.QWidget()
+    gate = MainWindowStartupReadiness(
+        main_window,
+        on_ready=lambda: events.append("ready"),
+        on_failure=lambda error: events.append(f"failed: {error}"),
+    )
+
+    gate.eventFilter(main_window, QtCore.QEvent(QtCore.QEvent.Type.Close))
+    gate.deferred_initialization_complete()
+    gate.eventFilter(
+        main_window,
+        QtGui.QPaintEvent(QtCore.QRect(0, 0, 10, 10)),
+    )
+    qapp.processEvents()
+
+    assert events == []
 
 
 def test_application_surfaces_main_window_construction_failure() -> None:
