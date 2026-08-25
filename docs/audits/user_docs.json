@@ -1834,7 +1834,7 @@
   },
   {
     "path": "docs/source/guides/omero_integration.rst",
-    "source_sha256": "1dc669eecb16bbffe66ca12e1df984ea4e256123c6b4fbe2d202ca52a3932d0a",
+    "source_sha256": "168efa544d8d8ea13bee2e3757e7eb7757be58d4b078a99a5e799ea3f5d428a9",
     "audience": [
       "OMERO integrators",
       "deployment contributors"
@@ -1904,7 +1904,7 @@
       },
       {
         "path": "openhcs/runtime/omero_instance_manager.py",
-        "sha256": "82943c3b2e393cc58d2f65540d9bb484b9cf8e435f009abce2303fba8970d71a",
+        "sha256": "3ea44f4c02bbdb141db487cf4d29846359027dea707891429791090e34119b40",
         "role": "Owns OpenHCS instance lifecycle, exact Compose invocation, and complete gateway-plus-table-service acceptance."
       },
       {
@@ -1919,7 +1919,7 @@
       },
       {
         "path": "tests/unit/test_omero_instance_manager.py",
-        "sha256": "f1415bb91b2ae81405929685a89f86054337966d6aa292d1675b14a29707ccb0",
+        "sha256": "b22753cc0e2dd901c6025c89b479154cbf0812f6e44896d626a5e1a1e5b75abd",
         "role": "Proves canonical compose resolution, pinned images, startup failure, table readiness, and fail-closed context entry."
       },
       {
@@ -1942,7 +1942,8 @@
       "The default compose stack exposed an alpha panel that cannot submit the current execution contract; the upstream OMERO.web viewer remains available while the panel stays behind its owner-package integration gate.",
       "The manager mirrored local connection defaults from Compose; typed settings now project the canonical declaration and explicit values remain remote-instance overrides.",
       "Generic platform-string dispatch attempted to start Docker Desktop or a host service manager; the integration boundary now requires host-owned Docker availability.",
-      "Pattern discovery passed symbolic fields through the strict concrete plane-address type; PolyStore now owns a separate template identity without weakening address validation."
+      "Pattern discovery passed symbolic fields through the strict concrete plane-address type; PolyStore now owns a separate template identity without weakening address validation.",
+      "A one-shot Docker daemon probe made otherwise valid cold local deployments fail transiently; the instance manager now waits boundedly without taking ownership of daemon startup."
     ],
     "disposition": "revise",
     "validation": [
@@ -1963,7 +1964,8 @@
       "On 2026-08-25, verified the manager's typed local connection projection and explicit remote override path against the Compose extension and focused unit tests.",
       "On 2026-08-25, re-read the explanation after removing platform-specific Docker daemon launch; the packaged Compose lifecycle remains OpenHCS-owned and host process lifecycle remains external.",
       "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
-      "On 2026-08-25, re-read the complete explanation against PolyStore 0.2.8, the OpenHCS adapter, and the exact PatternDiscoveryEngine regression; revised the owner boundary for symbolic filename templates."
+      "On 2026-08-25, re-read the complete explanation against PolyStore 0.2.8, the OpenHCS adapter, and the exact PatternDiscoveryEngine regression; revised the owner boundary for symbolic filename templates.",
+      "On 2026-08-25, re-read the complete explanation after a live OMERO cold-start race; clarified that OpenHCS waits for an operator-started daemon but never starts or configures it, and verified that only accepted gateways enter manager state."
     ]
   },
   {
@@ -2084,7 +2086,7 @@
       },
       {
         "path": "openhcs/runtime/omero_instance_manager.py",
-        "sha256": "82943c3b2e393cc58d2f65540d9bb484b9cf8e435f009abce2303fba8970d71a",
+        "sha256": "3ea44f4c02bbdb141db487cf4d29846359027dea707891429791090e34119b40",
         "role": "Owns complete stack readiness and exact lifecycle behavior used by explicitly selected OMERO tests."
       },
       {
@@ -2121,7 +2123,8 @@
       "On 2026-08-25, re-read the complete testing how-to against the native installer and staged-update jobs after they began injecting an unreachable host package index; the CI section now records this behavioural gate without copying implementation details.",
       "On 2026-08-25, the installer and detached-update regression boundary passed 88 tests; documentation validation passed 154 files, 24 Python blocks, and 153 audited sources; Sphinx rendered all 152 included sources with warnings treated as errors.",
       "On 2026-08-25, re-read the complete how-to against the updated CI workflow, instance manager, and PolyStore readiness owner; explicit OMERO selection now fails closed and CI preserves table-service diagnostics.",
-      "On 2026-08-25, re-read the complete page against the integration workflow after OMERO selection became fail-closed and component diagnostics exposed table-service startup; all remaining CI claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the integration workflow after OMERO selection became fail-closed and component diagnostics exposed table-service startup; all remaining CI claims remain accurate.",
+      "On 2026-08-25, re-read the complete testing guide after the instance manager gained bounded Docker readiness and stopped retaining rejected gateways; the existing operator guidance and failure-diagnosis boundaries remain accurate without duplicating lifecycle details."
     ]
   },
   {

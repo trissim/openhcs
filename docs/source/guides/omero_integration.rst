@@ -44,7 +44,9 @@ gateway-plus-table-service readiness contract are used by desktop, test, and
 packaged environments. The manager derives local connection defaults from that
 declaration while allowing explicit host, port, web-port, user, and password
 overrides for a remote instance. Start Docker before requesting the packaged
-local stack; host daemon lifecycle is outside the OpenHCS integration boundary.
+local stack. The manager waits briefly for an already-starting daemon to become
+responsive, but host daemon lifecycle remains outside the OpenHCS integration
+boundary.
 
 Durable artifact materialization
 --------------------------------

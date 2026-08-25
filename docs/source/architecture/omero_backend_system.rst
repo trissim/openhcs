@@ -17,7 +17,10 @@ The same Compose declaration owns the local host, published ports, user, and
 password. ``OMEROInstanceManager`` projects those values into typed connection
 settings and accepts explicit overrides for remote instances; it does not keep
 a second set of local defaults. Docker daemon lifecycle remains an operator or
-host-platform responsibility rather than OpenHCS platform-string dispatch.
+host-platform responsibility rather than OpenHCS platform-string dispatch. The
+manager waits boundedly for an already-starting daemon to become responsive,
+then reuses the resolved command for Compose startup; it never starts or
+configures the host daemon itself.
 
 OMERO server components become available independently. A responsive Blitz
 gateway or web application therefore does not by itself establish storage

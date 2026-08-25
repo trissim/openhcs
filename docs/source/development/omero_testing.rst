@@ -35,8 +35,8 @@ selected, an unavailable stack is a test failure rather than a skip. Readiness
 requires both a gateway connection and PolyStore's declared table service; a
 responsive Blitz endpoint alone is not sufficient.
 Start Docker before selecting the live variant. The instance manager may start
-the packaged Compose services, but it does not start Docker Desktop or a host
-service manager.
+the packaged Compose services and waits boundedly for an already-starting
+daemon, but it does not start Docker Desktop or a host service manager.
 
 Keep credentials in the test environment, never in pipeline declarations or
 fixtures committed to the repository. Always close gateway connections and

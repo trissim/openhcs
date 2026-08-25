@@ -76,15 +76,6 @@ class OMEROInstanceManager:
         compose_resource = files("openhcs").joinpath("omero", "docker-compose.yml")
         return Path(str(compose_resource)) if compose_resource.is_file() else None
 
-    def _is_docker_running(self) -> bool:
-        """
-        Check if Docker daemon is running.
-
-        Returns:
-            True if Docker daemon is responsive
-        """
-        return self._docker_command() is not None
-
     def _docker_command(self) -> tuple[str, ...] | None:
         """Return the usable Docker command prefix for this process."""
 
@@ -102,6 +93,32 @@ class OMEROInstanceManager:
             except (OSError, subprocess.SubprocessError):
                 continue
         return None
+
+    def _wait_for_docker_command(
+        self,
+        timeout: float = 30.0,
+        poll_interval: float = 1.0,
+    ) -> tuple[str, ...] | None:
+        """Wait boundedly for an operator-started Docker daemon."""
+
+        deadline = time.monotonic() + timeout
+        command = self._docker_command()
+        if command is not None:
+            return command
+
+        logger.info(
+            "Waiting up to %.0fs for the Docker daemon to become responsive...",
+            timeout,
+        )
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            time.sleep(min(poll_interval, remaining))
+            command = self._docker_command()
+            if command is not None:
+                logger.info("Docker daemon is responsive")
+                return command
 
     def is_omero_running(self) -> bool:
         """
@@ -181,7 +198,7 @@ class OMEROInstanceManager:
         Automatic startup sequence:
         1. Check if already connected
         2. Check if OMERO is running → connect if yes
-        3. Require an available Docker daemon
+        3. Wait boundedly for an operator-started Docker daemon
         4. Start the packaged OMERO Compose stack
         5. Wait for OMERO to be ready
         6. Connect
@@ -220,8 +237,9 @@ class OMEROInstanceManager:
             "OMERO stack not fully running, attempting to start all services..."
         )
 
-        # Docker process management is outside the OpenHCS domain boundary.
-        if not self._is_docker_running():
+        # Docker daemon lifecycle remains outside the OpenHCS domain boundary.
+        docker_command = self._wait_for_docker_command()
+        if docker_command is None:
             logger.error(
                 "Docker is unavailable; start Docker before requesting the local "
                 "OMERO deployment"
@@ -229,7 +247,9 @@ class OMEROInstanceManager:
             return False
 
         # Start OMERO via docker-compose
-        if self._start_omero_docker() and self._wait_for_omero_ready(timeout):
+        if self._start_omero_docker(docker_command) and self._wait_for_omero_ready(
+            timeout
+        ):
             return self._connect_to_omero()
 
         logger.error("Failed to connect to or start OMERO")
@@ -240,30 +260,31 @@ class OMEROInstanceManager:
         try:
             from omero.gateway import BlitzGateway
 
-            self.conn = BlitzGateway(
+            connection = BlitzGateway(
                 self.user, self.password, host=self.host, port=self.port
             )
 
-            if self.conn.connect():
-                try:
-                    OMERO_TABLE_SERVICE.wait_until_available(self.conn)
-                except OMEROTableServiceUnavailableError:
-                    logger.exception(
-                        "Connected to OMERO, but its table service is unavailable"
-                    )
-                    self.close()
-                    return False
-                logger.info(f"✓ Connected to OMERO at {self.host}:{self.port}")
-                return True
-            else:
+            if not connection.connect():
                 logger.error("Failed to connect to OMERO")
                 return False
+            self.conn = connection
+            try:
+                OMERO_TABLE_SERVICE.wait_until_available(connection)
+            except OMEROTableServiceUnavailableError:
+                logger.exception(
+                    "Connected to OMERO, but its table service is unavailable"
+                )
+                self.close()
+                return False
+            logger.info(f"✓ Connected to OMERO at {self.host}:{self.port}")
+            return True
 
         except Exception as e:  # noqa: BLE001 - OMERO and Ice expose separate roots.
+            self.close()
             logger.error(f"Failed to connect to OMERO: {e}")
             return False
 
-    def _start_omero_docker(self) -> bool:
+    def _start_omero_docker(self, docker_command: tuple[str, ...]) -> bool:
         """
         Start OMERO from the packaged Compose declaration.
 
@@ -274,11 +295,6 @@ class OMEROInstanceManager:
             logger.warning(
                 f"docker-compose.yml not found at {self.docker_compose_path}"
             )
-            return False
-
-        docker_command = self._docker_command()
-        if docker_command is None:
-            logger.error("Docker daemon is unavailable to the current process")
             return False
 
         try:

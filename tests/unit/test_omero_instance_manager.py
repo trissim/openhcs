@@ -121,6 +121,44 @@ def test_docker_command_uses_noninteractive_sudo_when_required(monkeypatch) -> N
     assert commands == [["docker", "info"], ["sudo", "-n", "docker", "info"]]
 
 
+def test_docker_command_waits_for_a_cold_daemon(monkeypatch) -> None:
+    manager = OMEROInstanceManager()
+    responses = iter((None, None, ("docker",)))
+    waits: list[float] = []
+    monkeypatch.setattr(manager, "_docker_command", lambda: next(responses))
+    monkeypatch.setattr(
+        "openhcs.runtime.omero_instance_manager.time.sleep",
+        waits.append,
+    )
+
+    assert manager._wait_for_docker_command(poll_interval=0.25) == ("docker",)
+    assert waits == [0.25, 0.25]
+
+
+def test_docker_command_wait_stops_at_its_deadline(monkeypatch) -> None:
+    manager = OMEROInstanceManager()
+    probes: list[bool] = []
+    clock = iter((10.0, 10.0, 12.0))
+    waits: list[float] = []
+    monkeypatch.setattr(
+        manager,
+        "_docker_command",
+        lambda: probes.append(True) or None,
+    )
+    monkeypatch.setattr(
+        "openhcs.runtime.omero_instance_manager.time.monotonic",
+        lambda: next(clock),
+    )
+    monkeypatch.setattr(
+        "openhcs.runtime.omero_instance_manager.time.sleep",
+        waits.append,
+    )
+
+    assert manager._wait_for_docker_command(timeout=2.0, poll_interval=0.5) is None
+    assert probes == [True, True]
+    assert waits == [0.5]
+
+
 def test_failed_compose_up_reports_startup_failure(
     monkeypatch,
     tmp_path: Path,
@@ -135,9 +173,8 @@ def test_failed_compose_up_reports_startup_failure(
 
     monkeypatch.setattr("openhcs.runtime.omero_instance_manager.subprocess.run", run)
     manager = OMEROInstanceManager(docker_compose_path=compose_path)
-    monkeypatch.setattr(manager, "_docker_command", lambda: ("docker",))
 
-    assert manager._start_omero_docker() is False
+    assert manager._start_omero_docker(("docker",)) is False
     assert commands == [
         [
             "docker",
@@ -164,15 +201,36 @@ def test_missing_docker_fails_without_platform_process_side_effects(
     manager = OMEROInstanceManager()
     started: list[bool] = []
     monkeypatch.setattr(manager, "is_omero_stack_running", lambda: False)
-    monkeypatch.setattr(manager, "_is_docker_running", lambda: False)
+    monkeypatch.setattr(manager, "_wait_for_docker_command", lambda: None)
     monkeypatch.setattr(
         manager,
         "_start_omero_docker",
-        lambda: started.append(True) or True,
+        lambda _docker_command: started.append(True) or True,
     )
 
     assert manager.connect() is False
     assert started == []
+
+
+def test_connect_reuses_the_resolved_docker_command(monkeypatch) -> None:
+    manager = OMEROInstanceManager()
+    started_with: list[tuple[str, ...]] = []
+    monkeypatch.setattr(manager, "is_omero_stack_running", lambda: False)
+    monkeypatch.setattr(
+        manager,
+        "_wait_for_docker_command",
+        lambda: ("sudo", "-n", "docker"),
+    )
+    monkeypatch.setattr(
+        manager,
+        "_start_omero_docker",
+        lambda command: started_with.append(command) or True,
+    )
+    monkeypatch.setattr(manager, "_wait_for_omero_ready", lambda _timeout: True)
+    monkeypatch.setattr(manager, "_connect_to_omero", lambda: True)
+
+    assert manager.connect() is True
+    assert started_with == [("sudo", "-n", "docker")]
 
 
 def test_stop_targets_the_same_compose_declaration(monkeypatch, tmp_path: Path) -> None:
@@ -223,6 +281,16 @@ def test_connection_requires_declared_table_service(monkeypatch) -> None:
     assert manager._connect_to_omero() is True
     assert manager.conn is gateway
     assert observed_connections == [gateway]
+
+
+def test_connection_does_not_retain_a_rejected_gateway(monkeypatch) -> None:
+    gateway = _ConnectedGateway()
+    gateway.connect = lambda: False
+    _install_gateway_module(monkeypatch, gateway)
+    manager = OMEROInstanceManager()
+
+    assert manager._connect_to_omero() is False
+    assert manager.conn is None
 
 
 def test_connection_rejects_unavailable_table_service(monkeypatch) -> None:

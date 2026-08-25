@@ -120,7 +120,7 @@
   },
   {
     "path": "docs/source/architecture/omero_backend_system.rst",
-    "source_sha256": "83df8f90d84fb9bbef1f4120a853f5ea2deba8762e2fde3751210ade6d95dc53",
+    "source_sha256": "c0c40d5350ce89719bf002498c4483f3fcf7cf5bc8b3754f09796cd1d5a0a2b5",
     "audience": [
       "OpenHCS users and integrators following the former OMERO architecture URL"
     ],
@@ -154,7 +154,7 @@
       },
       {
         "path": "openhcs/runtime/omero_instance_manager.py",
-        "sha256": "82943c3b2e393cc58d2f65540d9bb484b9cf8e435f009abce2303fba8970d71a",
+        "sha256": "3ea44f4c02bbdb141db487cf4d29846359027dea707891429791090e34119b40",
         "role": "Consumes the packaged Compose declaration and accepts connections only after the complete stack and table service are ready."
       },
       {
@@ -174,7 +174,8 @@
       "Parallel compose files gave setup scripts and the runtime manager different deployment authorities; the packaged bundle now contains one pinned declaration.",
       "The default stack exposed an alpha web panel whose owner documents an incompatible execution payload; the pinned upstream OMERO.web viewer now remains separate from that prototype until its integration gate passes.",
       "Local ports and credentials were duplicated between Python constants and Compose; the manager now projects typed settings from the canonical deployment declaration.",
-      "The OMERO manager contained generic platform-string dispatch for Docker Desktop and system service startup; Docker daemon lifecycle now remains with the host."
+      "The OMERO manager contained generic platform-string dispatch for Docker Desktop and system service startup; Docker daemon lifecycle now remains with the host.",
+      "A cold Docker daemon could become responsive moments after the manager's one-shot probe; startup now waits boundedly and passes the resolved command into Compose once."
     ],
     "disposition": "redirect",
     "validation": [
@@ -187,7 +188,8 @@
       "On 2026-08-24, rechecked the reference after OMERO column construction moved into declaration-owned enum members; its package-owner routing remains accurate.",
       "On 2026-08-25, re-read the reference after removing the parallel deployment file and local shell readiness logic; it now distinguishes the canonical upstream stack from the separately gated alpha panel.",
       "On 2026-08-25, verified that the Compose connection extension owns local endpoint and credential values and the runtime manager only projects or explicitly overrides them.",
-      "On 2026-08-25, removed platform-specific Docker daemon launch and re-read the boundary: OpenHCS owns its Compose services, while the host owns Docker availability."
+      "On 2026-08-25, removed platform-specific Docker daemon launch and re-read the boundary: OpenHCS owns its Compose services, while the host owns Docker availability.",
+      "On 2026-08-25, re-read the complete reference after a live Python 3.11 OMERO job exposed transient Docker daemon readiness; the bounded wait preserves host ownership, reuses one resolved command, and stores a gateway only after connection succeeds."
     ]
   },
   {
@@ -2755,7 +2757,7 @@
   },
   {
     "path": "docs/source/development/omero_testing.rst",
-    "source_sha256": "bb3fd16991f87ad96475fec7b40f055938146d5744857847fa44542f60b1e468",
+    "source_sha256": "c6fbc813f547c0617a43af7f3102ee367d4c144f8790807f8eebce871918552b",
     "audience": [
       "OpenHCS and OMERO integration testers"
     ],
@@ -2804,7 +2806,7 @@
       },
       {
         "path": "openhcs/runtime/omero_instance_manager.py",
-        "sha256": "82943c3b2e393cc58d2f65540d9bb484b9cf8e435f009abce2303fba8970d71a",
+        "sha256": "3ea44f4c02bbdb141db487cf4d29846359027dea707891429791090e34119b40",
         "role": "Owns gateway, web, and table-service readiness plus exact Compose lifecycle commands."
       },
       {
@@ -2817,7 +2819,8 @@
       "The how-to omitted declaration-level tests for OMERO text, table-service, and image-plane semantics and did not require direct plus ZMQ live execution or a cold deployment.",
       "Legacy setup documentation inferred readiness from a hardcoded container name; the how-to now follows the instance manager and PolyStore table-service authorities.",
       "The how-to did not distinguish the packaged Compose lifecycle from host-owned Docker daemon startup.",
-      "The address-testing boundary did not distinguish concrete plane identities from symbolic pattern-discovery templates."
+      "The address-testing boundary did not distinguish concrete plane identities from symbolic pattern-discovery templates.",
+      "A live cold-start test could fail on a transient Docker daemon probe even though the same runner became ready moments later; the instance lifecycle now owns a bounded readiness wait."
     ],
     "disposition": "revise",
     "validation": [
@@ -2831,7 +2834,8 @@
       "On 2026-08-25, re-read the how-to against the single packaged Compose declaration, fail-closed context manager, complete table readiness, and CI component diagnostics.",
       "On 2026-08-25, verified the no-daemon-side-effect contract and documented that live tests require Docker to be running before selection.",
       "On 2026-08-25, re-read the complete page against the integration workflow after OMERO selection became fail-closed and component diagnostics exposed table-service startup; all remaining CI claims remain accurate.",
-      "On 2026-08-25, re-read the complete how-to against PolyStore's separate exact-address and symbolic-template declarations and their owner tests."
+      "On 2026-08-25, re-read the complete how-to against PolyStore's separate exact-address and symbolic-template declarations and their owner tests.",
+      "On 2026-08-25, re-read the complete how-to after live Python 3.11 CI proved a cold Docker daemon race; documented the bounded wait without moving daemon startup into OpenHCS and verified rejected gateways are not retained."
     ]
   },
   {
