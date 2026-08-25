@@ -70,6 +70,8 @@ def test_macos_installer_uses_uv_for_python_and_pip_for_packages() -> None:
     assert "UV_PYTHON_INSTALL_DIR" in source
     assert "UV_NO_MODIFY_PATH=1" in source
     assert "UV_NO_CONFIG=1" in source
+    assert "PIP_CONFIG_FILE=/dev/null" in source
+    assert "unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL" in source
     for command in ("python install", "venv"):
         assert f'run_cancellable "$uv_executable" --no-config {command}' in source
     assert '--python "$python_version" --seed "$new_environment"' in source

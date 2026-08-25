@@ -884,6 +884,16 @@ function Invoke-WorkerInstall {
             "($($env:PROCESSOR_ARCHITECTURE))."
         )
 
+        # The managed desktop environment must not inherit a workstation's
+        # package indexes.  PIP_CONFIG_FILE=nul makes pip skip global, user,
+        # and virtual-environment configuration files; removing the two index
+        # environment variables leaves pip's own default index authoritative.
+        $env:PIP_CONFIG_FILE = "nul"
+        [Environment]::SetEnvironmentVariable("PIP_INDEX_URL", $null, "Process")
+        [Environment]::SetEnvironmentVariable(
+            "PIP_EXTRA_INDEX_URL", $null, "Process"
+        )
+
         $bootstrapRoot = [IO.Path]::Combine($resolvedRoot, "bootstrap")
         $uvInstallRoot = [IO.Path]::Combine($bootstrapRoot, "uv")
         $environmentContainerRoot = $resolvedRoot

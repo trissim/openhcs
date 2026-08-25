@@ -836,6 +836,18 @@ jobs:
 
           $env:UV_FIND_LINKS = (Resolve-Path "dist").Path
           $env:PIP_FIND_LINKS = $env:UV_FIND_LINKS
+          $hostilePipIndex = "http://127.0.0.1:9/simple"
+          $hostilePipConfig = Join-Path $env:RUNNER_TEMP "hostile-pip.ini"
+          Set-Content -LiteralPath $hostilePipConfig -Encoding UTF8 -Value @(
+            "[global]"
+            "index-url = $hostilePipIndex"
+            "extra-index-url = $hostilePipIndex"
+          )
+          $env:PIP_CONFIG_FILE = $hostilePipConfig
+          $env:PIP_INDEX_URL = $hostilePipIndex
+          $env:PIP_EXTRA_INDEX_URL = $hostilePipIndex
+          $env:PIP_RETRIES = "0"
+          $env:PIP_TIMEOUT = "1"
           $env:CODEX_HOME = Join-Path $env:RUNNER_TEMP "codex-home"
           $powerShellExecutable = (Get-Command powershell.exe -CommandType Application).Source
           $cancellationPath = Join-Path `
@@ -867,6 +879,12 @@ jobs:
           $installerExitCode = Invoke-OpenHcsInstallerWorker $cancellationPath
           if ($installerExitCode -ne 0) {
             throw "Windows installer failed with exit code $installerExitCode."
+          }
+          $installerLog = Join-Path $installRoot "installer.log"
+          if (
+            (Get-Content -LiteralPath $installerLog -Raw).Contains($hostilePipIndex)
+          ) {
+            throw "Windows installer inherited a host package index."
           }
 
           $desktopRoot = [Environment]::GetFolderPath("DesktopDirectory")
@@ -907,6 +925,11 @@ jobs:
           $updateExitCode = Invoke-OpenHcsInstallerWorker $updateCancellationPath
           if ($updateExitCode -ne 0) {
             throw "Windows installer update failed with exit code $updateExitCode."
+          }
+          if (
+            (Get-Content -LiteralPath $installerLog -Raw).Contains($hostilePipIndex)
+          ) {
+            throw "Windows installer update inherited a host package index."
           }
           if (Test-Path -LiteralPath $staleEnvironment) {
             throw "Windows installer update left the long-path stale environment behind."
@@ -1398,11 +1421,25 @@ jobs:
           export HOME="$smoke_home"
           export UV_FIND_LINKS="$GITHUB_WORKSPACE/dist"
           export PIP_FIND_LINKS="$UV_FIND_LINKS"
+          hostile_pip_index='http://127.0.0.1:9/simple'
+          hostile_pip_config="$RUNNER_TEMP/hostile-pip.ini"
+          printf '[global]\nindex-url = %s\nextra-index-url = %s\n' \
+            "$hostile_pip_index" "$hostile_pip_index" > "$hostile_pip_config"
+          export PIP_CONFIG_FILE="$hostile_pip_config"
+          export PIP_INDEX_URL="$hostile_pip_index"
+          export PIP_EXTRA_INDEX_URL="$hostile_pip_index"
+          export PIP_RETRIES=0
+          export PIP_TIMEOUT=1
           "$installer_app/Contents/Resources/install-openhcs.sh" \
             "$installer_app/Contents/Resources/installer_contract.json"
 
           product_name=$(/usr/bin/plutil -extract product_name raw -o - \
             "$staged_contract")
+          installer_log="$HOME/Library/Logs/$product_name/installer.log"
+          if grep -Fq "$hostile_pip_index" "$installer_log"; then
+            printf 'macOS installer inherited a host package index.\n' >&2
+            exit 1
+          fi
           codex_config="$HOME/.codex/config.toml"
           stable_launcher="$HOME/Library/Application Support/$product_name/current/launch-openhcs.sh"
           python -c "import sys,tomllib; p=tomllib.load(open(sys.argv[1],'rb'))['mcp_servers']['openhcs']; assert p['command']==sys.argv[2]; assert p['args']==['mcp']" \

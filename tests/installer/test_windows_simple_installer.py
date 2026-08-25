@@ -183,6 +183,12 @@ def test_windows_installer_uses_uv_for_python_and_pip_for_packages() -> None:
     assert '-Description "Prepare the execution catalog"' not in source
     assert "$env:UV_INSTALL_DIR" in source
     assert "$env:UV_NO_MODIFY_PATH" in source
+    assert '$env:PIP_CONFIG_FILE = "nul"' in source
+    assert (
+        '[Environment]::SetEnvironmentVariable("PIP_INDEX_URL", $null, "Process")'
+        in source
+    )
+    assert '"PIP_EXTRA_INDEX_URL", $null, "Process"' in source
     assert "pinned official uv $($Contract.UvVersion)" in source
     assert "[Environment]::OSVersion.VersionString" in source
     assert "$env:PROCESSOR_ARCHITECTURE" in source

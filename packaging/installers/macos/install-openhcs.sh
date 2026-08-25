@@ -226,6 +226,11 @@ export UV_INSTALL_DIR="$uv_root"
 export UV_NO_MODIFY_PATH=1
 export UV_NO_CONFIG=1
 export UV_PYTHON_INSTALL_DIR="$python_root"
+# Keep the managed environment independent of workstation package indexes.
+# /dev/null suppresses every pip configuration file; the unset variables leave
+# pip's own default index authoritative.
+export PIP_CONFIG_FILE=/dev/null
+unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL
 report_progress 'Preparing the private package manager…'
 run_cancellable /bin/sh "$temporary_uv_installer"
 

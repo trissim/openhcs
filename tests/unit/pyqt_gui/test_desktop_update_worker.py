@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -265,6 +265,12 @@ def test_worker_stages_and_verifies_replacement_environment(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setenv("PIP_CONFIG_FILE", str(tmp_path / "hostile-pip.ini"))
+    monkeypatch.setenv("PIP_INDEX_URL", "https://primary.example.invalid/simple")
+    monkeypatch.setenv(
+        "PIP_EXTRA_INDEX_URL",
+        "https://secondary.example.invalid/simple",
+    )
     calls = []
     progress = _ProgressProbe()
     processes = iter(
@@ -317,6 +323,11 @@ def test_worker_stages_and_verifies_replacement_environment(
     ]
     assert calls[0][1]["creationflags"] == 73
     assert calls[1][1]["creationflags"] == 73
+    for _command, arguments in calls:
+        environment = arguments["env"]
+        assert environment["PIP_CONFIG_FILE"] == os.devnull
+        assert "PIP_INDEX_URL" not in environment
+        assert "PIP_EXTRA_INDEX_URL" not in environment
     assert progress.phases == [
         desktop_update_worker.DesktopUpdatePhase.PREPARING_ENVIRONMENT,
         desktop_update_worker.DesktopUpdatePhase.INSTALLING,
@@ -335,6 +346,37 @@ def test_worker_stages_and_verifies_replacement_environment(
         ),
     ]
     assert Path(plan.candidate_environment).is_dir()
+
+
+def test_worker_child_process_ignores_host_pip_indexes(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    hostile_index = "https://packages.example.invalid/simple"
+    hostile_config = tmp_path / "pip.ini"
+    hostile_config.write_text(
+        "[global]\n"
+        f"index-url = {hostile_index}\n"
+        f"extra-index-url = {hostile_index}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PIP_CONFIG_FILE", str(hostile_config))
+    monkeypatch.setenv("PIP_INDEX_URL", hostile_index)
+    monkeypatch.setenv("PIP_EXTRA_INDEX_URL", hostile_index)
+    progress = _ProgressProbe()
+
+    returncode, output = desktop_update_worker._run_process_with_progress(
+        [sys.executable, "-m", "pip", "config", "list"],
+        launch_spec=desktop_update_worker.ResolvedProcessLaunchSpec(
+            creationflags=0,
+            start_new_session=False,
+        ),
+        progress=progress,
+    )
+
+    assert returncode == 0
+    assert hostile_index not in output
+    assert all(hostile_index not in line for line in progress.outputs)
 
 
 def test_worker_refreshes_installer_managed_desktop_after_verification(

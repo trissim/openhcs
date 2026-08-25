@@ -29,6 +29,9 @@ points remain authoritative.
 
 - Installation is per-user and does not modify system Python or require an
   administrator account.
+- Package-index resolution does not inherit the workstation's pip configuration
+  files or its primary and secondary index environment variables. The native
+  installers and staged updater use pip's default PyPI index.
 - Re-running an installer updates/reinstalls the same isolated environment.
 - Existing unrelated MCP client configuration is preserved. Setup owns only the
   local server entry named `openhcs`, and keeps a recoverable backup when it

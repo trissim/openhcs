@@ -80,7 +80,7 @@ class DesktopUpdateProgressTheme:
         path.write_text(json.dumps(asdict(self), sort_keys=True), encoding="utf-8")
 
     @classmethod
-    def read(cls, path: Path) -> "DesktopUpdateProgressTheme":
+    def read(cls, path: Path) -> DesktopUpdateProgressTheme:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise TypeError("Desktop update progress theme must be a JSON object.")
@@ -211,7 +211,7 @@ class DesktopUpdatePlan:
         path.write_text(json.dumps(asdict(self), sort_keys=True), encoding="utf-8")
 
     @classmethod
-    def read(cls, path: Path) -> "DesktopUpdatePlan":
+    def read(cls, path: Path) -> DesktopUpdatePlan:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict) or set(payload) != {
             field.name for field in cls.__dataclass_fields__.values()
@@ -452,8 +452,13 @@ def _run_process_with_progress(
 ) -> tuple[int, str]:
     """Run one worker command while reporting its real merged output."""
 
+    environment = os.environ.copy()
+    environment["PIP_CONFIG_FILE"] = os.devnull
+    environment.pop("PIP_INDEX_URL", None)
+    environment.pop("PIP_EXTRA_INDEX_URL", None)
     process = subprocess.Popen(
         command,
+        env=environment,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -510,7 +515,7 @@ class DesktopUpdateProgressWindow(DesktopUpdateProgressReporterABC):
         *,
         theme_document: Path,
         brand_document: Path,
-    ) -> "DesktopUpdateProgressWindow":
+    ) -> DesktopUpdateProgressWindow:
         try:
             return cls(
                 theme=DesktopUpdateProgressTheme.read(theme_document),
