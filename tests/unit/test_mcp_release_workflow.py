@@ -268,7 +268,9 @@ def test_tag_workflow_installs_linux_pyqt_runtime_before_wheel_smoke():
     build_steps = _workflow()["jobs"]["build-and-publish"]["steps"]
     step_names = tuple(step.get("name") for step in build_steps)
     runtime_index = step_names.index("Install PyQt runtime libraries")
-    smoke_index = step_names.index("Smoke-test installed MCP wheel outside checkout")
+    smoke_index = step_names.index(
+        "Smoke-test installed desktop wheel outside checkout"
+    )
 
     assert runtime_index < smoke_index
     runtime_setup = build_steps[runtime_index]["run"]
@@ -280,6 +282,9 @@ def test_tag_workflow_installs_linux_pyqt_runtime_before_wheel_smoke():
     assert "--print-desktop-extras" in smoke
     assert 'pip install "${WHEEL}[${DESKTOP_EXTRAS}]"' in smoke
     assert "--capability-requirements" in smoke
+    assert "scripts/smoke_installed_mcp.py" in smoke
+    assert "scripts/smoke_installed_gui.py" in smoke
+    assert build_steps[smoke_index]["env"]["QT_QPA_PLATFORM"] == "offscreen"
     assert smoke.index("DESKTOP_EXTRAS=") < smoke.index("python -m venv")
     assert smoke.index("WHEEL=") < smoke.index("python -m venv")
 
@@ -318,6 +323,16 @@ def test_pypi_wheel_smoke_uses_the_canonical_pipeline_document_boundary():
     assert '--candidate-wheel "$WHEEL"' in desktop_smoke
     assert '--extras "$DESKTOP_EXTRAS"' in desktop_smoke
     assert "--capability-requirements" in desktop_smoke
+
+    gui_step = next(
+        step
+        for step in steps
+        if step.get("name") == "Test installed GUI startup outside checkout"
+    )
+    gui_smoke = gui_step["run"]
+    assert "scripts/smoke_installed_gui.py" in gui_smoke
+    assert "--forbid-import-root" in gui_smoke
+    assert "QT_QPA_PLATFORM=offscreen" in gui_smoke
 
     install_steps = tuple(
         step

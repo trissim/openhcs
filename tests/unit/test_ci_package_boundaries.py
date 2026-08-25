@@ -11,6 +11,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+import yaml
+
 from scripts.run_installed_tests import (
     _prepare_installed_test_runtime,
     _remove_checkout_import_paths,
@@ -153,6 +155,39 @@ def test_installed_acceptance_uses_public_dependencies_and_wheels() -> None:
     assert "scripts/run_installed_tests.py --coverage" in workflow
     assert "tests/unit/pyqt_gui/test_progress_tree_aggregation.py" in workflow
     assert "pip','install','-e" not in workflow
+
+
+def test_published_release_canary_owns_post_release_dependency_drift() -> None:
+    workflow_path = WORKFLOW_ROOT / "published-release-canary.yml"
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    triggers = workflow.get("on", workflow.get(True))
+    assert "schedule" in triggers
+    assert "workflow_dispatch" in triggers
+
+    job = workflow["jobs"]["installed-gui-startup"]
+    assert set(job["strategy"]["matrix"]["os"]) == {
+        "ubuntu-latest",
+        "windows-latest",
+        "macos-latest",
+    }
+    install_step = next(
+        step
+        for step in job["steps"]
+        if step.get("name") == "Install the published desktop package"
+    )
+    install_command = install_step["run"]
+    assert "sync_mcp_release_metadata.py --print-desktop-extras" in install_command
+    assert 'package_requirement="openhcs[${desktop_extras}]"' in install_command
+    assert 'python -m pip install "$package_requirement"' in install_command
+    assert "python -m pip check" in install_command
+
+    startup_step = next(
+        step
+        for step in job["steps"]
+        if step.get("name") == "Reach the installed GUI ready boundary"
+    )
+    assert "scripts/smoke_installed_gui.py" in startup_step["run"]
+    assert "--forbid-import-root" in startup_step["run"]
 
 
 def test_unit_wheel_gate_seeds_ignored_nested_build_output() -> None:

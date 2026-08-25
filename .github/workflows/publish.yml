@@ -323,10 +323,13 @@ jobs:
           python -m build
           python -m scripts.validate_wheel_deployment dist/*.whl
 
-      - name: Smoke-test installed MCP wheel outside checkout
+      - name: Smoke-test installed desktop wheel outside checkout
         env:
           OPENHCS_CPU_ONLY: true
+          QT_QPA_PLATFORM: offscreen
           XDG_CACHE_HOME: ${{ runner.temp }}/openhcs-mcp-cache
+          XDG_CONFIG_HOME: ${{ runner.temp }}/openhcs-gui-config
+          XDG_DATA_HOME: ${{ runner.temp }}/openhcs-gui-data
         run: |
           DESKTOP_EXTRAS=$(python "$GITHUB_WORKSPACE/scripts/sync_mcp_release_metadata.py" --print-desktop-extras)
           WHEEL=$(python -c "from pathlib import Path; print(next(Path('dist').glob('*.whl')).resolve())")
@@ -335,6 +338,7 @@ jobs:
           pip install "${WHEEL}[${DESKTOP_EXTRAS}]"
           python "$GITHUB_WORKSPACE/scripts/sync_mcp_release_metadata.py" --check --capability-requirements --expected-version "${OPENHCS_RELEASE_VERSION#v}"
           python "$GITHUB_WORKSPACE/scripts/smoke_installed_mcp.py" --forbid-import-root "$GITHUB_WORKSPACE"
+          python "$GITHUB_WORKSPACE/scripts/smoke_installed_gui.py" --forbid-import-root "$GITHUB_WORKSPACE"
       
       - name: Publish to PyPI
         env:

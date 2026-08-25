@@ -1689,6 +1689,25 @@ jobs:
           python "$GITHUB_WORKSPACE/scripts/sync_mcp_release_metadata.py" --check --capability-requirements
           python "$GITHUB_WORKSPACE/scripts/smoke_installed_mcp.py" --forbid-import-root "$GITHUB_WORKSPACE"
 
+      - name: Test installed GUI startup outside checkout
+        shell: bash
+        env:
+          OPENHCS_CPU_ONLY: true
+          XDG_CACHE_HOME: ${{ runner.temp }}/openhcs-gui-cache
+          XDG_CONFIG_HOME: ${{ runner.temp }}/openhcs-gui-config
+          XDG_DATA_HOME: ${{ runner.temp }}/openhcs-gui-data
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            source test_gui/Scripts/activate
+          else
+            source test_gui/bin/activate
+          fi
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            export QT_QPA_PLATFORM=offscreen
+          fi
+          python "$GITHUB_WORKSPACE/scripts/smoke_installed_gui.py" \
+            --forbid-import-root "$GITHUB_WORKSPACE"
+
   # Run the real 30-case headless comparator once. The cross-OS/Python matrix
   # above owns generated public-boundary coverage; this lane owns semantic
   # parity against committed native CellProfiler outputs.

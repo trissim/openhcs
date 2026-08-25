@@ -57,6 +57,11 @@ def _stub_installed_probe(
     )
     monkeypatch.setattr(
         desktop_smoke,
+        "_smoke_installed_gui",
+        lambda *_args: {"ready": True, "visible": True, "exit_code": 0},
+    )
+    monkeypatch.setattr(
+        desktop_smoke,
         "_smoke_installed_mcp",
         lambda *_args: {"health_status": "ok"},
     )
@@ -161,6 +166,66 @@ def test_mcp_smoke_uses_installed_python_in_isolated_mode(
     assert smoke_environment["XDG_CACHE_HOME"] == str(
         (tmp_path / "mcp-cache").resolve()
     )
+    assert smoke_environment["NUMBA_CACHE_DIR"] == str(
+        (tmp_path / "cache" / "numba").resolve()
+    )
+
+
+def test_gui_smoke_uses_installed_python_and_isolated_runtime(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    installed_python = tmp_path / "installed" / "python"
+    installed_python.parent.mkdir()
+    installed_python.touch()
+    observed: dict[str, object] = {}
+
+    def fake_run_checked(
+        command,
+        *,
+        cwd,
+        environment=None,
+        timeout_seconds=120,
+        stream_stderr=False,
+    ):
+        observed.update(
+            command=command,
+            cwd=cwd,
+            environment=environment,
+            timeout_seconds=timeout_seconds,
+            stream_stderr=stream_stderr,
+        )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"ready": True, "visible": True, "exit_code": 0}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(desktop_smoke, "_run_checked", fake_run_checked)
+
+    payload = desktop_smoke._smoke_installed_gui(installed_python, tmp_path)
+
+    assert payload == {"ready": True, "visible": True, "exit_code": 0}
+    assert observed["command"] == [
+        str(installed_python),
+        "-I",
+        str(desktop_smoke.INSTALLED_GUI_SMOKE_PATH.resolve()),
+        "--forbid-import-root",
+        str(desktop_smoke.REPOSITORY_ROOT),
+    ]
+    assert observed["cwd"] == tmp_path
+    assert observed["timeout_seconds"] == 60
+    smoke_environment = observed["environment"]
+    assert isinstance(smoke_environment, dict)
+    assert smoke_environment["OPENHCS_CPU_ONLY"] == "true"
+    assert smoke_environment["XDG_CACHE_HOME"] == str(
+        (tmp_path / "gui-cache").resolve()
+    )
+    assert smoke_environment["XDG_CONFIG_HOME"] == str(
+        (tmp_path / "gui-config").resolve()
+    )
+    assert smoke_environment["XDG_DATA_HOME"] == str((tmp_path / "gui-data").resolve())
     assert smoke_environment["NUMBA_CACHE_DIR"] == str(
         (tmp_path / "cache" / "numba").resolve()
     )

@@ -6,6 +6,12 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from unittest.mock import patch
 
+from pyqt_reactive.protocols import (
+    ComponentSelectionProviderABC,
+    FunctionSelectionProviderABC,
+    LogDiscoveryProviderABC,
+    ServerScanProviderABC,
+)
 from pyqt_reactive.services.zmq_server_scan_service import (
     EndpointObservationSnapshot,
     ZMQServerScanService,
@@ -25,6 +31,8 @@ from openhcs.pyqt_gui.services.logging_config import (
     configure_gui_logging,
 )
 from openhcs.pyqt_gui.services.reactor_providers import (
+    OpenHCSComponentSelectionProvider,
+    OpenHCSFunctionSelectionProvider,
     OpenHCSLogDiscoveryProvider,
     OpenHCSServerScanProvider,
 )
@@ -37,6 +45,18 @@ def _owned_handlers() -> list[logging.Handler]:
         for handler in logging.getLogger().handlers
         if isinstance(handler, GuiLoggingHandler)
     ]
+
+
+def test_host_providers_implement_their_nominal_pyqt_contracts() -> None:
+    provider_contracts = (
+        (OpenHCSLogDiscoveryProvider, LogDiscoveryProviderABC),
+        (OpenHCSServerScanProvider, ServerScanProviderABC),
+        (OpenHCSComponentSelectionProvider, ComponentSelectionProviderABC),
+        (OpenHCSFunctionSelectionProvider, FunctionSelectionProviderABC),
+    )
+
+    for provider_type, contract_type in provider_contracts:
+        assert issubclass(provider_type, contract_type)
 
 
 def test_logging_config_owns_level_location_destinations_and_rotation(tmp_path) -> None:

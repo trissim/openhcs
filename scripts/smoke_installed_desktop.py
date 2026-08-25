@@ -19,6 +19,7 @@ from openhcs.desktop_installation import DesktopInstallerSchemaVersion
 from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+INSTALLED_GUI_SMOKE_PATH = Path(__file__).with_name("smoke_installed_gui.py")
 INSTALLED_MCP_SMOKE_PATH = Path(__file__).with_name("smoke_installed_mcp.py")
 
 
@@ -339,6 +340,42 @@ def _smoke_installed_mcp(
     return payload
 
 
+def _smoke_installed_gui(
+    python_executable: Path,
+    install_root: Path,
+) -> dict[str, Any]:
+    """Reach the installed GUI's painted-ready boundary and close it."""
+
+    environment = os.environ.copy()
+    environment["OPENHCS_CPU_ONLY"] = "true"
+    environment["XDG_CACHE_HOME"] = str((install_root / "gui-cache").resolve())
+    environment["XDG_CONFIG_HOME"] = str((install_root / "gui-config").resolve())
+    environment["XDG_DATA_HOME"] = str((install_root / "gui-data").resolve())
+    environment[OpenHCSProcessEnvironment.numba_cache_key] = str(
+        OpenHCSProcessEnvironment.numba_cache_path(install_root)
+    )
+    completed = _run_checked(
+        [
+            str(python_executable),
+            "-I",
+            str(INSTALLED_GUI_SMOKE_PATH.resolve()),
+            "--forbid-import-root",
+            str(REPOSITORY_ROOT),
+        ],
+        cwd=install_root,
+        environment=environment,
+        timeout_seconds=60,
+    )
+    payload = json.loads(completed.stdout)
+    if not payload.get("ready") or not payload.get("visible"):
+        raise AssertionError(
+            f"Installed GUI smoke did not report visible readiness: {payload}"
+        )
+    if payload.get("exit_code") != 0:
+        raise AssertionError(f"Installed GUI smoke did not exit cleanly: {payload}")
+    return payload
+
+
 def _smoke_installed_demo(
     python_executable: Path,
     install_root: Path,
@@ -607,6 +644,7 @@ def smoke_installed_desktop(
         install_root,
         environment,
     )
+    gui = _smoke_installed_gui(python_executable, install_root)
     mcp = _smoke_installed_mcp(python_executable, install_root)
 
     if platform_name == "windows":
@@ -648,6 +686,7 @@ def smoke_installed_desktop(
         "version": distribution["version"],
         "environment": str(environment),
         "restart_worker": restart_worker,
+        "gui": gui,
         "mcp": mcp,
         "demo": demo,
         **launcher,
