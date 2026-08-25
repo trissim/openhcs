@@ -10,10 +10,12 @@ on:
       - "scripts/capture_media_gallery.py"
       - "scripts/gallery_catalog.py"
       - "scripts/website_gallery_projection.py"
+      - "scripts/validate_local_release_floors.py"
       - "docs/media_gallery_capture.md"
       - "tests/unit/test_build_website.py"
       - "tests/unit/test_capture_media_gallery.py"
       - "openhcs/__init__.py"
+      - "pyproject.toml"
       - ".github/workflows/website-pages.yml"
   push:
     branches: [main]
@@ -25,10 +27,12 @@ on:
       - "scripts/capture_media_gallery.py"
       - "scripts/gallery_catalog.py"
       - "scripts/website_gallery_projection.py"
+      - "scripts/validate_local_release_floors.py"
       - "docs/media_gallery_capture.md"
       - "tests/unit/test_build_website.py"
       - "tests/unit/test_capture_media_gallery.py"
       - "openhcs/__init__.py"
+      - "pyproject.toml"
       - ".github/workflows/website-pages.yml"
   workflow_dispatch:
 
@@ -52,11 +56,32 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install website test dependency
-        run: >-
+      - name: Install website test dependencies
+        run: |
           python -m pip install pytest
-          "python-introspect>=0.1.11"
-          "metaclass-registry>=0.2.0,<0.3"
+          mapfile -t declared_requirements < <(
+            python - <<'PY'
+          from pathlib import Path
+
+          from scripts.validate_local_release_floors import read_project
+
+          project = read_project(Path("pyproject.toml"))
+          required_names = {"python-introspect", "metaclass-registry"}
+          requirements = {
+              requirement.name: str(requirement)
+              for requirement in project.dependencies
+              if requirement.name in required_names
+          }
+          missing_names = required_names - requirements.keys()
+          if missing_names:
+              raise SystemExit(
+                  "Missing website dependencies in project metadata: "
+                  + ", ".join(sorted(missing_names))
+              )
+          print(*(requirements[name] for name in sorted(required_names)), sep="\n")
+          PY
+          )
+          python -m pip install "${declared_requirements[@]}"
 
       - name: Test, build, and validate landing page
         run: |
