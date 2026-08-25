@@ -281,12 +281,12 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "f21121353bf535f0f977aeacb5dc724a6db90cb5e7fcf7b3fb503f710b05260f",
+        "sha256": "13903cd931be9a7998ebbac135069ee839c95199dac91d79943febcb43f54feb",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
         "path": "external/pyqt-reactive/docs/architecture/parameter_form_lifecycle.rst",
-        "sha256": "ca11dc3a1a01548ce939b0b4154b970602f8baf01e6af88dd7a4789178e4bc10",
+        "sha256": "282c305e157627a9c9700b366ce3e911c54307ca23ca217cab8ea9797e5ce3cb",
         "role": "Current owner-package narrative for the extracted mechanism referenced by docs/source/architecture/parameter_form_lifecycle.rst."
       }
     ],
@@ -340,7 +340,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "f21121353bf535f0f977aeacb5dc724a6db90cb5e7fcf7b3fb503f710b05260f",
+        "sha256": "13903cd931be9a7998ebbac135069ee839c95199dac91d79943febcb43f54feb",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
@@ -582,7 +582,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_plate_manager_widget.py",
-        "sha256": "ecb800a4e567b7c472536cc2ea9da5d55b38d969f30da1b4b2bf451d59884f50",
+        "sha256": "cd7fc4d6eb314fa0901d617d26ca705d0c4f5116ee3c4525156910a1283e42ae",
         "role": "Regression evidence for Plate Manager service composition and UI delegation."
       },
       {
@@ -988,7 +988,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "f21121353bf535f0f977aeacb5dc724a6db90cb5e7fcf7b3fb503f710b05260f",
+        "sha256": "13903cd931be9a7998ebbac135069ee839c95199dac91d79943febcb43f54feb",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
@@ -1220,7 +1220,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "f21121353bf535f0f977aeacb5dc724a6db90cb5e7fcf7b3fb503f710b05260f",
+        "sha256": "13903cd931be9a7998ebbac135069ee839c95199dac91d79943febcb43f54feb",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
@@ -1264,7 +1264,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
+        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1456,7 +1456,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
+        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1505,7 +1505,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
+        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -1602,7 +1602,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "f21121353bf535f0f977aeacb5dc724a6db90cb5e7fcf7b3fb503f710b05260f",
+        "sha256": "13903cd931be9a7998ebbac135069ee839c95199dac91d79943febcb43f54feb",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
@@ -2244,7 +2244,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
+        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2317,7 +2317,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
+        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2352,7 +2352,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
+        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2461,7 +2461,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "5480b844f065fcd62b5f7db88536bf6b1fe20021e9be9b86efb841d70d2ae1c1",
+        "sha256": "da955e954f7c2af269c2c353f8dd4738617137fcc4e695011e48cf010bc52e25",
         "role": "Proves stale protocol and application versions fail before UI operation dispatch."
       },
       {
@@ -2733,7 +2733,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
+        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2748,7 +2748,7 @@
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "f21121353bf535f0f977aeacb5dc724a6db90cb5e7fcf7b3fb503f710b05260f",
+        "sha256": "13903cd931be9a7998ebbac135069ee839c95199dac91d79943febcb43f54feb",
         "role": "Reusable parameter-form lifecycle and value projection."
       }
     ],
@@ -2899,7 +2899,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
+        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

@@ -153,7 +153,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
+        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -622,7 +622,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
+        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -794,7 +794,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
+        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -956,7 +956,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "5480b844f065fcd62b5f7db88536bf6b1fe20021e9be9b86efb841d70d2ae1c1",
+        "sha256": "da955e954f7c2af269c2c353f8dd4738617137fcc4e695011e48cf010bc52e25",
         "role": "Proves bidirectional UI-bridge inspection and mutation of live pipeline declarations."
       },
       {
@@ -1042,7 +1042,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "5480b844f065fcd62b5f7db88536bf6b1fe20021e9be9b86efb841d70d2ae1c1",
+        "sha256": "da955e954f7c2af269c2c353f8dd4738617137fcc4e695011e48cf010bc52e25",
         "role": "Proves live field help reports the exact accepted inputs for enum-backed configuration fields."
       },
       {
@@ -1272,7 +1272,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
+        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1359,7 +1359,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/windows/synthetic_plate_generator_window.py",
-        "sha256": "7230655111cec16505261d01ad3f5b98586db8816182243d5afd926d52fd33d1",
+        "sha256": "66ddba05885106acab8f5f9219665e8b611f50984b09c6a4e3408ab783685a9c",
         "role": "Implements the guided UI for creating the synthetic plate used by the introductory workflow."
       },
       {
@@ -1497,7 +1497,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "5480b844f065fcd62b5f7db88536bf6b1fe20021e9be9b86efb841d70d2ae1c1",
+        "sha256": "da955e954f7c2af269c2c353f8dd4738617137fcc4e695011e48cf010bc52e25",
         "role": "Proves stale protocol and OpenHCS versions cannot reach running UI operations."
       }
     ],
@@ -1876,7 +1876,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
+        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -2201,7 +2201,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
+        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2275,7 +2275,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_user_facing_help_surfaces.py",
-        "sha256": "a6a83477b61f8b5204a1f4700531d154ac78fa019a6df6b939291b738589a4f1",
+        "sha256": "35515fbd6f42646766318d1e4162d326834b09d1d715c93f05e928c2a83af632",
         "role": "Proves user-facing field help is sourced from declaration metadata rather than copied UI text."
       }
     ],
@@ -2579,7 +2579,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "5480b844f065fcd62b5f7db88536bf6b1fe20021e9be9b86efb841d70d2ae1c1",
+        "sha256": "da955e954f7c2af269c2c353f8dd4738617137fcc4e695011e48cf010bc52e25",
         "role": "Proves bidirectional UI-bridge inspection, capability enforcement, semantic no-op handling, and mutation of live declarations."
       },
       {
@@ -2599,7 +2599,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_plate_manager_widget.py",
-        "sha256": "ecb800a4e567b7c472536cc2ea9da5d55b38d969f30da1b4b2bf451d59884f50",
+        "sha256": "cd7fc4d6eb314fa0901d617d26ca705d0c4f5116ee3c4525156910a1283e42ae",
         "role": "Proves selected code-document application preserves unselected plate graphs."
       },
       {
@@ -2668,7 +2668,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
+        "sha256": "c2b32d6acd9987a455c9f3232d650300e25b3ba74777c6f0a3b7594fa0e08bde",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -2962,7 +2962,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/widgets/log_viewer.py",
-        "sha256": "cd7e90d9803e69a8bd23b30c6db81657faf950753284aeb1098f328550fd919e",
+        "sha256": "343dcec6734c0abcb73dbb390dbce82cfac04000deeb19cb3c16b87ec3810e0d",
         "role": "Implements log discovery, live-process filtering, record filtering, and viewer selection behaviour."
       },
       {

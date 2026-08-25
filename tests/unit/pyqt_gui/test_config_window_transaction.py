@@ -151,9 +151,7 @@ def test_failure_after_first_mark_saved_restores_every_state_exactly(
         monkeypatch.setattr(
             second_state,
             "mark_saved",
-            lambda: (_ for _ in ()).throw(
-                RuntimeError("second mark_saved failed")
-            ),
+            lambda: (_ for _ in ()).throw(RuntimeError("second mark_saved failed")),
         )
 
         window.save_config(close_window=False)
@@ -396,9 +394,7 @@ def test_postcommit_window_failure_does_not_roll_back_commit(
         monkeypatch.setattr(
             window,
             "accept_committed_state",
-            lambda: (_ for _ in ()).throw(
-                RuntimeError("postcommit close failed")
-            ),
+            lambda: (_ for _ in ()).throw(RuntimeError("postcommit close failed")),
         )
 
         window.save_config()
@@ -453,9 +449,7 @@ def test_inactive_tab_factory_failure_is_visible_and_rejects_window(
     assert window._tabs[0].view is first_view
     assert window._tabs[1].view is None
     assert window.result() == QDialog.DialogCode.Rejected
-    assert messages == [
-        "Failed to construct _SecondConfig:\ninactive tab build failed"
-    ]
+    assert messages == ["Failed to construct _SecondConfig:\ninactive tab build failed"]
 
 
 def test_progressive_form_build_failure_is_visible_and_rejects_window(
@@ -482,6 +476,32 @@ def test_progressive_form_build_failure_is_visible_and_rejects_window(
     qapp.processEvents()
 
     assert window.result() == QDialog.DialogCode.Rejected
-    assert messages == [
-        "Failed to construct _FirstConfig:\nlater row failed"
-    ]
+    assert messages == ["Failed to construct _FirstConfig:\nlater row failed"]
+
+
+def test_closing_progressive_config_cancels_deferred_form_work(
+    qapp,
+    monkeypatch,
+) -> None:
+    state = ObjectState(GlobalPipelineConfig(), scope_id="progressive-close")
+    messages: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "critical",
+        lambda _parent, _title, message: messages.append(message),
+    )
+    window = ConfigWindow(
+        tabs=(ConfigWindowTabSpec(state=state),),
+        scope_id="progressive-close",
+    )
+    manager = window.active_tab.form_manager
+
+    assert manager.form_build_complete is False
+
+    window.close()
+    for _ in range(10):
+        qapp.processEvents()
+
+    assert manager.form_build_cancelled is True
+    assert manager.form_build_failure is None
+    assert messages == []

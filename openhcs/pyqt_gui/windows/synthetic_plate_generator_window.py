@@ -194,9 +194,7 @@ class SyntheticPlateGeneratorWindow(QDialog):
         browse_button.setFixedHeight(CURRENT_LAYOUT.button_height)
         browse_button.setMinimumWidth(80)
         browse_button.clicked.connect(self.browse_output_dir)
-        browse_button.setStyleSheet(
-            self.color_scheme.styles.generate_button_style()
-        )
+        browse_button.setStyleSheet(self.color_scheme.styles.generate_button_style())
         layout.addWidget(browse_button)
 
         return widget
@@ -270,13 +268,9 @@ class SyntheticPlateGeneratorWindow(QDialog):
 
     def _cleanup(self):
         """Cleanup resources before window closes."""
-        # Unregister from cross-window updates
+        # End form work and release its external subscriptions.
         if self.form_manager is not None:
-            try:
-                self.form_manager.unregister_from_cross_window_updates()
-            except RuntimeError:
-                # Widget already deleted, ignore
-                pass
+            self.form_manager.dispose()
 
         # Disconnect all signals to prevent accessing deleted Qt objects
         try:

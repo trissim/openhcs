@@ -1551,7 +1551,7 @@ def test_embedded_registration_does_not_hide_main_window_from_bridge(
         assert close_result.errors[0].code == "ui_window_close_unsupported"
         assert main_window.isVisible()
     finally:
-        WindowManager.unregister(embedded_scope_id)
+        WindowManager.unregister(embedded_scope_id, embedded_widget)
         main_window.close()
 
 
@@ -2437,7 +2437,7 @@ def test_legacy_empty_scope_window_catalogs_as_global_config(tmp_path: Path) -> 
         assert close_result.summary is not None
         assert close_result.summary.window_id == OpenHCSUiWindowId.global_config
     finally:
-        WindowManager.unregister("")
+        WindowManager.unregister("", global_window)
         global_window.close()
 
 
@@ -2483,7 +2483,7 @@ def test_managed_window_catalog_projects_object_state_status() -> None:
             ManagedWindowAction.SAVE_WITHOUT_CLOSE.value in summary.managed_action_ids
         )
     finally:
-        WindowManager.unregister("managed-scope")
+        WindowManager.unregister("managed-scope", window)
         window.close()
 
 
@@ -2536,7 +2536,7 @@ def test_open_window_code_mode_documents_are_discoverable_by_window_id() -> None
         assert document.summary.title == "View/Edit GlobalPipelineConfig"
         assert document.selected_scope_ids == ("",)
     finally:
-        WindowManager.unregister("")
+        WindowManager.unregister("", global_window)
         global_window.close()
 
 
@@ -2591,7 +2591,7 @@ def test_read_only_window_code_document_rejects_before_apply() -> None:
         assert result.errors[0].code == "ui_code_document_read_only"
         assert ObjectStateRegistry.get_branch_history() == []
     finally:
-        WindowManager.unregister(scope_id)
+        WindowManager.unregister(scope_id, window)
         window.close()
 
 
@@ -2664,7 +2664,7 @@ def test_semantically_unchanged_window_code_apply_needs_no_snapshot() -> None:
         assert ObjectStateRegistry.get_branch_history() == before_history
         assert state.parameters["x"] == 1
     finally:
-        WindowManager.unregister(scope_id)
+        WindowManager.unregister(scope_id, window)
         window.close()
 
 
@@ -2734,7 +2734,7 @@ def test_rejected_window_code_apply_preserves_document_revision_token() -> None:
         assert retry.applied
         assert driver.source == "config = 'fixed'\n"
     finally:
-        WindowManager.unregister(scope_id)
+        WindowManager.unregister(scope_id, window)
         window.close()
 
 
@@ -2776,7 +2776,7 @@ def test_open_window_code_mode_summary_uses_driver_title_when_window_title_empty
 
         assert summary.title == "Code mode - View/Edit GlobalPipelineConfig"
     finally:
-        WindowManager.unregister("embedded-code")
+        WindowManager.unregister("embedded-code", embedded_widget)
         embedded_widget.close()
 
 
@@ -2850,8 +2850,8 @@ def test_simple_code_editor_windows_register_code_documents(monkeypatch) -> None
     finally:
         for scope_id in set(WindowManager.get_code_document_scopes()) - before_scopes:
             window = WindowManager.get_window(scope_id)
-            WindowManager.unregister(scope_id)
             if window is not None:
+                WindowManager.unregister(scope_id, window)
                 window.close()
         parent.close()
 
@@ -2916,7 +2916,7 @@ def test_object_state_code_mode_documents_are_discoverable_by_scope_id() -> None
         assert document.source == source
         assert document.selected_scope_ids == (OpenHCSUiWindowId.global_config,)
     finally:
-        WindowManager.unregister("")
+        WindowManager.unregister("", global_window)
         global_window.close()
 
 

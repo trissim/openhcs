@@ -434,8 +434,7 @@ def test_pipeline_and_plate_manager_help_buttons_open_managed_knowledge_window(
             is pipeline.context_help_button
         )
         assert (
-            plate.manager_header.title_layout._help_widget
-            is plate.context_help_button
+            plate.manager_header.title_layout._help_widget is plate.context_help_button
         )
         assert (
             pipeline.manager_header.title_layout._title_layout.indexOf(
@@ -490,7 +489,7 @@ def test_pipeline_and_plate_manager_help_buttons_open_managed_knowledge_window(
         managed_help = WindowManager.get_window(OpenHCSUiWindowId.knowledge_base)
         if managed_help is not None:
             managed_help.close()
-        WindowManager.unregister(OpenHCSUiWindowId.knowledge_base)
+            WindowManager.unregister(OpenHCSUiWindowId.knowledge_base, managed_help)
         pipeline.close()
         close_widget(plate)
         ObjectStateRegistry.clear()

@@ -269,9 +269,9 @@ class DualEditorWindow(BaseFormDialog):
         # UI components
         self.tab_widget: Optional[ActionTabbedWindowBody] = None
         self.header_label: Optional[QLabel] = None
-        self.parameter_editors: Dict[
-            str, QWidget
-        ] = {}  # Map tab titles to editor widgets
+        self.parameter_editors: Dict[str, QWidget] = (
+            {}
+        )  # Map tab titles to editor widgets
         self.class_hierarchy: List = []  # Store inheritance hierarchy info
 
         # Editors are created during setup_ui(); initialize here so scope styling
@@ -845,8 +845,8 @@ class DualEditorWindow(BaseFormDialog):
         self._runtime_artifact_signal = runtime_artifact_signal
         self._debug_snapshot_signal = debug_snapshot_signal
 
-    def _cleanup_managed_listeners(self) -> None:
-        """Disconnect editor-owned cross-window subscriptions."""
+    def _cleanup_managed_resources(self) -> None:
+        """Release editor-owned subscriptions and generic form resources."""
         event_bus = self._event_bus
         if event_bus is not None:
             try:
@@ -885,7 +885,7 @@ class DualEditorWindow(BaseFormDialog):
             debug_snapshot_signal.disconnect(self._on_debug_snapshot_available)
             self._debug_snapshot_signal = None
 
-        super()._cleanup_managed_listeners()
+        super()._cleanup_managed_resources()
 
     def _schedule_function_editor_sync(self):
         """Schedule a batched sync of the function editor."""

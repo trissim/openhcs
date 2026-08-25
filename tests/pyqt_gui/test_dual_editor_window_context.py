@@ -49,10 +49,10 @@ def test_dual_editor_window_cleans_cross_window_subscriptions() -> None:
     window._compiled_artifact_signal = None
     window._runtime_artifact_signal = None
     window._debug_snapshot_signal = None
-    window._managed_listener_cleanup_done = False
+    window._managed_resource_cleanup_done = False
     window.step_editor = None
 
-    window._cleanup_managed_listeners()
+    window._cleanup_managed_resources()
 
     assert event_bus.pipeline_changed.disconnected == [window._on_pipeline_changed]
     assert event_bus.config_changed.disconnected == [window._on_config_changed]

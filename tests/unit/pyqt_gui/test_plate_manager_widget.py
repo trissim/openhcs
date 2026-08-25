@@ -1735,7 +1735,7 @@ class TestPlateManagerWidget:
             assert plate_scope not in manager.plate_compiled_data
         finally:
             completion_poller.release.set()
-            WindowManager.unregister(pipeline_scope)
+            WindowManager.unregister(pipeline_scope, editor)
             editor.close()
             close_widget(manager)
             ObjectStateRegistry.clear()
