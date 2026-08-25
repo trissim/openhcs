@@ -1,3 +1,10 @@
+x-openhcs-connection:
+  host: "localhost"
+  port: &openhcs-omero-port 4064
+  web_port: &openhcs-omero-web-port 4080
+  user: "root"
+  password: &openhcs-omero-password "openhcs"
+
 services:
 
   database:
@@ -23,12 +30,13 @@ services:
       CONFIG_omero_db_user: omero
       CONFIG_omero_db_pass: omero
       CONFIG_omero_db_name: omero
-      ROOTPASS: openhcs
+      ROOTPASS: *openhcs-omero-password
     networks:
       - omero
     ports:
       - "4063:4063"
-      - "4064:4064"
+      - target: 4064
+        published: *openhcs-omero-port
     volumes:
       - "omero:/OMERO"
     ulimits:
@@ -37,27 +45,16 @@ services:
         hard: 65536
 
   omeroweb:
-    # Custom build with OpenHCS plugin pre-installed
-    # This ensures the OpenHCS tab appears automatically in OMERO.web
-    build:
-      context: .
-      dockerfile: Dockerfile.omeroweb-openhcs
-    image: "openhcs-omeroweb:latest"
+    # Keep the local viewing service reproducible without exposing the alpha
+    # OpenHCS web panel as a supported execution entry point.
+    image: "openmicroscopy/omero-web-standalone:5.33.0"
     environment:
       OMEROHOST: omeroserver
-      # Configure OpenHCS plugin via environment variables
-      CONFIG_omero_web_apps: '["omero_figure", "omero_iviewer", "omero_mapr", "omero_parade", "omero_autotag", "omero_tagsearch", "omero_openhcs"]'
-      CONFIG_omero_web_ui_right__plugins: '[["Acquisition", "webclient/data/includes/right_plugin.acquisition.js.html", "metadata_tab"], ["Preview", "webclient/data/includes/right_plugin.preview.js.html", "preview_tab"], ["OpenHCS", "omero_openhcs/webclient_plugins/right_plugin.js.html", "openhcs_panel"]]'
-      # OpenHCS execution server connection (host.docker.internal allows container to reach host)
-      OPENHCS_EXECUTION_HOST: host.docker.internal
-      OPENHCS_EXECUTION_PORT: 7777
-    extra_hosts:
-      # Enable host.docker.internal on Linux (works automatically on Mac/Windows)
-      - "host.docker.internal:host-gateway"
     networks:
       - omero
     ports:
-      - "4080:4080"
+      - target: 4080
+        published: *openhcs-omero-web-port
     depends_on:
       - omeroserver
 

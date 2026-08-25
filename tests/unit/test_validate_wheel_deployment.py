@@ -49,8 +49,33 @@ def test_deployment_validator_rejects_missing_declared_dockerfile(
     )
 
     assert validate_wheel_deployment(wheel_path) == (
-        "package/deployment/docker-compose.yml: missing declared Dockerfile "
-        "package/deployment/Dockerfile.web",
+        (
+            "package/deployment/docker-compose.yml: missing declared Dockerfile "
+            "package/deployment/Dockerfile.web"
+        ),
+    )
+
+
+def test_deployment_validator_rejects_parallel_compose_authorities(
+    tmp_path: Path,
+) -> None:
+    wheel_path = tmp_path / "candidate.whl"
+    _write_wheel(
+        wheel_path,
+        {
+            "package/deployment/docker-compose.yml": COMPOSE,
+            "package/deployment/docker-compose.openhcs.yml": COMPOSE,
+            "package/deployment/Dockerfile.web": DOCKERFILE,
+            "package/deployment/plugin/setup.py": "from setuptools import setup\n",
+        },
+    )
+
+    assert validate_wheel_deployment(wheel_path) == (
+        (
+            "package/deployment: multiple Compose declarations: "
+            "package/deployment/docker-compose.openhcs.yml, "
+            "package/deployment/docker-compose.yml"
+        ),
     )
 
 
@@ -67,8 +92,10 @@ def test_deployment_validator_rejects_missing_dockerfile_copy_source(
     )
 
     assert validate_wheel_deployment(wheel_path) == (
-        "package/deployment/Dockerfile.web: missing declared build source "
-        "package/deployment/plugin",
+        (
+            "package/deployment/Dockerfile.web: missing declared build source "
+            "package/deployment/plugin"
+        ),
     )
 
 
@@ -111,8 +138,12 @@ def test_deployment_validator_rejects_developer_home_paths(tmp_path: Path) -> No
     )
 
     assert validate_wheel_deployment(wheel_path) == (
-        f"{macos_source_member}: wheel contains developer-home paths: "
-        "/Users/developer",
-        f"{windows_source_member}: wheel contains developer-home paths: "
-        r"C:\Users\developer",
+        (
+            f"{macos_source_member}: wheel contains developer-home paths: "
+            "/Users/developer"
+        ),
+        (
+            f"{windows_source_member}: wheel contains developer-home paths: "
+            r"C:\Users\developer"
+        ),
     )

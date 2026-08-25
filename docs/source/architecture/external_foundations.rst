@@ -101,5 +101,6 @@ documentation.
 OMERO boundary
 --------------
 
-``omero_openhcs`` owns deployment and application integration. Generic OMERO
-storage, ROI, address resolution, and backend behavior belong to PolyStore.
+OpenHCS owns the packaged local deployment and instance lifecycle;
+``omero_openhcs`` owns its alpha OMERO.web application. Generic OMERO storage,
+ROI, address resolution, and backend behavior belong to PolyStore.

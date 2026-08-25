@@ -12,7 +12,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "d6571fa647d121c5100820323d2483ca727b1e8f41a833894f76ee269343a069",
+        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
         "role": "Declares the published README, Python range, package dependencies, optional surfaces, console commands, and project links."
       },
       {
@@ -87,7 +87,8 @@
       "Passed 12 focused documentation-audit tests, including missing, changed, and Python-block-validated project README regressions.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete project overview after capability surfaces gained declaration-derived development-client preflight; the public product, installation, and agent-workflow claims remain accurate."
+      "On 2026-08-25, re-read the complete project overview after capability surfaces gained declaration-derived development-client preflight; the public product, installation, and agent-workflow claims remain accurate.",
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
     ]
   }
 ]

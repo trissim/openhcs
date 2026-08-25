@@ -101,7 +101,9 @@ OMERO
 OMERO tests require Docker, the OMERO client stack, and supported ZeroC Ice
 wheels. The integration helper may start the configured local OMERO stack, but
 developers should treat that as an external-state mutation and inspect the test
-configuration before running it.
+configuration before running it. Once an OMERO variant is selected explicitly,
+failure to reach the complete gateway-and-table-service readiness contract is a
+test failure rather than a skip.
 
 .. code-block:: console
 
@@ -126,4 +128,6 @@ GUI logs are written beneath ``get_openhcs_data_dir() / "logs"``: this is
 ``~/.local/share/openhcs/logs``. For viewer failures, first prove the viewer can
 start independently. For OMERO failures, distinguish dependency installation,
 server readiness, authentication, source projection, and result
-materialization.
+materialization. The CI failure step emits OMERO component diagnostics and the
+``Tables-0`` log before the container logs so independent table-service startup
+is visible.

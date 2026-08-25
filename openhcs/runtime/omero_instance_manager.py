@@ -1,21 +1,13 @@
-"""
-OMERO Instance Manager - Manages OMERO server instances for testing.
-
-Follows the same pattern as Napari instance management:
-1. Check if Docker daemon is running (auto-start if needed)
-2. Check if OMERO is running
-3. Connect to existing instance if available
-4. Start new instance if needed (via docker-compose)
-5. Provide cleanup utilities
-"""
+"""Connect to OMERO or manage the packaged local deployment."""
 
 import logging
-import platform
 import subprocess
 import time
+from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
 
+import yaml
 from polystore.omero_tables import (
     OMERO_TABLE_SERVICE,
     OMEROTableServiceUnavailableError,
@@ -23,30 +15,35 @@ from polystore.omero_tables import (
 
 logger = logging.getLogger(__name__)
 
-# Default OMERO connection parameters
-DEFAULT_OMERO_HOST = "localhost"
-DEFAULT_OMERO_PORT = 4064
-DEFAULT_OMERO_WEB_PORT = 4080
-DEFAULT_OMERO_USER = "root"
-DEFAULT_OMERO_PASSWORD = "openhcs"
+
+@dataclass(frozen=True)
+class _OMEROConnectionSettings:
+    """Typed projection of the canonical Compose connection declaration."""
+
+    host: str
+    port: int
+    web_port: int
+    user: str
+    password: str
+
+    @classmethod
+    def from_compose(cls, compose_path: Path) -> "_OMEROConnectionSettings":
+        """Load the connection extension from a Compose declaration."""
+
+        document = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+        return cls(**document["x-openhcs-connection"])
 
 
 class OMEROInstanceManager:
-    """
-    Manages OMERO server instances for testing.
-
-    Follows the same pattern as NapariStreamVisualizer:
-    - Check if OMERO is running
-    - Connect to existing instance if available
-    - Start new instance if needed
-    """
+    """Own an OMERO connection and the local Compose lifecycle when required."""
 
     def __init__(
         self,
-        host: str = DEFAULT_OMERO_HOST,
-        port: int = DEFAULT_OMERO_PORT,
-        user: str = DEFAULT_OMERO_USER,
-        password: str = DEFAULT_OMERO_PASSWORD,
+        host: str | None = None,
+        port: int | None = None,
+        web_port: int | None = None,
+        user: str | None = None,
+        password: str | None = None,
         docker_compose_path: Path | None = None,
     ):
         """
@@ -55,15 +52,21 @@ class OMEROInstanceManager:
         Args:
             host: OMERO server hostname
             port: OMERO server port
+            web_port: OMERO.web port
             user: OMERO username
             password: OMERO password
             docker_compose_path: Path to docker-compose.yml (auto-detected if None)
         """
-        self.host = host
-        self.port = port
-        self.user = user
-        self.password = password
-        self.docker_compose_path = docker_compose_path or self._find_docker_compose()
+        resolved_compose_path = docker_compose_path or self._find_docker_compose()
+        if resolved_compose_path is None:
+            raise FileNotFoundError("OpenHCS OMERO Compose declaration is unavailable")
+        self.docker_compose_path = resolved_compose_path
+        local_settings = _OMEROConnectionSettings.from_compose(self.docker_compose_path)
+        self.host = local_settings.host if host is None else host
+        self.port = local_settings.port if port is None else port
+        self.web_port = local_settings.web_port if web_port is None else web_port
+        self.user = local_settings.user if user is None else user
+        self.password = local_settings.password if password is None else password
         self.conn = None
         self._started_by_us = False
 
@@ -80,119 +83,25 @@ class OMEROInstanceManager:
         Returns:
             True if Docker daemon is responsive
         """
-        try:
-            # Try without sudo first
-            result = subprocess.run(
-                ["docker", "info"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-            if result.returncode == 0:
-                return True
+        return self._docker_command() is not None
 
-            # If failed, try with sudo (Linux may require it)
-            result = subprocess.run(
-                ["sudo", "docker", "info"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-            return result.returncode == 0
-        except (OSError, subprocess.SubprocessError):
-            return False
+    def _docker_command(self) -> tuple[str, ...] | None:
+        """Return the usable Docker command prefix for this process."""
 
-    def _start_docker_daemon(self) -> bool:
-        """
-        Start Docker daemon if not running.
-
-        Platform-specific implementation:
-        - Linux: Uses systemctl to start docker service
-        - macOS: Starts Docker Desktop application
-        - Windows: Starts Docker Desktop application
-
-        Returns:
-            True if Docker daemon was started successfully
-        """
-        system = platform.system()
-
-        try:
-            if system == "Linux":
-                logger.info("Starting Docker daemon via systemctl...")
+        for command in (("docker",), ("sudo", "-n", "docker")):
+            try:
                 result = subprocess.run(
-                    ["sudo", "systemctl", "start", "docker"],
+                    [*command, "info"],
                     capture_output=True,
                     text=True,
-                    timeout=30,
+                    timeout=5,
                     check=False,
                 )
-
                 if result.returncode == 0:
-                    logger.info("✓ Docker daemon started")
-                    # Wait a moment for daemon to be ready
-                    time.sleep(2)
-                    return self._is_docker_running()
-                else:
-                    logger.warning(f"Failed to start Docker daemon: {result.stderr}")
-                    return False
-
-            elif system == "Darwin":  # macOS
-                logger.info("Starting Docker Desktop...")
-                subprocess.Popen(
-                    ["open", "-a", "Docker"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                logger.info("Waiting for Docker Desktop to start...")
-                # Docker Desktop takes longer to start
-                return self._wait_for_docker_ready(timeout=60)
-
-            elif system == "Windows":
-                logger.info("Starting Docker Desktop...")
-                subprocess.Popen(
-                    ["start", "Docker Desktop"],
-                    shell=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                logger.info("Waiting for Docker Desktop to start...")
-                return self._wait_for_docker_ready(timeout=60)
-
-            else:
-                logger.warning(
-                    f"Unsupported platform for auto-starting Docker: {system}"
-                )
-                return False
-
-        except (OSError, subprocess.SubprocessError) as e:
-            logger.error(f"Failed to start Docker daemon: {e}")
-            return False
-
-    def _wait_for_docker_ready(self, timeout: int = 60) -> bool:
-        """
-        Wait for Docker daemon to be ready.
-
-        Args:
-            timeout: Maximum time to wait (seconds)
-
-        Returns:
-            True if Docker is ready
-        """
-        logger.info(f"Waiting for Docker daemon to be ready (timeout: {timeout}s)...")
-
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            if self._is_docker_running():
-                elapsed = time.time() - start_time
-                logger.info(f"✓ Docker daemon is ready (took {elapsed:.1f}s)")
-                return True
-
-            time.sleep(2)  # Check every 2 seconds
-
-        logger.error(f"Timeout waiting for Docker daemon to be ready ({timeout}s)")
-        return False
+                    return command
+            except (OSError, subprocess.SubprocessError):
+                continue
+        return None
 
     def is_omero_running(self) -> bool:
         """
@@ -231,7 +140,7 @@ class OMEROInstanceManager:
             import urllib.request
 
             # Try to connect to OMERO.web with short timeout
-            web_url = f"http://{self.host}:{DEFAULT_OMERO_WEB_PORT}"
+            web_url = f"http://{self.host}:{self.web_port}"
             request = urllib.request.Request(web_url)
 
             with urllib.request.urlopen(request, timeout=5):
@@ -267,13 +176,13 @@ class OMEROInstanceManager:
 
     def connect(self, timeout: int = 30) -> bool:
         """
-        Connect to OMERO, starting Docker and OMERO if necessary.
+        Connect to OMERO, starting the packaged stack when Docker is available.
 
         Automatic startup sequence:
         1. Check if already connected
         2. Check if OMERO is running → connect if yes
-        3. Check if Docker is running → start if no
-        4. Start OMERO via docker-compose
+        3. Require an available Docker daemon
+        4. Start the packaged OMERO Compose stack
         5. Wait for OMERO to be ready
         6. Connect
 
@@ -311,12 +220,13 @@ class OMEROInstanceManager:
             "OMERO stack not fully running, attempting to start all services..."
         )
 
-        # Ensure Docker daemon is running
+        # Docker process management is outside the OpenHCS domain boundary.
         if not self._is_docker_running():
-            logger.info("Docker daemon not running, attempting to start...")
-            if not self._start_docker_daemon():
-                logger.error("Failed to start Docker daemon")
-                return False
+            logger.error(
+                "Docker is unavailable; start Docker before requesting the local "
+                "OMERO deployment"
+            )
+            return False
 
         # Start OMERO via docker-compose
         if self._start_omero_docker() and self._wait_for_omero_ready(timeout):
@@ -355,56 +265,40 @@ class OMEROInstanceManager:
 
     def _start_omero_docker(self) -> bool:
         """
-        Start OMERO using docker-compose.
-
-        Automatically builds the OpenHCS-enabled OMERO.web image if needed.
+        Start OMERO from the packaged Compose declaration.
 
         Returns:
-            True if docker-compose started successfully
+            True if Docker Compose started successfully
         """
-        if self.docker_compose_path is None:
-            logger.warning("No docker-compose.yml found, cannot start OMERO")
-            return False
-
         if not self.docker_compose_path.exists():
             logger.warning(
                 f"docker-compose.yml not found at {self.docker_compose_path}"
             )
             return False
 
+        docker_command = self._docker_command()
+        if docker_command is None:
+            logger.error("Docker daemon is unavailable to the current process")
+            return False
+
         try:
             logger.info(
-                f"Starting OMERO via docker compose at {self.docker_compose_path.parent}"
+                "Starting OMERO from %s",
+                self.docker_compose_path,
             )
-
-            # Build images first (this will build the OpenHCS-enabled OMERO.web image)
-            # Only builds if Dockerfile has changed or image doesn't exist
-            logger.info("Building OMERO.web with OpenHCS plugin (if needed)...")
-            build_result = subprocess.run(
-                ["sudo", "docker", "compose", "build"],
-                cwd=self.docker_compose_path.parent,
-                stdout=None,  # Inherit stdout to show build output in real-time
-                stderr=None,  # Inherit stderr to show build errors in real-time
-                text=True,
-                timeout=300,  # 5 minute timeout for build
-                check=False,
-            )
-
-            if build_result.returncode != 0:
-                logger.error(
-                    "docker compose build failed with exit code %s",
-                    build_result.returncode,
-                )
-                return False
-
-            # Run docker compose up -d
             result = subprocess.run(
-                ["sudo", "docker", "compose", "up", "-d"],
-                cwd=self.docker_compose_path.parent,
+                [
+                    *docker_command,
+                    "compose",
+                    "--file",
+                    str(self.docker_compose_path),
+                    "up",
+                    "-d",
+                ],
                 stdout=None,  # Inherit stdout to show startup output in real-time
                 stderr=None,  # Inherit stderr to show startup errors in real-time
                 text=True,
-                timeout=600,  # 10 minute timeout for docker compose (OMERO server takes time to start)
+                timeout=600,
                 check=False,
             )
 
@@ -413,17 +307,20 @@ class OMEROInstanceManager:
                 self._started_by_us = True
                 return True
             else:
-                logger.error(f"docker compose failed: {result.stderr}")
+                logger.error(
+                    "docker compose up failed with exit code %s",
+                    result.returncode,
+                )
                 return False
 
         except subprocess.TimeoutExpired:
             logger.error("docker compose up timed out")
             return False
         except FileNotFoundError:
-            logger.error("docker-compose command not found. Install Docker Compose.")
+            logger.error("Docker Compose is unavailable")
             return False
         except OSError as e:
-            logger.error(f"Failed to start docker-compose: {e}")
+            logger.error(f"Failed to start Docker Compose: {e}")
             return False
 
     def _wait_for_omero_ready(self, timeout: int = 180) -> bool:
@@ -473,17 +370,27 @@ class OMEROInstanceManager:
             self.stop_omero_docker()
 
     def stop_omero_docker(self):
-        """Stop OMERO docker-compose services."""
-        if self.docker_compose_path is None or not self.docker_compose_path.exists():
+        """Stop services from the packaged Compose declaration."""
+        if not self.docker_compose_path.exists():
             logger.warning("Cannot stop OMERO: docker-compose.yml not found")
             return
 
+        docker_command = self._docker_command()
+        if docker_command is None:
+            logger.error("Docker daemon is unavailable to the current process")
+            return
+
         try:
-            logger.info("Stopping OMERO via docker-compose...")
+            logger.info("Stopping OMERO via Docker Compose...")
 
             result = subprocess.run(
-                ["docker-compose", "down"],
-                cwd=self.docker_compose_path.parent,
+                [
+                    *docker_command,
+                    "compose",
+                    "--file",
+                    str(self.docker_compose_path),
+                    "down",
+                ],
                 capture_output=True,
                 text=True,
                 timeout=60,
@@ -493,14 +400,15 @@ class OMEROInstanceManager:
             if result.returncode == 0:
                 logger.info("✓ OMERO stopped")
             else:
-                logger.warning(f"docker-compose down had issues: {result.stderr}")
+                logger.warning(f"Docker Compose down had issues: {result.stderr}")
 
         except (OSError, subprocess.SubprocessError) as e:
-            logger.error(f"Failed to stop OMERO: {e}")
+            logger.error(f"Failed to stop OMERO through Docker Compose: {e}")
 
     def __enter__(self):
         """Context manager entry."""
-        self.connect()
+        if not self.connect():
+            raise ConnectionError("OMERO stack is unavailable")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):

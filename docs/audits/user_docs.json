@@ -154,7 +154,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "d6571fa647d121c5100820323d2483ca727b1e8f41a833894f76ee269343a069",
+        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -170,7 +170,8 @@
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete troubleshooting how-to after the viewer protocol gained bounded payload and isolation controls; its launch, connection, mismatch, and recovery guidance remains accurate.",
-      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
     ]
   },
   {
@@ -626,7 +627,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "d6571fa647d121c5100820323d2483ca727b1e8f41a833894f76ee269343a069",
+        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -698,7 +699,8 @@
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
       "On 2026-08-23, re-read the complete reference against ZMQRuntime 0.2.15 and the canonical repository-setup how-to; generic process-exit ownership and the setup link are now explicit.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
-      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
     ]
   },
   {
@@ -805,7 +807,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "d6571fa647d121c5100820323d2483ca727b1e8f41a833894f76ee269343a069",
+        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -890,7 +892,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "c16f8a3e35b6ba5b8bf58ebc04285c3dbea7c98eaee96ee8b345f897ab21807d",
+        "sha256": "02b47f1b24afb7b0667110f0ec5a4700ad488acea31dd1925fd35b6472beeb35",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -928,7 +930,9 @@
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete installation how-to against the Windows and macOS installers, detached update worker, focused regressions, and hostile-index native CI fixture; added practical guidance for managed desktop installs without changing the separate manual-pip procedure.",
       "On 2026-08-25, the installer and detached-update regression boundary passed 88 tests; documentation validation passed 154 files, 24 Python blocks, and 153 audited sources; Sphinx rendered all 152 included sources with warnings treated as errors.",
-      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
+      "On 2026-08-25, re-read the complete page against the integration workflow after OMERO selection became fail-closed and component diagnostics exposed table-service startup; all remaining CI claims remain accurate."
     ]
   },
   {
@@ -1287,7 +1291,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "d6571fa647d121c5100820323d2483ca727b1e8f41a833894f76ee269343a069",
+        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1321,7 +1325,8 @@
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete compatibility page after both native installers changed their package-index isolation; retaining one redirect remains correct and avoids a second installation procedure.",
       "On 2026-08-25, documentation validation and the warning-clean Sphinx build passed with the compatibility redirect intact.",
-      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
     ]
   },
   {
@@ -1822,7 +1827,7 @@
   },
   {
     "path": "docs/source/guides/omero_integration.rst",
-    "source_sha256": "bf5eb2fbefda250207ae9091eacb8213573d76558632e82615aa23920db65c65",
+    "source_sha256": "4edba313380aca1a45a2ca3a6d321c0f4ba15c6a68f428e659d617f359bb8638",
     "audience": [
       "OMERO integrators",
       "deployment contributors"
@@ -1842,7 +1847,7 @@
       },
       {
         "path": "external/PolyStore/src/polystore/omero_tables.py",
-        "sha256": "c840e36a4847711d2310d03d5cfb18b0ef4e58eb7a07e21b09a423bc6aa9254b",
+        "sha256": "e3e51ced79aedbe85e0e2d509e7da9f20a12ca90eab9fc069854c8e921c9779d",
         "role": "Owns dtype-specific OMERO column construction, table-service readiness, and validated table creation."
       },
       {
@@ -1876,48 +1881,38 @@
         "role": "Defines the bundled omero_openhcs Django application and its application-level ownership boundary."
       },
       {
-        "path": "openhcs/omero/Dockerfile.omeroweb-openhcs",
-        "sha256": "97a1859a15a8354b76be0aee930f995d36dca2745fe1bf0722f42cf9424f6926",
-        "role": "Pins a compatible OMERO.web base and installs the bundled plugin from the self-contained deployment context."
-      },
-      {
         "path": "openhcs/omero/docker-compose.yml",
-        "sha256": "9f529607b22bf36e5f029c66523da00232995a82944b1022940e67c9fa1eeb31",
-        "role": "Declares the packaged compose build and runtime topology resolved by OMEROInstanceManager."
-      },
-      {
-        "path": "openhcs/omero/docker-compose.openhcs.yml",
-        "sha256": "bf1fdd9eedc5b5709ef5800e2c3180e5a45c2971f080382bb9fb770a822e96ab",
-        "role": "Declares the packaged OpenHCS OMERO server and web deployment topology."
+        "sha256": "42be16bd692852af73c92ab7680b8762cc0142c2b0b12bdaceb88317e6b1bedf",
+        "role": "Single packaged declaration of the pinned PostgreSQL, OMERO.server, and upstream OMERO.web topology."
       },
       {
         "path": "openhcs/runtime/omero_instance_manager.py",
-        "sha256": "7e57f1938754bc74a1f9ddf47a1afb801ca9ca97200be3bbe2531f5cc26587c2",
-        "role": "Owns OpenHCS instance lifecycle and fails closed when the packaged OMERO.web image cannot build."
+        "sha256": "82943c3b2e393cc58d2f65540d9bb484b9cf8e435f009abce2303fba8970d71a",
+        "role": "Owns OpenHCS instance lifecycle, exact Compose invocation, and complete gateway-plus-table-service acceptance."
       },
       {
         "path": "pyproject.toml",
-        "sha256": "d6571fa647d121c5100820323d2483ca727b1e8f41a833894f76ee269343a069",
+        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
         "path": "scripts/validate_wheel_deployment.py",
-        "sha256": "e630167258ca0f4187c1ad5764085a549bb16a0d04130a2ec5e07449e313a17a",
+        "sha256": "8ae2c9b6c121579816fa5065f7e6ee6ce8f6ee4d3e014ce911c97dc60802d6b7",
         "role": "Validates that a built OpenHCS wheel contains the complete OMERO deployment bundle."
       },
       {
         "path": "tests/unit/test_omero_instance_manager.py",
-        "sha256": "1c96c5e116d6053b685f7134b3645b4604be41c045329df2d8274c27e9349441",
-        "role": "Proves that the instance manager resolves the packaged compose resource and fails closed when its required web image cannot build."
+        "sha256": "27de75031bdc58219eabc459519ca05630893cbebeebb4821636d5d468249a86",
+        "role": "Proves canonical compose resolution, pinned images, startup failure, table readiness, and fail-closed context entry."
       },
       {
         "path": "tests/unit/test_validate_wheel_deployment.py",
-        "sha256": "ec1b45e55dae7d4b5af9e3f2874c0ee66d973db9450e3227b3b202910e87c166",
-        "role": "Proves packaged deployment completeness and rejects nested build output, nested package metadata, or developer-home paths in release wheels."
+        "sha256": "7909c30f7afc321f939aebf52c5c603e153cfa13e869492e0538f78dc632e145",
+        "role": "Proves packaged deployment completeness and rejects parallel compose authorities, nested build output, nested package metadata, or developer-home paths."
       },
       {
         "path": "tests/integration/test_main.py",
-        "sha256": "5886ca4fb042dcefe3b6d8136247d2d5e5b007027ce5a9d7911d366698d45822",
+        "sha256": "538c470d93759e215088270b467d6e1231df0ef19ac6d3ce35db6013a31f1c47",
         "role": "Exercises live OMERO instance and integration behaviour through the packaged OpenHCS boundary."
       }
     ],
@@ -1925,12 +1920,16 @@
       "The page mirrored volatile alpha and legacy-client status from another package; it now delegates release compatibility to that owner and states only the OpenHCS declaration gate.",
       "The explanation treated omero_openhcs as a repository-root deployment project; it now distinguishes the bundled web application at openhcs/omero/plugin from the installed OpenHCS deployment and instance-lifecycle owner.",
       "A wheel built from a developer tree could absorb ignored OMERO build output and nested package metadata; package-data selection now names the canonical bundle, build output is reprojected from scratch, and the installed-wheel gate seeds both contamination forms.",
-      "The explanation did not state that runtime analysis summaries consume execution-ledger content and persist through the compiled backend instead of reopening OMERO virtual paths as local files."
+      "The explanation did not state that runtime analysis summaries consume execution-ledger content and persist through the compiled backend instead of reopening OMERO virtual paths as local files.",
+      "Two compose declarations and hardcoded shell probes competed with the runtime lifecycle owner; the bundle now ships one pinned compose file and the wheel gate rejects parallel declarations.",
+      "The default compose stack exposed an alpha panel that cannot submit the current execution contract; the upstream OMERO.web viewer remains available while the panel stays behind its owner-package integration gate.",
+      "The manager mirrored local connection defaults from Compose; typed settings now project the canonical declaration and explicit values remain remote-instance overrides.",
+      "Generic platform-string dispatch attempted to start Docker Desktop or a host service manager; the integration boundary now requires host-owned Docker availability."
     ],
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/guides/omero_integration.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: external/PolyStore/src/polystore/omero_local.py; external/PolyStore/src/polystore/base.py; openhcs/microscopes/microscope_interfaces.py; tests/unit/test_omero_microscope_metadata.py; openhcs/omero/plugin/README.md; openhcs/omero/Dockerfile.omeroweb-openhcs; openhcs/omero/docker-compose.yml; openhcs/omero/docker-compose.openhcs.yml; openhcs/runtime/omero_instance_manager.py; pyproject.toml; scripts/validate_wheel_deployment.py; tests/unit/test_omero_instance_manager.py; tests/unit/test_validate_wheel_deployment.py; tests/integration/test_main.py.",
+      "Compared every factual claim directly with the current hash-pinned authorities: external/PolyStore/src/polystore/omero_local.py; external/PolyStore/src/polystore/base.py; external/PolyStore/src/polystore/omero_tables.py; openhcs/microscopes/microscope_interfaces.py; tests/unit/test_omero_microscope_metadata.py; openhcs/omero/plugin/README.md; openhcs/omero/docker-compose.yml; openhcs/runtime/omero_instance_manager.py; pyproject.toml; scripts/validate_wheel_deployment.py; tests/unit/test_omero_instance_manager.py; tests/unit/test_validate_wheel_deployment.py; tests/integration/test_main.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
@@ -1941,7 +1940,11 @@
       "On 2026-08-24, rechecked the execution-output paragraphs after consolidation began consuming nominal text output semantics; the documented OMERO backend boundary remains unchanged and accurate.",
       "On 2026-08-24, rechecked the complete explanation after PolyStore made OMERO column projection pandas 3-safe inside the table owner; every documented package boundary remains accurate.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
-      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
+      "On 2026-08-25, re-read the explanation against the canonical Compose declaration, instance manager, package manifest, wheel validator, plugin compatibility owner, and focused deployment tests; revised the page to distinguish supported storage integration from the gated alpha panel.",
+      "On 2026-08-25, verified the manager's typed local connection projection and explicit remote override path against the Compose extension and focused unit tests.",
+      "On 2026-08-25, re-read the explanation after removing platform-specific Docker daemon launch; the packaged Compose lifecycle remains OpenHCS-owned and host process lifecycle remains external.",
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
     ]
   },
   {
@@ -1997,7 +2000,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "2ab6e5330502326d54d9bc10a24ab1bdb9326849f829264d230e0cf76196c745",
+    "source_sha256": "e51dcf2b30de7455d1762592b20eee34b9b3b305f076ace57f321507fc5c48df",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -2017,7 +2020,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "c16f8a3e35b6ba5b8bf58ebc04285c3dbea7c98eaee96ee8b345f897ab21807d",
+        "sha256": "02b47f1b24afb7b0667110f0ec5a4700ad488acea31dd1925fd35b6472beeb35",
         "role": "Defines the operating-system integration matrix, dependency setup, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
@@ -2059,6 +2062,16 @@
         "path": ".vscode/settings.json",
         "sha256": "3e7bf4823a1a681cc4162d6f78c91e0d36b2472ddbcda3417750c29b0023a853",
         "role": "Adds OMERO to the VS Code integration microscope discovery arguments described by the guide."
+      },
+      {
+        "path": "openhcs/runtime/omero_instance_manager.py",
+        "sha256": "82943c3b2e393cc58d2f65540d9bb484b9cf8e435f009abce2303fba8970d71a",
+        "role": "Owns complete stack readiness and exact lifecycle behavior used by explicitly selected OMERO tests."
+      },
+      {
+        "path": "external/PolyStore/src/polystore/omero_tables.py",
+        "sha256": "e3e51ced79aedbe85e0e2d509e7da9f20a12ca90eab9fc069854c8e921c9779d",
+        "role": "Owns the table-service readiness contract required before OMERO storage tests proceed."
       }
     ],
     "findings": [
@@ -2087,7 +2100,9 @@
       "On 2026-08-23, re-read the testing how-to after validating the successful 75.98% combined report from all 23 instrumented artifacts and correcting its generated UTC timestamp; the page remains a focused how-to and accurately distinguishes coverage evidence from behavioural gates.",
       "On 2026-08-23, re-read the testing how-to after CI exposed an installed-package probe in the pre-install contract phase; source tests now prove orchestration and the existing Windows and macOS installed phases remain the sole real subprocess acceptance boundary.",
       "On 2026-08-25, re-read the complete testing how-to against the native installer and staged-update jobs after they began injecting an unreachable host package index; the CI section now records this behavioural gate without copying implementation details.",
-      "On 2026-08-25, the installer and detached-update regression boundary passed 88 tests; documentation validation passed 154 files, 24 Python blocks, and 153 audited sources; Sphinx rendered all 152 included sources with warnings treated as errors."
+      "On 2026-08-25, the installer and detached-update regression boundary passed 88 tests; documentation validation passed 154 files, 24 Python blocks, and 153 audited sources; Sphinx rendered all 152 included sources with warnings treated as errors.",
+      "On 2026-08-25, re-read the complete how-to against the updated CI workflow, instance manager, and PolyStore readiness owner; explicit OMERO selection now fails closed and CI preserves table-service diagnostics.",
+      "On 2026-08-25, re-read the complete page against the integration workflow after OMERO selection became fail-closed and component diagnostics exposed table-service startup; all remaining CI claims remain accurate."
     ]
   },
   {
@@ -2223,7 +2238,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "d6571fa647d121c5100820323d2483ca727b1e8f41a833894f76ee269343a069",
+        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2257,7 +2272,8 @@
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete compatibility page after both native installers changed their package-index isolation; retaining one redirect remains correct and avoids duplicated installer behaviour.",
       "On 2026-08-25, documentation validation and the warning-clean Sphinx build passed with the compatibility redirect intact.",
-      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
     ]
   },
   {
@@ -2691,7 +2707,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "d6571fa647d121c5100820323d2483ca727b1e8f41a833894f76ee269343a069",
+        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -2706,7 +2722,8 @@
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
-      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
     ]
   },
   {

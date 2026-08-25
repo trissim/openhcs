@@ -34,9 +34,10 @@ orchestrator and its owned workers. See :doc:`streaming_boundary_and_wrappers`.
 OMERO
 -----
 
-``omero_openhcs`` owns deployment and application integration. PolyStore owns
-generic OMERO storage primitives. OpenHCS consumes the resulting source/backend
-through normal source binding and compilation. See
+OpenHCS owns its packaged local deployment and instance lifecycle;
+``omero_openhcs`` owns the alpha OMERO.web application. PolyStore owns generic
+OMERO storage primitives. OpenHCS consumes the resulting source/backend through
+normal source binding and compilation. See
 :doc:`../guides/omero_integration`.
 
 Boundary rule

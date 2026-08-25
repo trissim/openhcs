@@ -968,7 +968,7 @@
   },
   {
     "path": "docs/source/architecture/external_foundations.rst",
-    "source_sha256": "7a0ead9662bd7e6573ab7604ac519777def085aefa9db46581fe6f2108ef840c",
+    "source_sha256": "8ca3934429a62d32618e40dd07bb51ee691a12ae2c04f62e725330e17ed0fb99",
     "audience": [
       "OpenHCS maintainers",
       "first-party package integrators"
@@ -978,8 +978,18 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "d6571fa647d121c5100820323d2483ca727b1e8f41a833894f76ee269343a069",
+        "sha256": "77d5657118d1c6322384eb6f77b1ce02ad9ff52a21d804eea90d7201c83132aa",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
+      },
+      {
+        "path": "openhcs/omero/README.md",
+        "sha256": "8d684ecc2990c93f3cf46d45ed7b15d68b478c3f0bdbbb6e11a67f49dd8e4ac8",
+        "role": "States OpenHCS ownership of the single packaged OMERO deployment and instance-lifecycle entry point."
+      },
+      {
+        "path": "openhcs/omero/plugin/README.md",
+        "sha256": "5257f97a9b39ade8c43e5824019924243785d971398f6fa98894e18cd129146b",
+        "role": "States the alpha OMERO.web panel's separate application and compatibility boundary."
       },
       {
         "path": "external/ObjectState/README.md",
@@ -1055,7 +1065,8 @@
       "Exact spawned endpoint-process ownership moved to ZMQRuntime; OpenHCS retains viewer persistence and application shutdown policy.",
       "ZMQRuntime 0.2.15 made each retained endpoint process observe and reap its own terminal exit without caller polling.",
       "ZMQRuntime 0.2.17 made owner-requested connection-attempt cancellation a typed generic result and disconnects a connection that wins a late readiness race.",
-      "The package catalogue did not name ArrayBridge child-process environment ownership or metaclass-registry host-logging-safe discovery imports."
+      "The package catalogue did not name ArrayBridge child-process environment ownership or metaclass-registry host-logging-safe discovery imports.",
+      "The OMERO boundary assigned deployment to the alpha web application instead of the OpenHCS bundle and lifecycle owner."
     ],
     "disposition": "revise",
     "validation": [
@@ -1074,12 +1085,14 @@
       "On 2026-08-24, re-read the complete reference and every page dependent on the OpenHCS package declaration after ZMQRuntime 0.2.16 made IPC cleanup race-safe; generic transport ownership and the documented installation boundaries remain accurate.",
       "On 2026-08-24, re-read the complete reference, README, and every page dependent on the OpenHCS package declaration against ZMQRuntime 0.2.17; 149 package tests, warning-fatal owner docs, built distributions, Python 3.10-3.13 CI, and public package artifacts passed.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
-      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
+      "On 2026-08-25, re-read the complete reference against the OpenHCS OMERO deployment README and plugin compatibility owner; corrected deployment and application ownership without changing generic PolyStore responsibilities.",
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
     ]
   },
   {
     "path": "docs/source/architecture/external_integrations_overview.rst",
-    "source_sha256": "4bc1302f7683c3904afe0a54530ba557c137233a35b481719b3cb075409f1268",
+    "source_sha256": "2aabac138854a098beca2c638141e3b21c68e090907f6b3964e8a221865e23af",
     "audience": [
       "OpenHCS integrators",
       "architecture reviewers"
@@ -1103,6 +1116,16 @@
         "role": "Defines the generic storage backend boundary consumed by OpenHCS integrations."
       },
       {
+        "path": "openhcs/omero/docker-compose.yml",
+        "sha256": "42be16bd692852af73c92ab7680b8762cc0142c2b0b12bdaceb88317e6b1bedf",
+        "role": "Declares the OpenHCS-owned pinned local OMERO deployment."
+      },
+      {
+        "path": "openhcs/omero/plugin/README.md",
+        "sha256": "5257f97a9b39ade8c43e5824019924243785d971398f6fa98894e18cd129146b",
+        "role": "Defines the separately gated alpha OMERO.web application boundary."
+      },
+      {
         "path": "external/zmqruntime/src/zmqruntime/execution/server.py",
         "sha256": "34e9e92c1a8a975a7a716d0c869b540e1ea8376c90cc71aa27d9614d08517a0d",
         "role": "Implements the generic remote-execution lifecycle kept outside OpenHCS domain code."
@@ -1114,12 +1137,14 @@
       }
     ],
     "findings": [
-      "The overview named cancellation ownership but did not explain the generic terminal-state and OpenHCS cooperative-interruption boundary."
+      "The overview named cancellation ownership but did not explain the generic terminal-state and OpenHCS cooperative-interruption boundary.",
+      "The OMERO summary assigned deployment to the web plugin instead of the OpenHCS deployment bundle and lifecycle owner."
     ],
     "disposition": "revise",
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
-      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "On 2026-08-25, re-read the complete explanation against the canonical Compose declaration, plugin compatibility owner, and PolyStore boundary; corrected OMERO deployment ownership."
     ]
   },
   {

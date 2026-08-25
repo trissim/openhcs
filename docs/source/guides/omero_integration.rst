@@ -16,7 +16,10 @@ PolyStore
 OpenHCS
   Owns microscope/source selection, source bindings, compilation, processing,
   the desktop workflows that choose an OMERO source, and the packaged
-  ``openhcs/omero`` deployment bundle and instance lifecycle.
+  ``openhcs/omero`` deployment bundle and instance lifecycle. The lifecycle
+  accepts a connection only after the PolyStore table-service declaration
+  reports readiness; a responsive Blitz gateway alone is not the complete
+  storage contract.
 
 The current PolyStore ``OMEROLocalBackend`` still imports the OpenHCS
 ``FilenameParser`` registry while building its virtual source projection. This
@@ -31,6 +34,15 @@ current ``PipelineConfig`` plus ``list[FunctionStep]`` declaration boundary.
 OpenHCS does not infer that compatibility from package presence. Do not copy
 credentials into pipeline source or assume that a remote OMERO plate is a local
 directory.
+
+The default Compose declaration starts the pinned upstream OMERO.web viewer. It
+does not install or expose the alpha ``omero_openhcs`` panel. Connect through
+``OMEROInstanceManager`` so the same packaged declaration and complete
+gateway-plus-table-service readiness contract are used by desktop, test, and
+packaged environments. The manager derives local connection defaults from that
+declaration while allowing explicit host, port, web-port, user, and password
+overrides for a remote instance. Start Docker before requesting the packaged
+local stack; host daemon lifecycle is outside the OpenHCS integration boundary.
 
 Durable artifact materialization
 --------------------------------
@@ -68,5 +80,6 @@ Testing
 Keep unit tests at the owner boundary: use fake source references or backends
 for compiler tests, PolyStore backend tests for generic I/O, and deployment
 integration tests under ``tests/integration`` for the packaged
-``openhcs/omero`` and ``omero_openhcs`` live-server behaviour. See
+``openhcs/omero`` live-server behaviour. Test ``omero_openhcs`` separately
+against its documented panel compatibility gate. See
 :doc:`../development/omero_testing`.

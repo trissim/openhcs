@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Validate deployment build inputs from the declarations inside a wheel."""
 
 from __future__ import annotations
@@ -6,9 +5,9 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
-from pathlib import Path, PurePosixPath
 import re
 import shlex
+from pathlib import Path, PurePosixPath
 from zipfile import ZipFile
 
 DEVELOPER_HOME_PATH_PATTERN = re.compile(
@@ -154,6 +153,18 @@ def validate_wheel_deployment(wheel_path: Path) -> tuple[str, ...]:
             if PurePosixPath(member).name.startswith("docker-compose")
             and PurePosixPath(member).suffix in {".yaml", ".yml"}
         )
+        compose_directories: dict[PurePosixPath, list[str]] = {}
+        for compose_member in compose_members:
+            compose_directories.setdefault(
+                PurePosixPath(compose_member).parent,
+                [],
+            ).append(compose_member)
+        for compose_directory, declarations in sorted(compose_directories.items()):
+            if len(declarations) > 1:
+                errors.append(
+                    f"{compose_directory}: multiple Compose declarations: "
+                    + ", ".join(sorted(declarations))
+                )
         for compose_member in compose_members:
             compose_path = PurePosixPath(compose_member)
             compose = wheel.read(compose_member).decode("utf-8")

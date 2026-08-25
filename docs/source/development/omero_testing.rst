@@ -22,7 +22,13 @@ Integration tests
 The repository integration harness can start or connect to the configured
 OMERO stack, upload a synthetic plate, register ``OMEROLocalBackend``, and run
 the normal compile-before-execute flow. Live tests require the OMERO Python
-client and deployment dependencies and should be selected explicitly.
+client and deployment dependencies and should be selected explicitly. Once
+selected, an unavailable stack is a test failure rather than a skip. Readiness
+requires both a gateway connection and PolyStore's declared table service; a
+responsive Blitz endpoint alone is not sufficient.
+Start Docker before selecting the live variant. The instance manager may start
+the packaged Compose services, but it does not start Docker Desktop or a host
+service manager.
 
 Keep credentials in the test environment, never in pipeline declarations or
 fixtures committed to the repository. Always close gateway connections and
@@ -30,12 +36,15 @@ stop only server instances owned by the test harness.
 
 Exercise both direct and ZMQ execution against the same live plate. Verify the
 created images and tables, consolidated summaries, connection cleanup, and a
-cold build of the pinned OMERO.web image. Do not open a browser from the test
-harness; the URL is evidence for a human caller, not an integration-test side
-effect.
+cold pull and start of the pinned OMERO.web image. Do not open a browser from
+the test harness; the URL is evidence for a human caller, not an integration-
+test side effect. On CI failure, preserve the OMERO component diagnostics and
+the table service log so an independently starting ``Tables-0`` process can be
+distinguished from a generic container failure.
 
 Deployment tests for packaging, credentials, and server lifecycle belong in
-``omero_openhcs``; generic storage behavior belongs in PolyStore. The web
-package is not compatible with the current execution submission contract until
-its documented panel-to-server integration gate passes. See
+OpenHCS; generic storage behavior belongs in PolyStore. Panel behavior belongs
+in ``omero_openhcs``. The panel is not enabled by the default deployment and is
+not compatible with the current execution submission contract until its
+documented panel-to-server integration gate passes. See
 :doc:`../guides/omero_integration`.
