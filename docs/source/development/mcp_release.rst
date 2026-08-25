@@ -50,8 +50,8 @@ disposable environment, and then run the full registry-derived metadata check:
    pip install "${WHEEL}[${DESKTOP_EXTRAS}]"
    python scripts/sync_mcp_release_metadata.py --check --capability-requirements
 
-Run ``scripts/smoke_installed_mcp.py`` from outside the checkout. The smoke test
-asserts that:
+Run ``scripts/smoke_installed_mcp.py`` and ``scripts/smoke_installed_gui.py``
+from outside the checkout. The MCP smoke test asserts that:
 
 * ``openhcs.__file__`` belongs to the installed environment;
 * every console script declared by the installed distribution exists and loads
@@ -61,6 +61,11 @@ asserts that:
 * the health resource projection reports no missing package resource;
 * every document in the packaged knowledge catalog can be read; and
 * no knowledge path resolves back into the source checkout.
+
+The GUI smoke constructs the installed application, reaches its painted-ready
+boundary, verifies that the main window is visible, and closes it cleanly. This
+checks the resolved desktop dependency set rather than only importing modules
+from the source checkout.
 
 Client artifacts
 ----------------
@@ -122,16 +127,23 @@ require the ordinary Integration Tests and Documentation gates before merging
 it; do not replace an immutable pin with a movable version tag.
 
 The matrix has one dependency-readiness gate. It fetches the recorded submodule
-release tags, validates the local dependency release floors, waits until the
-exact wheels are visible through PyPI's installer-facing index, and projects
-those exact requirements into downstream candidate installs. This gate prevents
-a green source checkout from standing in for unpublished dependency releases.
+release tags, validates the local dependency floors and breaking-series
+ceilings, waits until the exact wheels are visible through PyPI's
+installer-facing index, and projects those exact requirements into downstream
+candidate installs. This gate prevents a green source checkout from standing
+in for unpublished dependency releases.
 The source gates also run the maintained PyQt workflow suite against the exact
 pinned pyqt-reactive candidate. Published-dependency and installed-wheel jobs
 remain the proof for the public package boundary. The Python quality gate
 retains every change since the most recent successful Integration Tests head,
 so an unrelated follow-up commit cannot bypass a failed formatter or
 correctness check.
+
+The scheduled Published Release Canary installs the latest stable desktop
+package from PyPI on Linux, Windows, and macOS, then runs the same installed-GUI
+ready-boundary probe. It detects dependency drift that occurs after a release,
+while the release-candidate and publication gates prevent known drift from
+being published.
 
 The native installer lanes inject an unreachable workstation pip
 configuration and unreachable primary and extra index overrides. The Windows

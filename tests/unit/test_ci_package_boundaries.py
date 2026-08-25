@@ -170,12 +170,22 @@ def test_published_release_canary_owns_post_release_dependency_drift() -> None:
         "windows-latest",
         "macos-latest",
     }
+    checkout_step = next(
+        step for step in job["steps"] if step.get("name") == "Checkout smoke authority"
+    )
+    assert checkout_step["with"]["sparse-checkout-cone-mode"] is False
+    sparse_checkout = checkout_step["with"]["sparse-checkout"]
+    assert "benchmark" not in sparse_checkout
+    assert "scripts/smoke_installed_gui.py" in sparse_checkout
+    assert "scripts/sync_mcp_release_metadata.py" in sparse_checkout
+
     install_step = next(
         step
         for step in job["steps"]
         if step.get("name") == "Install the published desktop package"
     )
     install_command = install_step["run"]
+    assert "python -m pip install --upgrade pip packaging" in install_command
     assert "sync_mcp_release_metadata.py --print-desktop-extras" in install_command
     assert 'package_requirement="openhcs[${desktop_extras}]"' in install_command
     assert 'python -m pip install "$package_requirement"' in install_command

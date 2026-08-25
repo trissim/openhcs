@@ -73,7 +73,13 @@ projection can be refreshed.
 The installed-desktop smoke on Windows and both macOS architectures also runs
 the packaged restart worker against a real short-lived parent process and
 requires its detached restart command to execute from the installed
-environment.
+environment. It constructs the installed OpenHCS application as well, requires
+the main window to reach its painted-ready boundary, and closes it cleanly.
+
+The daily Published Release Canary installs the latest stable desktop package
+from PyPI on Linux, Windows, and macOS and repeats that GUI startup probe. It is
+the post-release signal for a dependency update that leaves package resolution
+valid but breaks application startup.
 
 The native installer jobs deliberately provide an unreachable pip
 configuration file and unreachable primary and extra index overrides. Windows

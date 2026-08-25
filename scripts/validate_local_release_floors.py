@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
-"""Validate dependency floors against the versions available in local packages.
+"""Validate dependency compatibility against versions in local packages.
 
 Package metadata remains the authority.  This check discovers extracted
 packages from ``external/*/pyproject.toml`` and verifies that OpenHCS, plus any
-local package-to-package requirements, can be resolved by the candidate
-versions in those declarations.  It intentionally knows nothing about package
-APIs or feature names.
+local package-to-package requirements, can be resolved by the candidate versions
+in those declarations. OpenHCS requirements must also exclude the next SemVer
+breaking series so an already-published application cannot silently resolve a
+future incompatible first-party package. It intentionally knows nothing about
+package APIs or feature names.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 import json
-from pathlib import Path
 import subprocess
 import time
 import tomllib
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
@@ -51,6 +54,73 @@ class ReleaseCandidate(ProjectMetadata):
     """A project declaration refined to an exact publishable version."""
 
     version: Version
+
+
+@dataclass(frozen=True)
+class CandidateRequirementCompatibility:
+    """Compatibility proof between one requirement and its local candidate."""
+
+    requirement: Requirement
+    candidate: ReleaseCandidate
+
+    @property
+    def accepts_candidate(self) -> bool:
+        """Return whether the declared range includes the candidate."""
+
+        specifiers = self.requirement.specifier
+        return not specifiers or specifiers.contains(
+            self.candidate.version,
+            prereleases=True,
+        )
+
+    @property
+    def requires_candidate_floor(self) -> bool:
+        """Return whether the range excludes older candidate versions."""
+
+        for specifier in self.requirement.specifier:
+            if specifier.operator not in {">=", "~=", "==", "==="}:
+                continue
+            if specifier.operator == "==" and specifier.version.endswith(".*"):
+                continue
+            try:
+                floor = Version(specifier.version)
+            except ValueError:
+                continue
+            if floor >= self.candidate.version:
+                return True
+        return False
+
+    @property
+    def breaking_release_boundary(self) -> Version:
+        """Return the first version outside the candidate's SemVer series."""
+
+        version = self.candidate.version
+        if version.major == 0:
+            return Version(f"0.{version.minor + 1}.0")
+        return Version(f"{version.major + 1}.0.0")
+
+    @property
+    def excludes_next_breaking_series(self) -> bool:
+        """Return whether the range excludes the next breaking series."""
+
+        boundary = self.breaking_release_boundary
+        for specifier in self.requirement.specifier:
+            try:
+                declared_version = Version(specifier.version.rstrip(".*"))
+            except ValueError:
+                continue
+            if specifier.operator == "<" and declared_version <= boundary:
+                return True
+            if specifier.operator == "<=" and declared_version < boundary:
+                return True
+            if specifier.operator in {"==", "==="}:
+                return True
+            if specifier.operator == "~=" and not specifier.contains(
+                boundary,
+                prereleases=True,
+            ):
+                return True
+        return False
 
 
 @dataclass(frozen=True)
@@ -157,32 +227,6 @@ def discover_local_projects(
     )
 
 
-def _requirement_accepts(requirement: Requirement, version: Version) -> bool:
-    return not requirement.specifier or requirement.specifier.contains(
-        version,
-        prereleases=True,
-    )
-
-
-def _requires_candidate_floor(
-    requirement: Requirement,
-    version: Version,
-) -> bool:
-    """Return whether a direct requirement excludes older candidate versions."""
-    for specifier in requirement.specifier:
-        if specifier.operator not in {">=", "~=", "==", "==="}:
-            continue
-        if specifier.operator == "==" and specifier.version.endswith(".*"):
-            continue
-        try:
-            floor = Version(specifier.version)
-        except ValueError:
-            continue
-        if floor >= version:
-            return True
-    return False
-
-
 def _release_source_error(project: ReleaseCandidate) -> str | None:
     """Return source drift from the version-owned release tag, when Git-backed."""
     project_root = project.path.parent
@@ -275,15 +319,24 @@ def validate(repo_root: Path = REPO_ROOT) -> tuple[str, ...]:
                 f"{candidate.name}=={candidate.version}"
             )
             continue
-        if not _requirement_accepts(requirement, candidate.version):
+        compatibility = CandidateRequirementCompatibility(requirement, candidate)
+        if not compatibility.accepts_candidate:
             errors.append(
                 f"OpenHCS requirement {requirement} excludes available local candidate "
                 f"{candidate.name}=={candidate.version}"
             )
-        elif not _requires_candidate_floor(requirement, candidate.version):
+        elif not compatibility.requires_candidate_floor:
             errors.append(
                 f"OpenHCS requirement {requirement} does not require local candidate "
                 f"floor {candidate.name}>={candidate.version}"
+            )
+        elif not candidate.version.is_prerelease and not (
+            compatibility.excludes_next_breaking_series
+        ):
+            errors.append(
+                f"OpenHCS requirement {requirement} does not exclude next breaking "
+                f"series {candidate.name}>="
+                f"{compatibility.breaking_release_boundary}"
             )
 
     for project in local_projects:
@@ -294,7 +347,8 @@ def validate(repo_root: Path = REPO_ROOT) -> tuple[str, ...]:
             dependency = candidates.get(canonicalize_name(requirement.name))
             if dependency is None:
                 continue
-            if not _requirement_accepts(requirement, dependency.version):
+            compatibility = CandidateRequirementCompatibility(requirement, dependency)
+            if not compatibility.accepts_candidate:
                 errors.append(
                     f"{project.name}=={project.version} requirement {requirement} "
                     f"excludes available local candidate "

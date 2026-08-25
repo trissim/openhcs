@@ -154,7 +154,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
+        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -625,7 +625,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
+        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -811,7 +811,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
+        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -851,12 +851,12 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "4bb83b274498cde2ccde9950973abf820128cf71024e6d172de2a8a3e867bee4",
+        "sha256": "4c83d1633df4ca2c97c19b66d61aa7bb629f4e7778b476d38ea57046f8246b6a",
         "role": "Exercises the installed distribution, launchers, MCP/runtime path, viewers, and packaged restart worker outside the source checkout."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "f1af9c4d3a02720ae0d0ef9052fe88ccd1213efc4feba1ca647df574106c9616",
+        "sha256": "710179b234553177603e8e72a5030d67977a168ddca6fb6c57fb369bf07250db",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, and environment to the restart-worker verifier and reports its result."
       },
       {
@@ -896,7 +896,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "02b47f1b24afb7b0667110f0ec5a4700ad488acea31dd1925fd35b6472beeb35",
+        "sha256": "0e8c201d53f858a921291a4299ddb2d128c3c4e59795e14fbe38fdea7d384d6f",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -1296,7 +1296,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
+        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1494,12 +1494,12 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "4bb83b274498cde2ccde9950973abf820128cf71024e6d172de2a8a3e867bee4",
+        "sha256": "4c83d1633df4ca2c97c19b66d61aa7bb629f4e7778b476d38ea57046f8246b6a",
         "role": "Executes the packaged restart worker against a real parent exit and detached restart command from the installed environment."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "f1af9c4d3a02720ae0d0ef9052fe88ccd1213efc4feba1ca647df574106c9616",
+        "sha256": "710179b234553177603e8e72a5030d67977a168ddca6fb6c57fb369bf07250db",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, and environment to the restart-worker verifier and reports its result."
       },
       {
@@ -1907,7 +1907,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
+        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -2019,7 +2019,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "e51dcf2b30de7455d1762592b20eee34b9b3b305f076ace57f321507fc5c48df",
+    "source_sha256": "3856c6cbcee69a51bac192cb14367d97dbf83784ba363235cec0c4a0ce043765",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -2039,8 +2039,13 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "02b47f1b24afb7b0667110f0ec5a4700ad488acea31dd1925fd35b6472beeb35",
-        "role": "Defines the operating-system integration matrix, dependency setup, pytest commands, and source-gate coverage artifacts used by CI."
+        "sha256": "0e8c201d53f858a921291a4299ddb2d128c3c4e59795e14fbe38fdea7d384d6f",
+        "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel GUI startup, pytest commands, and source-gate coverage artifacts used by CI."
+      },
+      {
+        "path": ".github/workflows/published-release-canary.yml",
+        "sha256": "06fee31454f26e8340f103c56085ac663abb77549e1a9403730a26ca51d8589d",
+        "role": "Runs the installed-GUI ready-boundary probe against the latest published desktop dependency set on Linux, Windows, and macOS."
       },
       {
         "path": ".github/workflows/coverage-pages.yml",
@@ -2049,18 +2054,28 @@
       },
       {
         "path": "tests/unit/test_ci_package_boundaries.py",
-        "sha256": "ca127c99068f5a8ff998f618f518ba1cbcd6a03c5419780257134ddb0f6442c5",
-        "role": "Proves source-gate coverage artifacts fail closed and the combined report describes only instrumented suites."
+        "sha256": "e0977188ac265dde6c0a99655443f5acdf4917f5fc95d16ac967859b429279d4",
+        "role": "Proves source-gate coverage artifacts fail closed, the combined report describes only instrumented suites, and published-release canary ownership remains cross-platform."
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "4bb83b274498cde2ccde9950973abf820128cf71024e6d172de2a8a3e867bee4",
-        "role": "Runs installed launch, MCP/runtime, viewer, and packaged restart-worker acceptance outside the source checkout."
+        "sha256": "4c83d1633df4ca2c97c19b66d61aa7bb629f4e7778b476d38ea57046f8246b6a",
+        "role": "Runs installed GUI readiness, launch, MCP/runtime, viewer, and packaged restart-worker acceptance outside the source checkout."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "f1af9c4d3a02720ae0d0ef9052fe88ccd1213efc4feba1ca647df574106c9616",
-        "role": "Proves platform smoke orchestration passes the exact installed Python, install root, and environment to the restart-worker verifier and reports its result."
+        "sha256": "710179b234553177603e8e72a5030d67977a168ddca6fb6c57fb369bf07250db",
+        "role": "Proves platform smoke orchestration passes the exact installed Python and isolated runtime to the GUI and restart-worker verifiers and reports their results."
+      },
+      {
+        "path": "scripts/smoke_installed_gui.py",
+        "sha256": "75519309f3b088a77050483f20a370cda6cdc06fff3f9afa4578305d1772f01a",
+        "role": "Constructs the installed application, reaches painted readiness, verifies main-window visibility, and closes it cleanly outside the checkout."
+      },
+      {
+        "path": "tests/unit/test_smoke_installed_gui.py",
+        "sha256": "93145d77a75d70c9f860720a2f9cc8713cb2ff66fca51f84bdd7ed7709fa6769",
+        "role": "Proves the installed-GUI probe uses the installed package and rejects source-checkout contamination."
       },
       {
         "path": "openhcs/pyqt_gui/config.py",
@@ -2102,7 +2117,8 @@
       "The combined report omitted the foundational unit/core and maintained GUI source gates, and its description implied coverage from uninstrumented jobs; both source gates now emit fail-closed artifacts and the guide names the report's exact evidence boundary.",
       "The native installer section did not record that each supported Windows/macOS architecture now exercises the packaged restart worker against a real parent exit and detached command.",
       "The generated coverage README rendered its update command literally instead of recording when the report was produced; the workflow now appends an ISO 8601 UTC timestamp.",
-      "Native installer acceptance did not exercise hostile workstation pip index configuration; Windows installation and reinstall, macOS installation, and the staged updater now run while an unreachable index is injected."
+      "Native installer acceptance did not exercise hostile workstation pip index configuration; Windows installation and reinstall, macOS installation, and the staged updater now run while an unreachable index is injected.",
+      "The release matrix proved dependency resolution and importability but did not construct the installed GUI, and no cross-platform canary re-resolved a published release after publication; both boundaries now exercise painted application readiness."
     ],
     "disposition": "revise",
     "validation": [
@@ -2122,7 +2138,8 @@
       "On 2026-08-25, the installer and detached-update regression boundary passed 88 tests; documentation validation passed 154 files, 24 Python blocks, and 153 audited sources; Sphinx rendered all 152 included sources with warnings treated as errors.",
       "On 2026-08-25, re-read the complete how-to against the updated CI workflow, instance manager, and PolyStore readiness owner; explicit OMERO selection now fails closed and CI preserves table-service diagnostics.",
       "On 2026-08-25, re-read the complete page against the integration workflow after OMERO selection became fail-closed and component diagnostics exposed table-service startup; all remaining CI claims remain accurate.",
-      "On 2026-08-25, re-read the complete testing guide after the instance manager gained bounded Docker readiness and stopped retaining rejected gateways; the existing operator guidance and failure-diagnosis boundaries remain accurate without duplicating lifecycle details."
+      "On 2026-08-25, re-read the complete testing guide after the instance manager gained bounded Docker readiness and stopped retaining rejected gateways; the existing operator guidance and failure-diagnosis boundaries remain accurate without duplicating lifecycle details.",
+      "On 2026-08-25, re-read the complete testing how-to against the installed GUI probe, wheel matrix, native desktop smoke, and published-package canary after issue 105 exposed a resolver-valid startup failure; the CI section now states the candidate and post-release GUI evidence boundaries."
     ]
   },
   {
@@ -2258,7 +2275,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
+        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2727,7 +2744,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
+        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],

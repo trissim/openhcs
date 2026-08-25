@@ -1292,7 +1292,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
+        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1499,7 +1499,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
+        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1561,7 +1561,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
+        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -1832,12 +1832,12 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "4bb83b274498cde2ccde9950973abf820128cf71024e6d172de2a8a3e867bee4",
+        "sha256": "4c83d1633df4ca2c97c19b66d61aa7bb629f4e7778b476d38ea57046f8246b6a",
         "role": "Executes the packaged restart worker against a real parent exit and detached restart command from the installed environment."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "f1af9c4d3a02720ae0d0ef9052fe88ccd1213efc4feba1ca647df574106c9616",
+        "sha256": "710179b234553177603e8e72a5030d67977a168ddca6fb6c57fb369bf07250db",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, and environment to the restart-worker verifier and reports its result."
       },
       {
@@ -2315,7 +2315,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
+        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2391,7 +2391,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
+        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2428,7 +2428,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
+        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2635,7 +2635,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "e7432518d535c491f4799383e4cc72b29a5be01a02ddbf993e9236d6680db7e8",
+    "source_sha256": "f8469aadcba80764efa31fea32a41d116f0ab376e5c211453b9f212de5faf947",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2663,13 +2663,23 @@
         "role": "Fail-closed package, repository, upstream, submodule, PyPI, build, and exact-workflow release proof."
       },
       {
+        "path": "scripts/validate_local_release_floors.py",
+        "sha256": "2d8e6f72c89278c4e6944e72ffc7fd25b27322e09366964364f639f41a472601",
+        "role": "Derives local first-party candidates from package metadata and proves candidate floors, breaking-series ceilings, release tags, source agreement, and installer-index wheel availability."
+      },
+      {
+        "path": "tests/unit/test_validate_local_release_floors.py",
+        "sha256": "68acd8510391a986c88e728fee9bbf7cea655a429093848278fe6646c003f071",
+        "role": "Proves metadata discovery and nominal requirement-to-candidate compatibility across stable and pre-1.0 release series."
+      },
+      {
         "path": ".github/workflows/publish.yml",
-        "sha256": "152ff261d8010cc43396c70361cbe0272c2b7b799aaa75ed928c0c367bdf3bde",
-        "role": "Exact-tag installer, PyPI, GitHub Release, recovery, and MCP Registry workflow consuming the central release requirements."
+        "sha256": "b33306657a5ad6b18d09f9df91c8dc49fba24eab9a1105eda89bac1015c35430",
+        "role": "Exact-tag installer, installed-GUI startup, PyPI, GitHub Release, recovery, and MCP Registry workflow consuming the central release requirements."
       },
       {
         "path": "tests/unit/test_mcp_release_workflow.py",
-        "sha256": "19eb5f7d959fad14a1a91e133b672a80202a8bd46d103144f270d55e7f04e147",
+        "sha256": "dc54810605c2ac3e7f29d14b3d57f412b05ff5a2fc7eabdbe72b49244198a9a8",
         "role": "Proves immutable tag resolution, exact-SHA checkout, publication ordering, recovery, and Registry policy."
       },
       {
@@ -2679,8 +2689,23 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "02b47f1b24afb7b0667110f0ec5a4700ad488acea31dd1925fd35b6472beeb35",
-        "role": "Cross-platform release-candidate dependency-readiness, installer, signing-helper parse, and staged-update validation matrix."
+        "sha256": "0e8c201d53f858a921291a4299ddb2d128c3c4e59795e14fbe38fdea7d384d6f",
+        "role": "Cross-platform release-candidate dependency-readiness, installed-wheel GUI startup, installer, signing-helper parse, and staged-update validation matrix."
+      },
+      {
+        "path": ".github/workflows/published-release-canary.yml",
+        "sha256": "06fee31454f26e8340f103c56085ac663abb77549e1a9403730a26ca51d8589d",
+        "role": "Daily Linux, Windows, and macOS startup proof for the dependency set resolved by the latest published desktop package."
+      },
+      {
+        "path": "scripts/smoke_installed_gui.py",
+        "sha256": "75519309f3b088a77050483f20a370cda6cdc06fff3f9afa4578305d1772f01a",
+        "role": "Constructs the installed application, reaches painted readiness, verifies main-window visibility, and closes it cleanly outside the checkout."
+      },
+      {
+        "path": "tests/unit/test_smoke_installed_gui.py",
+        "sha256": "93145d77a75d70c9f860720a2f9cc8713cb2ff66fca51f84bdd7ed7709fa6769",
+        "role": "Proves the installed-GUI probe uses the installed package and rejects source-checkout contamination."
       },
       {
         "path": ".github/dependabot.yml",
@@ -2714,7 +2739,7 @@
       },
       {
         "path": "tests/unit/test_ci_package_boundaries.py",
-        "sha256": "ca127c99068f5a8ff998f618f518ba1cbcd6a03c5419780257134ddb0f6442c5",
+        "sha256": "e0977188ac265dde6c0a99655443f5acdf4917f5fc95d16ac967859b429279d4",
         "role": "Proves publication consumes the central release requirements instead of a copied workflow package list."
       }
     ],
@@ -2730,7 +2755,9 @@
       "Local tagging, manual publication, and installer recovery were independent fail-open paths; one readiness authority and one immutable tag-resolution job now bind them to the same exact commit and CI evidence.",
       "PyPI recovery used --skip-existing, which could hide independently rebuilt artifact conflicts; existing release files now stop publication.",
       "Workflow dependencies used movable major-version tags and deprecated Node 20 action releases; every external action now uses a current full-length commit pin maintained through grouped Dependabot updates.",
-      "Release-candidate installer lanes inherited workstation pip configuration and package indexes; native installation, reinstall, and staged update now suppress those external settings while CI injects an unreachable index as proof."
+      "Release-candidate installer lanes inherited workstation pip configuration and package indexes; native installation, reinstall, and staged update now suppress those external settings while CI injects an unreachable index as proof.",
+      "Published OpenHCS 0.7.26 could resolve a nominally valid but startup-incompatible pyqt-reactive version; installed-wheel publication gates and the scheduled published-release canary now exercise the real GUI ready boundary.",
+      "Six first-party requirements had no breaking-series ceiling; the package metadata now bounds every extracted dependency, and the metadata-derived release validator rejects an unbounded future candidate."
     ],
     "disposition": "revise",
     "validation": [
@@ -2752,7 +2779,9 @@
       "On 2026-08-24, re-read the complete release how-to after every PyPI installation lane began consuming the readiness job's hash-pinned wheels and the macOS DMG lifecycle retained both backing and mounted-volume identities; 30 focused workflow and installer tests, shell parsing, YAML parsing, and documentation validation passed.",
       "On 2026-08-25, re-read the complete release how-to against the native workflow after it began injecting an unreachable host pip index into Windows and macOS installer acceptance; the release-candidate section now records the gate without introducing a second package-source authority.",
       "On 2026-08-25, the installer and detached-update regression boundary passed 88 tests; documentation validation passed 154 files, 24 Python blocks, and 153 audited sources; Sphinx rendered all 152 included sources with warnings treated as errors.",
-      "On 2026-08-25, re-read the complete page against the integration workflow after OMERO selection became fail-closed and component diagnostics exposed table-service startup; all remaining CI claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the integration workflow after OMERO selection became fail-closed and component diagnostics exposed table-service startup; all remaining CI claims remain accurate.",
+      "On 2026-08-25, re-read the complete release how-to against the installed GUI probe, release workflow, cross-platform wheel matrix, and published-package canary after issue 105 exposed post-release dependency drift; the page now distinguishes candidate, publication, and post-release startup evidence.",
+      "On 2026-08-25, re-read every documentation source whose package-metadata authority changed after all first-party requirements gained breaking-series ceilings; installation, ownership, package surface, and runtime claims remain accurate, and 15 focused validator tests prove the metadata-derived policy."
     ]
   },
   {
@@ -2811,7 +2840,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "02b47f1b24afb7b0667110f0ec5a4700ad488acea31dd1925fd35b6472beeb35",
+        "sha256": "0e8c201d53f858a921291a4299ddb2d128c3c4e59795e14fbe38fdea7d384d6f",
         "role": "Runs explicitly selected live OMERO variants and preserves component and table-service diagnostics on failure."
       }
     ],
@@ -2849,7 +2878,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
+        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -3018,7 +3047,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "e9441ff923e1cf27c8eb16f264b3f2d99de352db4cb56e0d3e60fd531304987d",
+        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

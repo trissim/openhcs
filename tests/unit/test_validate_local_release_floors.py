@@ -2,8 +2,11 @@
 
 import ast
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
+
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from scripts import validate_local_release_floors as floors
 
@@ -77,7 +80,7 @@ def test_dynamic_hatch_version_path_is_the_candidate_authority(tmp_path):
         tmp_path / "pyproject.toml",
         name="openhcs",
         version="1.0.0",
-        dependencies=("example-package>=1.2.3",),
+        dependencies=("example-package>=1.2.3,<2",),
     )
     candidate_path = tmp_path / "external" / "example" / "pyproject.toml"
     _write_dynamic_hatch_project(
@@ -183,12 +186,71 @@ def test_rejects_openhcs_floor_below_available_candidate(tmp_path):
     )
 
 
+def test_rejects_unbounded_openhcs_first_party_requirement(tmp_path):
+    _write_project(
+        tmp_path / "pyproject.toml",
+        name="openhcs",
+        version="1.0.0",
+        dependencies=("example-package>=1.2.3",),
+    )
+    _write_project(
+        tmp_path / "external" / "example" / "pyproject.toml",
+        name="example-package",
+        version="1.2.3",
+    )
+
+    assert floors.validate(tmp_path) == (
+        "OpenHCS requirement example-package>=1.2.3 does not exclude next "
+        "breaking series example-package>=2.0.0",
+    )
+
+
+def test_zero_major_compatibility_ceiling_uses_the_next_minor(tmp_path):
+    _write_project(
+        tmp_path / "pyproject.toml",
+        name="openhcs",
+        version="1.0.0",
+        dependencies=("example-package>=0.3.4,<0.4",),
+    )
+    _write_project(
+        tmp_path / "external" / "example" / "pyproject.toml",
+        name="example-package",
+        version="0.3.4",
+    )
+
+    assert floors.validate(tmp_path) == ()
+
+
+def test_candidate_requirement_compatibility_owns_release_range_proof(tmp_path):
+    candidate = floors.ReleaseCandidate(
+        name="example-package",
+        version=Version("0.3.4"),
+        dependencies=(),
+        path=tmp_path / "pyproject.toml",
+    )
+
+    compatible = floors.CandidateRequirementCompatibility(
+        Requirement("example-package>=0.3.4,<0.4"),
+        candidate,
+    )
+    assert compatible.accepts_candidate
+    assert compatible.requires_candidate_floor
+    assert compatible.breaking_release_boundary == Version("0.4.0")
+    assert compatible.excludes_next_breaking_series
+
+    boundary_inclusive = floors.CandidateRequirementCompatibility(
+        Requirement("example-package>=0.3.4,<=0.4"),
+        candidate,
+    )
+    assert not boundary_inclusive.excludes_next_breaking_series
+
+
 def test_rejects_local_dependency_floor_above_available_candidate(tmp_path):
     _write_project(
         tmp_path / "pyproject.toml",
         name="openhcs",
         version="1.0.0",
-        dependencies=("consumer>=1.0.0", "authority>=2.0.0"),
+        dependencies=("consumer>=1.0.0,<2", "authority>=2.0.0,<3"),
     )
     _write_project(
         tmp_path / "external" / "authority" / "pyproject.toml",
@@ -213,7 +275,7 @@ def test_rejects_published_source_drift_without_a_version_change(tmp_path):
         tmp_path / "pyproject.toml",
         name="openhcs",
         version="1.0.0",
-        dependencies=("example-package>=1.2.3",),
+        dependencies=("example-package>=1.2.3,<2",),
     )
     project_root = tmp_path / "external" / "example"
     _write_project(

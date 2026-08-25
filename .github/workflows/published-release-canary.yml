@@ -26,6 +26,16 @@ jobs:
     steps:
       - name: Checkout smoke authority
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            openhcs/__init__.py
+            packaging/codex/openhcs/.mcp.json
+            packaging/mcpb/openhcs/pyproject.toml
+            pyproject.toml
+            scripts/smoke_installed_gui.py
+            scripts/sync_mcp_release_metadata.py
+            server.json
+          sparse-checkout-cone-mode: false
 
       - name: Set up Python 3.12
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -44,7 +54,7 @@ jobs:
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip packaging
           desktop_extras=$(python scripts/sync_mcp_release_metadata.py --print-desktop-extras)
           package_requirement="openhcs[${desktop_extras}]"
           if [ -n "$REQUESTED_VERSION" ]; then
