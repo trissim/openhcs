@@ -161,6 +161,41 @@ def test_fiji_server_selects_managed_java_before_initializing_imagej(
     assert server.ij is imagej_gateway
 
 
+def test_fiji_server_stop_closes_transport_before_owned_jvm(monkeypatch) -> None:
+    events: list[tuple[str, object]] = []
+    gateway = object()
+    scyjava_module = ModuleType("scyjava")
+    runtime_policy = SimpleNamespace(
+        shutdown=lambda owned_gateway, scyjava: events.append(
+            ("runtime_shutdown", (owned_gateway, scyjava))
+        )
+    )
+    monkeypatch.setitem(sys.modules, "scyjava", scyjava_module)
+    monkeypatch.setattr(
+        fiji_viewer_server_module,
+        "FIJI_IMAGEJ_RUNTIME",
+        runtime_policy,
+    )
+    monkeypatch.setattr(
+        StreamingVisualizerServer,
+        "stop",
+        lambda _server: events.append(("transport_stopped", None)),
+    )
+    server = object.__new__(FijiViewerServer)
+    server.ij = gateway
+
+    server.stop()
+    server.stop()
+
+    assert [event for event, _payload in events] == [
+        "transport_stopped",
+        "runtime_shutdown",
+        "transport_stopped",
+    ]
+    assert events[1][1] == (gateway, scyjava_module)
+    assert server.ij is None
+
+
 def test_fiji_control_dispatch_registry_is_module_local_and_eager() -> None:
     registry = FijiControlMessagePlan.__registry__
 

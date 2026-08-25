@@ -1942,6 +1942,19 @@ class FijiViewerServer(StreamingVisualizerServer):
 
         super().start()
 
+    def stop(self) -> None:
+        """Stop transport resources, then close the process-owned ImageJ JVM."""
+
+        gateway = self.ij
+        self.ij = None
+        try:
+            super().stop()
+        finally:
+            if gateway is not None:
+                import scyjava as sj
+
+                FIJI_IMAGEJ_RUNTIME.shutdown(gateway, sj)
+
     def handle_control_message(
         self,
         message: Mapping[str, FijiWireValue],
@@ -2977,6 +2990,7 @@ def fiji_viewer_server_process(
         transport_mode: ZMQ transport mode (IPC or TCP)
         zmq_config: ZMQ configuration object (optional, uses default if None)
     """
+    server = None
     try:
         import zmq
 
@@ -3054,7 +3068,6 @@ def fiji_viewer_server_process(
             time.sleep(0.001)  # 1ms sleep - faster polling for multiprocessing
 
         logger.info("🔬 FIJI SERVER: Shutting down...")
-        server.stop()
 
     except Exception as e:
         logger.error(f"🔬 FIJI SERVER: Error: {e}")
@@ -3062,4 +3075,8 @@ def fiji_viewer_server_process(
 
         traceback.print_exc()
     finally:
-        logger.info("🔬 FIJI SERVER: Process terminated")
+        try:
+            if server is not None:
+                server.stop()
+        finally:
+            logger.info("🔬 FIJI SERVER: Process terminated")

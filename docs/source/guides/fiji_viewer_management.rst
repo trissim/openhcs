@@ -29,8 +29,11 @@ Lifecycle
 ZMQRuntime owns generic readiness checks, control messages, acknowledgments, and
 process management. OpenHCS owns the Fiji entry point, ImageJ conversion, macro
 integration, and viewer-specific presentation. PolyStore owns selection of the
-compatible ImageJ runtime. Persistent viewers may be reused only after the
-control protocol confirms that the bound process is compatible.
+compatible ImageJ runtime and controlled gateway/JVM shutdown. The OpenHCS
+server delegates that shutdown after stopping its ZMQ transport, so Python
+interpreter finalization is not a second resource-lifecycle authority.
+Persistent viewers may be reused only after the control protocol confirms that
+the bound process is compatible.
 
 Settlement and inspection boundary
 ----------------------------------

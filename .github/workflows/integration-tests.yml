@@ -1917,7 +1917,7 @@ jobs:
                   f"{java_version}."
               )
           finally:
-              ij.getContext().dispose()
+              FIJI_IMAGEJ_RUNTIME.shutdown(ij, sj)
           PY
 
       - name: Run real Bio-Formats ImageXpress source smoke

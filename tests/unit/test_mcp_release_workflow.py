@@ -459,7 +459,7 @@ def test_real_viewer_smoke_validates_native_qt_and_prewarms_managed_fiji():
     assert "from polystore.imagej_runtime import FIJI_IMAGEJ_RUNTIME" in prewarm
     assert "FIJI_IMAGEJ_RUNTIME.initialize(" in prewarm
     assert 'getProperty("java.version")' in prewarm
-    assert "ij.getContext().dispose()" in prewarm
+    assert "FIJI_IMAGEJ_RUNTIME.shutdown(ij, sj)" in prewarm
 
     bioformats_smoke = steps[bioformats_index]["run"]
     assert "scripts/run_installed_tests.py" in bioformats_smoke

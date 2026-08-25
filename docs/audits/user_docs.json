@@ -152,7 +152,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
+        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -620,7 +620,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
+        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -792,7 +792,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
+        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -877,7 +877,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "accec40f4cf6d6bcd78cffde88af3e2f2fd7f1aa4271905cd06e472fb285d008",
+        "sha256": "dd25d69d1c847b82421168edc15f47c0793116da22e7d68abd09fc14807b35b6",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -1267,7 +1267,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
+        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1603,7 +1603,7 @@
   },
   {
     "path": "docs/source/guides/fiji_viewer_management.rst",
-    "source_sha256": "ec420682982ac2f60c209e8001c772048ac3344b0c52f2ad1abfc2962b23e898",
+    "source_sha256": "43f0e1f0effa40bf1a1efe18ac3efe8da0a184ad746da086b19f756f06178943",
     "audience": [
       "viewer integrators",
       "pipeline authors"
@@ -1613,7 +1613,7 @@
     "authority": [
       {
         "path": "openhcs/runtime/fiji_viewer_server.py",
-        "sha256": "b769112773a88ad70d00139d241eb07525efab7bb96dcfe160f589b72546b2b9",
+        "sha256": "ff555a56474ba7ee4a8a95afeb42b76ba0d535199e7190bf50b16ed7412605f2",
         "role": "Implements Fiji stream reception, image-stack updates, ROI handling, and endpoint lifecycle."
       },
       {
@@ -1628,7 +1628,7 @@
       },
       {
         "path": "tests/unit/test_fiji_viewer_server.py",
-        "sha256": "a43201b3baadc4c5356fd06df47adb31223fbc348eb8bbf638afa22dd540e927",
+        "sha256": "20b63d8d161e68a8de16d86999a87f8a1a85de35a2bcb820f56c233c43a1ec8d",
         "role": "Proves Fiji endpoint lifecycle, streamed image updates, and ROI message handling."
       }
     ],
@@ -1867,7 +1867,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
+        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1966,7 +1966,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "d4f61444a45692d434ca6c5d52a38b1c7123be5272fcc30f042e97c556197906",
+    "source_sha256": "31925541629313e5c6ab188589982fda0f48d4bcd827fee22d0881f7d173e88f",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -1986,7 +1986,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "accec40f4cf6d6bcd78cffde88af3e2f2fd7f1aa4271905cd06e472fb285d008",
+        "sha256": "dd25d69d1c847b82421168edc15f47c0793116da22e7d68abd09fc14807b35b6",
         "role": "Defines the operating-system integration matrix, dependency setup, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
@@ -2170,7 +2170,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
+        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2635,7 +2635,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
+        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -3055,7 +3055,7 @@
       },
       {
         "path": "openhcs/runtime/fiji_viewer_server.py",
-        "sha256": "b769112773a88ad70d00139d241eb07525efab7bb96dcfe160f589b72546b2b9",
+        "sha256": "ff555a56474ba7ee4a8a95afeb42b76ba0d535199e7190bf50b16ed7412605f2",
         "role": "Implements Fiji stream reception, image-stack updates, ROI handling, and endpoint lifecycle."
       },
       {
@@ -3065,7 +3065,7 @@
       },
       {
         "path": "tests/unit/test_fiji_viewer_server.py",
-        "sha256": "a43201b3baadc4c5356fd06df47adb31223fbc348eb8bbf638afa22dd540e927",
+        "sha256": "20b63d8d161e68a8de16d86999a87f8a1a85de35a2bcb820f56c233c43a1ec8d",
         "role": "Proves Fiji endpoint lifecycle, streamed image updates, and ROI message handling."
       },
       {

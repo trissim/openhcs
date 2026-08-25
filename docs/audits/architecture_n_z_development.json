@@ -1262,7 +1262,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
+        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1425,7 +1425,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
+        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1473,7 +1473,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
+        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -2212,7 +2212,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
+        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2285,7 +2285,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
+        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2320,7 +2320,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
+        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2543,7 +2543,7 @@
       },
       {
         "path": "tests/unit/test_mcp_release_workflow.py",
-        "sha256": "a77c71659f62890b0279a138b509c624b1b0e3e2c86b0499e6f8fc9239045bc2",
+        "sha256": "19eb5f7d959fad14a1a91e133b672a80202a8bd46d103144f270d55e7f04e147",
         "role": "Proves immutable tag resolution, exact-SHA checkout, publication ordering, recovery, and Registry policy."
       },
       {
@@ -2553,7 +2553,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "accec40f4cf6d6bcd78cffde88af3e2f2fd7f1aa4271905cd06e472fb285d008",
+        "sha256": "dd25d69d1c847b82421168edc15f47c0793116da22e7d68abd09fc14807b35b6",
         "role": "Cross-platform release-candidate dependency-readiness, installer, signing-helper parse, and staged-update validation matrix."
       },
       {
@@ -2690,7 +2690,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
+        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2856,7 +2856,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "411449c35b17e15f0be31f8ed4509f69a693ba44c6a6d226ca51ec91c5fc4989",
+        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

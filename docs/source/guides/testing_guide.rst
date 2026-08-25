@@ -81,12 +81,12 @@ in scope on later pushes until it is corrected and the complete workflow
 succeeds. Pull requests use their base commit as the corresponding boundary.
 
 The standard execution matrix uses ``--it-visualizers none``. A separate Xvfb
-job initializes Fiji through PolyStore's declared managed ImageJ runtime. It
-opens a generated ImageXpress plate through the real Bio-Formats reader, then
-runs one manifest-owned Official30 case through Fiji-only and Fiji+Napari
-viewer paths. The bounded reader/viewer smoke complements the wider headless
-matrix; it does not make
-every backend and microscope combination a live-viewer test.
+job initializes and closes Fiji through PolyStore's declared managed ImageJ
+runtime. It opens a generated ImageXpress plate through the real Bio-Formats
+reader in three fresh processes, then runs one manifest-owned Official30 case
+through Fiji-only and Fiji+Napari viewer paths. The bounded reader/viewer smoke
+complements the wider headless matrix; it does not make every backend and
+microscope combination a live-viewer test.
 
 OMERO
 -----
