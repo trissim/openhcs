@@ -2549,7 +2549,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "45c6006c353199adf5d8bba988846139d10a68c052c2be6bf99b24b87a651e65",
+    "source_sha256": "e7432518d535c491f4799383e4cc72b29a5be01a02ddbf993e9236d6680db7e8",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2593,7 +2593,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "dd25d69d1c847b82421168edc15f47c0793116da22e7d68abd09fc14807b35b6",
+        "sha256": "c16f8a3e35b6ba5b8bf58ebc04285c3dbea7c98eaee96ee8b345f897ab21807d",
         "role": "Cross-platform release-candidate dependency-readiness, installer, signing-helper parse, and staged-update validation matrix."
       },
       {
@@ -2643,7 +2643,8 @@
       "The per-push Python quality comparison could forget a red change after an unrelated follow-up push; it now retains changes since the most recent successful Integration Tests head.",
       "Local tagging, manual publication, and installer recovery were independent fail-open paths; one readiness authority and one immutable tag-resolution job now bind them to the same exact commit and CI evidence.",
       "PyPI recovery used --skip-existing, which could hide independently rebuilt artifact conflicts; existing release files now stop publication.",
-      "Workflow dependencies used movable major-version tags and deprecated Node 20 action releases; every external action now uses a current full-length commit pin maintained through grouped Dependabot updates."
+      "Workflow dependencies used movable major-version tags and deprecated Node 20 action releases; every external action now uses a current full-length commit pin maintained through grouped Dependabot updates.",
+      "Release-candidate installer lanes inherited workstation pip configuration and package indexes; native installation, reinstall, and staged update now suppress those external settings while CI injects an unreachable index as proof."
     ],
     "disposition": "revise",
     "validation": [
@@ -2662,7 +2663,9 @@
       "On 2026-08-24, re-read the complete release how-to against the 0.7.25 package authority and regenerated MCP metadata; the procedure still projects one version and requires exact-commit candidate evidence before tagging.",
       "On 2026-08-23, re-read the complete release how-to after the release command preserved Git's leading submodule status byte; the documented clean-recursive-submodule proof now matches the real command boundary.",
       "On 2026-08-24, re-read the complete release how-to against the 0.7.26 package authority and regenerated MCP metadata; its single-version and exact-commit publication procedure remains accurate.",
-      "On 2026-08-24, re-read the complete release how-to after every PyPI installation lane began consuming the readiness job's hash-pinned wheels and the macOS DMG lifecycle retained both backing and mounted-volume identities; 30 focused workflow and installer tests, shell parsing, YAML parsing, and documentation validation passed."
+      "On 2026-08-24, re-read the complete release how-to after every PyPI installation lane began consuming the readiness job's hash-pinned wheels and the macOS DMG lifecycle retained both backing and mounted-volume identities; 30 focused workflow and installer tests, shell parsing, YAML parsing, and documentation validation passed.",
+      "On 2026-08-25, re-read the complete release how-to against the native workflow after it began injecting an unreachable host pip index into Windows and macOS installer acceptance; the release-candidate section now records the gate without introducing a second package-source authority.",
+      "On 2026-08-25, the installer and detached-update regression boundary passed 88 tests; documentation validation passed 154 files, 24 Python blocks, and 153 audited sources; Sphinx rendered all 152 included sources with warnings treated as errors."
     ]
   },
   {

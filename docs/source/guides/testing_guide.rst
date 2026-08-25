@@ -75,6 +75,13 @@ the packaged restart worker against a real short-lived parent process and
 requires its detached restart command to execute from the installed
 environment.
 
+The native installer jobs deliberately provide an unreachable pip
+configuration file and unreachable primary and extra index overrides. Windows
+installation and reinstall, macOS installation, and the staged-update worker
+must complete without contacting that injected index. This proves that a
+workstation's package-index settings cannot redirect a managed desktop
+installation.
+
 On ``main``, the Python quality job checks the cumulative change set since the
 most recent successful Integration Tests head. A failed Python change remains
 in scope on later pushes until it is corrected and the complete workflow

@@ -784,7 +784,7 @@
   },
   {
     "path": "docs/source/getting_started/getting_started.rst",
-    "source_sha256": "19a44bd64d85d77d6c32d9538730d6047211f8e94f5e6e7dfb0865b341571e89",
+    "source_sha256": "4c64f98acc993e55d1d01f4f6a6797e1e7b9c6eaac4ca2e1b6f47cc1ee886309",
     "audience": [
       "new desktop users",
       "Python installers"
@@ -819,12 +819,12 @@
       },
       {
         "path": "packaging/installers/windows/Install-OpenHCS.ps1",
-        "sha256": "3097f5fd8b6e10cd77b642c8ff37ec5a00f3e03b48780010c731fe0aa206ead3",
+        "sha256": "09efa25265bcc66d632f59b7cf2b15d8039da6f24288baa18d4b0a8a70c28307",
         "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
       },
       {
         "path": "packaging/installers/macos/install-openhcs.sh",
-        "sha256": "47f603c62a2ea01f9b1aa5c326935a043d0953ae24f1e3b99e1c60fbeb755cbe",
+        "sha256": "84a98fe7a7c6ef7d191bbd5d13982915431c76395f78fe68f9212517a9416e35",
         "role": "Implements the macOS application installer, managed environment creation, package installation, and launcher setup."
       },
       {
@@ -854,7 +854,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/desktop_update_worker.py",
-        "sha256": "c578bfb825516b5121052261b9a0af052ce6724139cfd39d4e32ea18f69bfe92",
+        "sha256": "0146bc40eccab245ec35e3c087f8d071d975874fb3c0c8806e43e40228b7c23d",
         "role": "Creates and verifies a sibling replacement environment before publishing it and preserves the previous environment."
       },
       {
@@ -874,12 +874,12 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_desktop_update_worker.py",
-        "sha256": "d3a9913249116861c5855c91759f6007ac2169fcbf6b03a292082244dae0db24",
+        "sha256": "22e6fae508738b23e0f81c82047ba342bb36aba3d0611015513982841c0ed2a9",
         "role": "Proves staged installation, verification, publication, rollback, and restart behaviour."
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "dd25d69d1c847b82421168edc15f47c0793116da22e7d68abd09fc14807b35b6",
+        "sha256": "c16f8a3e35b6ba5b8bf58ebc04285c3dbea7c98eaee96ee8b345f897ab21807d",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -890,7 +890,8 @@
     ],
     "findings": [
       "The update migration needed staged-update implementation and CI evidence; the macOS recovery sequence now preserves the actionable Open Anyway control label while linking Apple's current guidance.",
-      "The Windows update path now preserves a valid live stable launcher, publishes the verified sibling environment, and retries the deferred launcher cache after the process releases it."
+      "The Windows update path now preserves a valid live stable launcher, publishes the verified sibling environment, and retries the deferred launcher cache after the process releases it.",
+      "Workstation pip configuration could redirect or stall native installation and staged updates; each managed mutation path now suppresses pip configuration files and inherited primary and extra index overrides, and native CI injects an unreachable index to prove that boundary."
     ],
     "disposition": "revise",
     "validation": [
@@ -913,7 +914,9 @@
       "On 2026-08-23, re-read the complete installation how-to after the installed-desktop verifier began exercising the packaged restart worker against a real parent-exit and detached-relaunch subprocess; its launch and recovery claims remain accurate.",
       "On 2026-08-23, re-read the installation how-to after separating source-contract tests from installed-package restart acceptance; the 65-test source suite proves orchestration, while each native installer invokes the real verifier only after publishing its managed environment.",
       "On 2026-08-24, re-read the complete installation how-to after the startup and update progress injection boundaries moved from structural Protocols to explicit ABCs; documented behavior remains unchanged, and 75 focused launch and update tests passed.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-25, re-read the complete installation how-to against the Windows and macOS installers, detached update worker, focused regressions, and hostile-index native CI fixture; added practical guidance for managed desktop installs without changing the separate manual-pip procedure.",
+      "On 2026-08-25, the installer and detached-update regression boundary passed 88 tests; documentation validation passed 154 files, 24 Python blocks, and 153 audited sources; Sphinx rendered all 152 included sources with warnings treated as errors."
     ]
   },
   {
@@ -1279,12 +1282,12 @@
       },
       {
         "path": "packaging/installers/windows/Install-OpenHCS.ps1",
-        "sha256": "3097f5fd8b6e10cd77b642c8ff37ec5a00f3e03b48780010c731fe0aa206ead3",
+        "sha256": "09efa25265bcc66d632f59b7cf2b15d8039da6f24288baa18d4b0a8a70c28307",
         "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
       },
       {
         "path": "packaging/installers/macos/install-openhcs.sh",
-        "sha256": "47f603c62a2ea01f9b1aa5c326935a043d0953ae24f1e3b99e1c60fbeb755cbe",
+        "sha256": "84a98fe7a7c6ef7d191bbd5d13982915431c76395f78fe68f9212517a9416e35",
         "role": "Implements the macOS application installer, managed environment creation, package installation, and launcher setup."
       }
     ],
@@ -1300,7 +1303,9 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-25, re-read the complete compatibility page after both native installers changed their package-index isolation; retaining one redirect remains correct and avoids a second installation procedure.",
+      "On 2026-08-25, documentation validation and the warning-clean Sphinx build passed with the compatibility redirect intact."
     ]
   },
   {
@@ -1970,7 +1975,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "31925541629313e5c6ab188589982fda0f48d4bcd827fee22d0881f7d173e88f",
+    "source_sha256": "2ab6e5330502326d54d9bc10a24ab1bdb9326849f829264d230e0cf76196c745",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -1990,7 +1995,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "dd25d69d1c847b82421168edc15f47c0793116da22e7d68abd09fc14807b35b6",
+        "sha256": "c16f8a3e35b6ba5b8bf58ebc04285c3dbea7c98eaee96ee8b345f897ab21807d",
         "role": "Defines the operating-system integration matrix, dependency setup, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
@@ -2042,7 +2047,8 @@
       "The changed-Python quality gate could forget a failed file on the next push; the guide now records the cumulative successful-head boundary.",
       "The combined report omitted the foundational unit/core and maintained GUI source gates, and its description implied coverage from uninstrumented jobs; both source gates now emit fail-closed artifacts and the guide names the report's exact evidence boundary.",
       "The native installer section did not record that each supported Windows/macOS architecture now exercises the packaged restart worker against a real parent exit and detached command.",
-      "The generated coverage README rendered its update command literally instead of recording when the report was produced; the workflow now appends an ISO 8601 UTC timestamp."
+      "The generated coverage README rendered its update command literally instead of recording when the report was produced; the workflow now appends an ISO 8601 UTC timestamp.",
+      "Native installer acceptance did not exercise hostile workstation pip index configuration; Windows installation and reinstall, macOS installation, and the staged updater now run while an unreachable index is injected."
     ],
     "disposition": "revise",
     "validation": [
@@ -2057,7 +2063,9 @@
       "On 2026-08-23, re-read the complete testing how-to after instrumenting the unit/core and maintained GUI source gates; 6,171 unit/core tests passed, and the maintained GUI suite completed with 12 passes and 13 expected skips while both jobs produced valid coverage databases.",
       "On 2026-08-23, re-read the complete testing how-to after the installed verifier gained a real parent-exit and detached-relaunch probe; the packaged restart worker now participates in Windows and both macOS installer acceptance paths.",
       "On 2026-08-23, re-read the testing how-to after validating the successful 75.98% combined report from all 23 instrumented artifacts and correcting its generated UTC timestamp; the page remains a focused how-to and accurately distinguishes coverage evidence from behavioural gates.",
-      "On 2026-08-23, re-read the testing how-to after CI exposed an installed-package probe in the pre-install contract phase; source tests now prove orchestration and the existing Windows and macOS installed phases remain the sole real subprocess acceptance boundary."
+      "On 2026-08-23, re-read the testing how-to after CI exposed an installed-package probe in the pre-install contract phase; source tests now prove orchestration and the existing Windows and macOS installed phases remain the sole real subprocess acceptance boundary.",
+      "On 2026-08-25, re-read the complete testing how-to against the native installer and staged-update jobs after they began injecting an unreachable host package index; the CI section now records this behavioural gate without copying implementation details.",
+      "On 2026-08-25, the installer and detached-update regression boundary passed 88 tests; documentation validation passed 154 files, 24 Python blocks, and 153 audited sources; Sphinx rendered all 152 included sources with warnings treated as errors."
     ]
   },
   {
@@ -2203,12 +2211,12 @@
       },
       {
         "path": "packaging/installers/windows/Install-OpenHCS.ps1",
-        "sha256": "3097f5fd8b6e10cd77b642c8ff37ec5a00f3e03b48780010c731fe0aa206ead3",
+        "sha256": "09efa25265bcc66d632f59b7cf2b15d8039da6f24288baa18d4b0a8a70c28307",
         "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
       },
       {
         "path": "packaging/installers/macos/install-openhcs.sh",
-        "sha256": "47f603c62a2ea01f9b1aa5c326935a043d0953ae24f1e3b99e1c60fbeb755cbe",
+        "sha256": "84a98fe7a7c6ef7d191bbd5d13982915431c76395f78fe68f9212517a9416e35",
         "role": "Implements the macOS application installer, managed environment creation, package installation, and launcher setup."
       }
     ],
@@ -2224,7 +2232,9 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-reviewed package metadata after ObjectState, python-introspect, and pyqt-reactive floors moved to 1.1.3, 0.1.10, and 0.2.11; existing product claims remained accurate.",
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-25, re-read the complete compatibility page after both native installers changed their package-index isolation; retaining one redirect remains correct and avoids duplicated installer behaviour.",
+      "On 2026-08-25, documentation validation and the warning-clean Sphinx build passed with the compatibility redirect intact."
     ]
   },
   {

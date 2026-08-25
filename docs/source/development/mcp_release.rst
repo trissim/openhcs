@@ -133,6 +133,12 @@ retains every change since the most recent successful Integration Tests head,
 so an unrelated follow-up commit cannot bypass a failed formatter or
 correctness check.
 
+The native installer lanes inject an unreachable workstation pip
+configuration and unreachable primary and extra index overrides. The Windows
+installation, reinstall, and staged-update paths and the macOS installation
+must complete without contacting that index, proving that release behaviour
+does not depend on a runner's package-index settings.
+
 Tag and publish
 ---------------
 

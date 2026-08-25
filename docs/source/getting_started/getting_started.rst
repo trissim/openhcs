@@ -22,6 +22,10 @@ The installer creates an isolated, user-scoped environment and includes the
 desktop GUI, local MCP server, CellProfiler compatibility, Bio-Formats, Napari,
 and Fiji/ImageJ. It does not require an existing Python installation.
 
+You do not need to remove package indexes configured for another Python
+project. The desktop installers and in-app updater ignore workstation pip
+configuration files and inherited primary or extra package-index overrides.
+
 Open the downloaded installer and follow the prompts. When installation
 finishes, launch **OpenHCS** from the created shortcut. The first Fiji launch
 downloads and caches its Java components, so it takes longer than later
