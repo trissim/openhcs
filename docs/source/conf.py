@@ -13,19 +13,19 @@
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-sys.path.insert(0, str(Path(__file__).resolve().parent / '_ext'))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "_ext"))
 
 from openhcs import __version__ as release
 
 # -- Project information -----------------------------------------------------
 
-project = 'OpenHCS'
-copyright = '2025, trissim'
-author = 'trissim'
+project = "OpenHCS"
+copyright = "2025, trissim"
+author = "trissim"
 
 # The short X.Y version
 version = ".".join(release.split(".")[:2])
@@ -36,41 +36,29 @@ version = ".".join(release.split(".")[:2])
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 extensions = [
-    'sphinx.ext.autodoc',
-    'sphinx.ext.viewcode',
-    'sphinx.ext.napoleon',
-    'sphinx.ext.intersphinx',
-    'sphinx.ext.mathjax',
-    'sphinx.ext.doctest',
-    'sphinx_rtd_theme',
-    'sphinx_toolbox.collapse',
-    'sphinx_design',
-    'openhcs_config_reference',
+    "sphinx.ext.autodoc",
+    "sphinx.ext.viewcode",
+    "sphinx.ext.napoleon",
+    "sphinx.ext.intersphinx",
+    "sphinx.ext.mathjax",
+    "sphinx.ext.doctest",
+    "sphinx_rtd_theme",
+    "sphinx_toolbox.collapse",
+    "sphinx_design",
+    "openhcs_config_reference",
 ]
 
 # Add any paths that contain templates here, relative to this directory.
-templates_path = ['_templates']
+templates_path = ["_templates"]
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path.
 # Archived pages are migration history, not current documentation.
-exclude_patterns = ['archive/**', '**/archive/**']
+exclude_patterns = ["archive/**", "**/archive/**"]
 
 # The name of the Pygments (syntax highlighting) style to use.
-pygments_style = 'sphinx'
-
-# -- Options for HTML output -------------------------------------------------
-
-# The theme to use for HTML and HTML Help pages.  See the documentation for
-# a list of builtin themes.
-#
-html_theme = 'sphinx_rtd_theme'
-
-# Add any paths that contain custom static files (such as style sheets) here,
-# relative to this directory. They are copied after the builtin static files,
-# so a file named "default.css" will overwrite the builtin "default.css".
-html_static_path = ['_static']
+pygments_style = "sphinx"
 
 # -- Extension configuration -------------------------------------------------
 
@@ -91,82 +79,77 @@ napoleon_type_aliases = None
 napoleon_attr_annotations = True
 
 # Intersphinx settings
-local_intersphinx_root = os.environ.get('OPENHCS_LOCAL_INTERSPHINX_ROOT')
+local_intersphinx_root = os.environ.get("OPENHCS_LOCAL_INTERSPHINX_ROOT")
 
 
 def first_party_inventory(owner: str):
     """Use the current CI-built inventory when available, else fetch remotely."""
     if not local_intersphinx_root:
         return None
-    inventory = Path(local_intersphinx_root) / f'owner-docs-{owner}' / 'objects.inv'
+    inventory = Path(local_intersphinx_root) / f"owner-docs-{owner}" / "objects.inv"
     return str(inventory) if inventory.is_file() else None
 
 
 intersphinx_mapping = {
-    'python': ('https://docs.python.org/3', None),
-    'numpy': ('https://numpy.org/doc/stable/', None),
-    'scipy': ('https://docs.scipy.org/doc/scipy/', None),
-    'matplotlib': ('https://matplotlib.org/stable/', None),
-    'pandas': ('https://pandas.pydata.org/pandas-docs/stable/', None),
-    'scikit-image': ('https://scikit-image.org/docs/stable/', None),
-    'objectstate': (
-        'https://objectstate.readthedocs.io/en/latest/',
-        first_party_inventory('objectstate'),
+    "python": ("https://docs.python.org/3", None),
+    "numpy": ("https://numpy.org/doc/stable/", None),
+    "scipy": ("https://docs.scipy.org/doc/scipy/", None),
+    "matplotlib": ("https://matplotlib.org/stable/", None),
+    "pandas": ("https://pandas.pydata.org/pandas-docs/stable/", None),
+    "scikit-image": ("https://scikit-image.org/docs/stable/", None),
+    "objectstate": (
+        "https://objectstate.readthedocs.io/en/latest/",
+        first_party_inventory("objectstate"),
     ),
-    'arraybridge': (
-        'https://arraybridge.readthedocs.io/en/latest/',
-        first_party_inventory('arraybridge'),
+    "arraybridge": (
+        "https://arraybridge.readthedocs.io/en/latest/",
+        first_party_inventory("arraybridge"),
     ),
-    'metaclass-registry': (
-        'https://metaclass-registry.readthedocs.io/en/latest/',
-        first_party_inventory('metaclass-registry'),
+    "metaclass-registry": (
+        "https://metaclass-registry.readthedocs.io/en/latest/",
+        first_party_inventory("metaclass-registry"),
     ),
-    'polystore': (
-        'https://polystore.readthedocs.io/en/latest/',
-        first_party_inventory('polystore'),
+    "polystore": (
+        "https://polystore.readthedocs.io/en/latest/",
+        first_party_inventory("polystore"),
     ),
-    'pyqt-reactive': (
-        'https://pyqt-reactive.readthedocs.io/en/latest/',
-        first_party_inventory('pyqt-reactive'),
+    "pyqt-reactive": (
+        "https://pyqt-reactive.readthedocs.io/en/latest/",
+        first_party_inventory("pyqt-reactive"),
     ),
 }
 
 # Autodoc settings
 autodoc_default_options = {
-    'members': True,
-    'member-order': 'bysource',
-    'special-members': '__init__',
-    'undoc-members': True,
-    'exclude-members': '__weakref__'
+    "members": True,
+    "member-order": "bysource",
+    "special-members": "__init__",
+    "undoc-members": True,
+    "exclude-members": "__weakref__",
 }
 
 # -- Options for HTML output -------------------------------------------------
 
 # The theme to use for HTML and HTML Help pages.
-html_theme = 'sphinx_rtd_theme'
+html_theme = "sphinx_rtd_theme"
 
 # Theme options
 html_theme_options = {
-    'navigation_depth': 4,
-    'titles_only': False,
-    'logo_only': False,
+    "navigation_depth": 4,
+    "titles_only": False,
+    "logo_only": False,
 }
-
-# Add any paths that contain custom static files (such as style sheets) here,
-# relative to this directory. They are copied after the builtin static files,
-# so a file named "default.css" will overwrite the builtin "default.css".
-html_static_path = ['_static']
 
 # Custom sidebar templates, must be a dictionary that maps document names
 # to template names.
 html_sidebars = {
-    '**': [
-        'relations.html',  # needs 'show_related': True theme option to display
-        'searchbox.html',
+    "**": [
+        "relations.html",  # needs 'show_related': True theme option to display
+        "searchbox.html",
     ]
 }
 
 # -- Options for HTMLHelp output ---------------------------------------------
 
 # Output file base name for HTML help builder.
-htmlhelp_basename = 'OpenHCSdoc'
+htmlhelp_basename = "OpenHCSdoc"

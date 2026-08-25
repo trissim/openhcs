@@ -124,7 +124,7 @@
       },
       {
         "path": "docs/source/conf.py",
-        "sha256": "89dee042394e5e44cc033a30a55bc637f490e7066d15aea0c1eccdf4fddf70b9",
+        "sha256": "99a3256293f8f9d28e86d03d13fb242544c233b0573db30903fd71d85aead1b2",
         "role": "Registers the active Sphinx extensions and documentation build configuration that expose the appendix navigation."
       }
     ],
@@ -133,7 +133,8 @@
     "validation": [
       "Reviewed docs/source/appendices/index.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/artifacts.py; docs/source/conf.py.",
-      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/appendices`: documentation validation passed: 3 files, 0 Python blocks."
+      "Passed `.venv/bin/python scripts/validate_docs.py docs/source/appendices`: documentation validation passed: 3 files, 0 Python blocks.",
+      "On 2026-08-25, re-read the complete reference after removing unreferenced legacy static media and duplicate Sphinx configuration; appendix navigation remains unchanged."
     ]
   },
   {
