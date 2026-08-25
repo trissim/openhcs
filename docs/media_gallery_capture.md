@@ -267,8 +267,14 @@ catalog with:
 python -m scripts.capture_media_gallery catalog
 ```
 
-After accepted assets change, regenerate the checked-in checksum projection and
-verify it exactly:
+The checked-in release record is also the zero-dependency website projection.
+Each scenario leaf supplies its card copy, accessibility text, layout, capture
+target, derivative contract, and release evidence. The website
+builder reads the generated projection without importing OpenHCS, so deployment
+cannot acquire a second gallery inventory.
+
+After a declaration or accepted asset changes, regenerate the checked-in
+projection and verify it exactly:
 
 ```bash
 python -m scripts.gallery_catalog

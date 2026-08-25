@@ -9,6 +9,7 @@ on:
       - "scripts/build_website.py"
       - "scripts/capture_media_gallery.py"
       - "scripts/gallery_catalog.py"
+      - "scripts/website_gallery_projection.py"
       - "docs/media_gallery_capture.md"
       - "tests/unit/test_build_website.py"
       - "tests/unit/test_capture_media_gallery.py"
@@ -23,6 +24,7 @@ on:
       - "scripts/build_website.py"
       - "scripts/capture_media_gallery.py"
       - "scripts/gallery_catalog.py"
+      - "scripts/website_gallery_projection.py"
       - "docs/media_gallery_capture.md"
       - "tests/unit/test_build_website.py"
       - "tests/unit/test_capture_media_gallery.py"
@@ -82,12 +84,6 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-
-      - name: Install gallery declaration dependency
-        run: >-
-          python -m pip install
-          "python-introspect>=0.1.11"
-          "metaclass-registry>=0.2.0,<0.3"
 
       - name: Build landing page artifact
         run: python -m scripts.build_website --output _site

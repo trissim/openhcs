@@ -14,6 +14,7 @@ from openhcs import __version__ as OPENHCS_VERSION
 from scripts.build_website import (
     ASSET_SOURCES,
     CONTACT_EMAIL_TOKEN,
+    GALLERY_RECORD_RELATIVE_PATH,
     MCP_CLIENT_MARKS_TOKEN,
     RELEASE_VERSION_TOKEN,
     build_site,
@@ -23,18 +24,25 @@ from scripts.build_website import (
     validate_site,
 )
 from scripts.gallery_catalog import (
-    GALLERY_CARDS_TOKEN,
-    GALLERY_PROVENANCE_TOKEN,
     RELEASE_MEDIA_SCHEMA_VERSION,
     GalleryScenarioABC,
     GalleryScenarioCatalog,
     OpenHCSGalleryScenarioCatalog,
-    gallery_published_paths,
     gallery_release_record_text,
     gallery_scenarios,
 )
+from scripts.website_gallery_projection import (
+    GALLERY_CARDS_TOKEN,
+    GALLERY_PROVENANCE_TOKEN,
+    read_website_gallery_projection,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _gallery_projection():
+    record_path = REPO_ROOT / "website" / GALLERY_RECORD_RELATIVE_PATH
+    return read_website_gallery_projection(record_path)
 
 
 def test_gallery_sequence_is_composed_from_declaration_mro() -> None:
@@ -50,13 +58,9 @@ def test_gallery_sequence_is_composed_from_declaration_mro() -> None:
         pass
 
     assert ExtendedGallery.scenarios() == (workspace, pipeline)
-    assert tuple(scenario.scenario_id for scenario in gallery_scenarios()) == (
-        "multi-plate-overview",
-        "pipeline-editor",
-        "lazy-inheritance",
-        "fiji-review",
-        "zmq-startup-compile",
-        "napari-roi-navigation",
+    projection = _gallery_projection()
+    assert tuple(scenario.scenario_id for scenario in gallery_scenarios()) == tuple(
+        card.scenario_id for card in projection.cards
     )
     assert all(
         tuple(
@@ -581,6 +585,7 @@ def test_agent_workflow_evidence_record_matches_published_assets():
 
 def test_release_gallery_media_record_matches_published_assets():
     asset_root = REPO_ROOT / "website/assets/gallery"
+    projection = _gallery_projection()
     record = json.loads(
         (asset_root / "release-media-record.json").read_text(encoding="utf-8")
     )
@@ -594,21 +599,16 @@ def test_release_gallery_media_record_matches_published_assets():
     )
     assert record["capture_contract"]["mouse_visible"] is False
     assert set(record["capture_contract"]["source_formats"]) == {"FFV1", "PNG"}
-    assert {capture["id"] for capture in record["captures"]} == {
-        "multi-plate-overview",
-        "pipeline-editor",
-        "zmq-startup-compile",
-        "napari-roi-navigation",
-        "lazy-inheritance",
-        "fiji-review",
-    }
+    assert tuple(capture["id"] for capture in record["captures"]) == tuple(
+        card.scenario_id for card in projection.cards
+    )
     assert (
         tuple(
             published["path"]
             for capture in record["captures"]
             for published in capture["published"]
         )
-        == gallery_published_paths()
+        == projection.published_paths
     )
     for capture in record["captures"]:
         if capture["source"] is not None:
@@ -675,6 +675,7 @@ def test_public_pages_use_the_project_name_expansion():
 def test_gallery_uses_semantic_accessible_media_and_stable_paths(
     tmp_path: Path,
 ):
+    projection = _gallery_projection()
     source_html = (REPO_ROOT / "website/index.html").read_text(encoding="utf-8")
     assert source_html.count(GALLERY_CARDS_TOKEN) == 1
     assert source_html.count(GALLERY_PROVENANCE_TOKEN) == 1
@@ -688,20 +689,18 @@ def test_gallery_uses_semantic_accessible_media_and_stable_paths(
 
     assert 'href="#gallery"' in html
     assert 'aria-labelledby="gallery-title"' in html
-    assert "The 12-step Comet Assay uses OpenHCS compilation" in html
     assert "time-lapse" not in html
     assert "five-phase compilation" not in html
-    assert "Napari scrolls the table, highlights the native ROI" in html
-    assert "provenance link explicit in both directions" in html
-    assert "native outlines follow the" in html
     assert "BSD-3-Clause" in html
     assert (
         "https://github.com/CellProfiler/examples/tree/"
         "4972b59e670a4ae96c3d453803c92eeff378d054" in html
     )
-    assert collector.figures == len(gallery_scenarios())
+    for card in projection.cards:
+        assert card.rendered_html in html
+    assert collector.figures == len(projection.cards)
     assert collector.figcaptions == collector.figures
-    assert len(collector.images) == 6
+    assert len(collector.images) == len(projection.cards)
     for image in collector.images:
         assert image["src"].startswith("assets/gallery/")
         assert image["src"].endswith(".webp")
@@ -711,11 +710,15 @@ def test_gallery_uses_semantic_accessible_media_and_stable_paths(
         assert image.get("width", "").isdigit()
         assert image.get("height", "").isdigit()
 
-    motion_stems = (
-        "lazy-inheritance",
-        "zmq-startup-compile",
-        "napari-roi-navigation",
+    motion_cards = tuple(
+        card
+        for card in projection.cards
+        if any(
+            derivative.media_type.startswith("video/")
+            for derivative in card.derivatives
+        )
     )
+    motion_stems = tuple(card.scenario_id for card in motion_cards)
     assert len(collector.videos) == len(motion_stems)
     for video in collector.videos:
         for boolean_attribute in ("controls", "muted", "loop", "playsinline"):
@@ -732,7 +735,10 @@ def test_gallery_uses_semantic_accessible_media_and_stable_paths(
         motion_stems
     )
     assert [source["type"] for source in collector.sources] == [
-        media_type for _ in motion_stems for media_type in ("video/webm", "video/mp4")
+        derivative.media_type
+        for card in motion_cards
+        for derivative in card.derivatives
+        if derivative.media_type.startswith("video/")
     ]
 
     full_resolution_targets = {

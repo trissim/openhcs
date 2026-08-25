@@ -14,13 +14,11 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from scripts.gallery_catalog import (
+from scripts.website_gallery_projection import (
     GALLERY_CARDS_TOKEN,
     GALLERY_PROVENANCE_TOKEN,
-    RELEASE_MEDIA_RECORD_NAME,
-    gallery_published_paths,
     project_gallery_markup,
-    synchronize_gallery_release_record,
+    read_website_gallery_projection,
 )
 
 HTML_SOURCE_FILES = (
@@ -77,6 +75,7 @@ CONTACT_EMAIL_TOKEN = "{{ OPENHCS_CONTACT_EMAIL }}"
 MCP_CLIENT_MARKS_TOKEN = "{{ MCP_CLIENT_MARKS }}"
 MCP_CLIENT_REGISTRATION_SOURCE = "openhcs/mcp/client_registration.py"
 MCP_CLIENT_TARGET_ID_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+GALLERY_RECORD_RELATIVE_PATH = "assets/gallery/release-media-record.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -429,8 +428,9 @@ def build_site(repo_root: Path, output_dir: Path) -> tuple[str, ...]:
     """Stage the website and its authoritative assets into ``output_dir``."""
 
     repo_root = repo_root.resolve()
-    synchronize_gallery_release_record(repo_root, check=True)
     source_dir = repo_root / "website"
+    gallery_record_path = source_dir / GALLERY_RECORD_RELATIVE_PATH
+    gallery_projection = read_website_gallery_projection(gallery_record_path)
     output_dir = _safe_output(repo_root, output_dir)
     if output_dir.exists():
         if not output_dir.is_dir():
@@ -449,8 +449,8 @@ def build_site(repo_root: Path, output_dir: Path) -> tuple[str, ...]:
                 *(
                     f"assets/gallery/{path}"
                     for path in (
-                        *gallery_published_paths(),
-                        RELEASE_MEDIA_RECORD_NAME,
+                        *gallery_projection.published_paths,
+                        gallery_record_path.name,
                     )
                 ),
                 *(client.logo_path for client in mcp_clients),
@@ -473,7 +473,7 @@ def build_site(repo_root: Path, output_dir: Path) -> tuple[str, ...]:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
 
-    project_gallery_markup(output_dir / "index.html")
+    project_gallery_markup(output_dir / "index.html", gallery_projection)
     project_release_version(
         output_dir / "index.html",
         read_package_version(repo_root),

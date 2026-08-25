@@ -9,6 +9,7 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import Enum
 from html import escape
 from pathlib import Path
 from typing import ClassVar
@@ -19,15 +20,47 @@ from openhcs.agent.ui_bridge_identities import (
 )
 from openhcs.serialization.json import JsonValue, to_jsonable
 
-GALLERY_CARDS_TOKEN = "{{ OPENHCS_GALLERY_CARDS }}"
-GALLERY_PROVENANCE_TOKEN = "{{ OPENHCS_GALLERY_PROVENANCE }}"
-RELEASE_MEDIA_SCHEMA_VERSION = "openhcs.release-media.v3"
+RELEASE_MEDIA_SCHEMA_VERSION = "openhcs.release-media.v4"
 RELEASE_MEDIA_RECORD_NAME = "release-media-record.json"
 SCENARIO_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 class GalleryCatalogError(RuntimeError):
     """Raised when a gallery declaration or generated projection is invalid."""
+
+
+class GalleryDerivativeRole(Enum):
+    """Nominal role and filename suffix for one published derivative."""
+
+    IMAGE = ("image", "")
+    POSTER = ("poster", "-poster")
+    WEB_VIDEO = ("web_video", "")
+    FALLBACK_VIDEO = ("fallback_video", "")
+
+    def __new__(cls, value: str, filename_suffix: str):
+        member = object.__new__(cls)
+        member._value_ = value
+        member.filename_suffix = filename_suffix
+        return member
+
+    def path_for(self, scenario_id: str, media_type: GalleryMediaType) -> str:
+        """Return this role's declaration-derived asset path."""
+
+        return f"{scenario_id}{self.filename_suffix}{media_type.filename_suffix}"
+
+
+class GalleryMediaType(Enum):
+    """Nominal media type and filename suffix for a gallery derivative."""
+
+    WEBP = ("image/webp", ".webp")
+    WEBM = ("video/webm", ".webm")
+    MP4 = ("video/mp4", ".mp4")
+
+    def __new__(cls, value: str, filename_suffix: str):
+        member = object.__new__(cls)
+        member._value_ = value
+        member.filename_suffix = filename_suffix
+        return member
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,8 +184,23 @@ class FijiRoiScientificEvidence(GalleryScientificEvidenceABC):
 class GalleryPublishedAssetRecord:
     """One published derivative and its content identity."""
 
+    role: str
+    media_type: str
     path: str
     sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class GalleryDerivativeExpectation:
+    """One publication derivative required by a scenario media contract."""
+
+    role: GalleryDerivativeRole
+    media_type: GalleryMediaType
+
+    def path_for(self, scenario_id: str) -> str:
+        """Return the derivative path owned by its role and media type."""
+
+        return self.role.path_for(scenario_id, self.media_type)
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +217,7 @@ class GalleryScenarioReleaseRecord:
     """Release evidence projected from one scenario declaration."""
 
     id: str
+    website_card_html: str
     proof: str
     capture_target: GalleryCaptureTargetReleaseRecord
     source: GallerySourceEvidence | None
@@ -195,8 +244,8 @@ class GalleryScenarioABC(ABC):
     media_card_class: ClassVar[str | None] = None
 
     @abstractmethod
-    def published_paths(self) -> tuple[str, ...]:
-        """Return the complete public asset inventory for this scenario."""
+    def derivative_expectations(self) -> tuple[GalleryDerivativeExpectation, ...]:
+        """Return the complete derivative contract for this scenario."""
 
     @abstractmethod
     def render_media(self) -> str:
@@ -241,21 +290,49 @@ class GalleryScenarioABC(ABC):
             )
         )
 
+    def published_paths(self) -> tuple[str, ...]:
+        """Return paths derived from this scenario's derivative contract."""
+
+        return tuple(
+            derivative.path_for(self.scenario_id)
+            for derivative in self.derivative_expectations()
+        )
+
+    def derivative_path(self, role: GalleryDerivativeRole) -> str:
+        """Return the unique declared derivative path for one role."""
+
+        matches = tuple(
+            derivative.path_for(self.scenario_id)
+            for derivative in self.derivative_expectations()
+            if derivative.role is role
+        )
+        if len(matches) != 1:
+            raise GalleryCatalogError(
+                f"Gallery scenario {self.scenario_id!r} declares {len(matches)} "
+                f"derivatives for role {role.value!r}; expected one."
+            )
+        return matches[0]
+
     def release_record(self, asset_root: Path) -> GalleryScenarioReleaseRecord:
         """Project source, target, proof, and current published checksums."""
 
         return GalleryScenarioReleaseRecord(
             id=self.scenario_id,
+            website_card_html=self.render_card(),
             proof=self.proof,
             capture_target=self.capture_target.release_record(),
             source=self.source_evidence,
             scientific_evidence=self.scientific_evidence,
             published=tuple(
                 GalleryPublishedAssetRecord(
-                    path=path,
-                    sha256=_sha256_file(asset_root / path),
+                    role=derivative.role.value,
+                    media_type=derivative.media_type.value,
+                    path=derivative.path_for(self.scenario_id),
+                    sha256=_sha256_file(
+                        asset_root / derivative.path_for(self.scenario_id)
+                    ),
                 )
-                for path in self.published_paths()
+                for derivative in self.derivative_expectations()
             ),
         )
 
@@ -266,8 +343,13 @@ class StillGalleryScenarioABC(GalleryScenarioABC, ABC):
 
     open_aria_label: str
 
-    def published_paths(self) -> tuple[str, ...]:
-        return (f"{self.scenario_id}.webp",)
+    def derivative_expectations(self) -> tuple[GalleryDerivativeExpectation, ...]:
+        return (
+            GalleryDerivativeExpectation(
+                role=GalleryDerivativeRole.IMAGE,
+                media_type=GalleryMediaType.WEBP,
+            ),
+        )
 
     def render_media(self) -> str:
         asset_filename = self.published_paths()[0]
@@ -338,18 +420,35 @@ class MotionGalleryScenario(GalleryScenarioABC):
             "workflow, not a still-source capture."
         )
 
-    def published_paths(self) -> tuple[str, ...]:
+    def derivative_expectations(self) -> tuple[GalleryDerivativeExpectation, ...]:
         return (
-            f"{self.scenario_id}-poster.webp",
-            f"{self.scenario_id}.webm",
-            f"{self.scenario_id}.mp4",
+            GalleryDerivativeExpectation(
+                role=GalleryDerivativeRole.POSTER,
+                media_type=GalleryMediaType.WEBP,
+            ),
+            GalleryDerivativeExpectation(
+                role=GalleryDerivativeRole.WEB_VIDEO,
+                media_type=GalleryMediaType.WEBM,
+            ),
+            GalleryDerivativeExpectation(
+                role=GalleryDerivativeRole.FALLBACK_VIDEO,
+                media_type=GalleryMediaType.MP4,
+            ),
         )
 
     def caption_id_attribute(self) -> str:
         return f' id="{escape(self.scenario_id, quote=True)}-caption"'
 
     def render_media(self) -> str:
-        stem = escape(self.scenario_id, quote=True)
+        poster_path = escape(
+            self.derivative_path(GalleryDerivativeRole.POSTER), quote=True
+        )
+        web_video_path = escape(
+            self.derivative_path(GalleryDerivativeRole.WEB_VIDEO), quote=True
+        )
+        fallback_video_path = escape(
+            self.derivative_path(GalleryDerivativeRole.FALLBACK_VIDEO), quote=True
+        )
         caption_id = escape(f"{self.scenario_id}-caption", quote=True)
         return "\n".join(
             (
@@ -360,20 +459,20 @@ class MotionGalleryScenario(GalleryScenarioABC):
                 "                loop",
                 "                playsinline",
                 '                preload="metadata"',
-                f'                poster="assets/gallery/{stem}-poster.webp"',
+                f'                poster="assets/gallery/{poster_path}"',
                 f'                aria-describedby="{caption_id}"',
                 "              >",
-                f'                <source src="assets/gallery/{stem}.webm" type="video/webm">',
-                f'                <source src="assets/gallery/{stem}.mp4" type="video/mp4">',
-                f'                <a href="assets/gallery/{stem}.mp4">{escape(self.download_label)}</a>',
+                f'                <source src="assets/gallery/{web_video_path}" type="{GalleryMediaType.WEBM.value}">',
+                f'                <source src="assets/gallery/{fallback_video_path}" type="{GalleryMediaType.MP4.value}">',
+                f'                <a href="assets/gallery/{fallback_video_path}">{escape(self.download_label)}</a>',
                 "              </video>",
                 "              <a",
                 '                class="gallery-motion-fallback gallery-media-link"',
-                f'                href="assets/gallery/{stem}-poster.webp"',
+                f'                href="assets/gallery/{poster_path}"',
                 f'                aria-label="{escape(self.open_aria_label, quote=True)}"',
                 "              >",
                 "                <img",
-                f'                  src="assets/gallery/{stem}-poster.webp"',
+                f'                  src="assets/gallery/{poster_path}"',
                 f'                  width="{self.width}"',
                 f'                  height="{self.height}"',
                 '                  loading="lazy"',
@@ -704,6 +803,8 @@ class GalleryReleaseDeclaration(GalleryReleaseContext):
             schema_version=RELEASE_MEDIA_SCHEMA_VERSION,
             captured_at=self.captured_at,
             capture_contract=self.capture_contract,
+            dataset_attribution=self.dataset_attribution,
+            website_provenance_html=self.dataset_attribution.render_provenance(),
             captures=tuple(
                 scenario.release_record(asset_root) for scenario in gallery_scenarios()
             ),
@@ -715,6 +816,8 @@ class GalleryReleaseRecord(GalleryReleaseContext):
     """Complete nominal release-media record before JSON serialization."""
 
     schema_version: str
+    dataset_attribution: GalleryDatasetAttribution
+    website_provenance_html: str
     captures: tuple[GalleryScenarioReleaseRecord, ...]
 
 
@@ -770,32 +873,6 @@ def gallery_published_paths() -> tuple[str, ...]:
     return tuple(
         path for scenario in gallery_scenarios() for path in scenario.published_paths()
     )
-
-
-def render_gallery_cards() -> str:
-    """Render every website card from the nominal scenario declarations."""
-
-    return "\n\n".join(scenario.render_card() for scenario in gallery_scenarios())
-
-
-def project_gallery_markup(index_path: Path) -> None:
-    """Replace the two gallery tokens in one staged landing page."""
-
-    document = index_path.read_text(encoding="utf-8")
-    replacements = {
-        GALLERY_CARDS_TOKEN: render_gallery_cards(),
-        GALLERY_PROVENANCE_TOKEN: (
-            GALLERY_RELEASE.dataset_attribution.render_provenance()
-        ),
-    }
-    for token, rendered in replacements.items():
-        token_count = document.count(token)
-        if token_count != 1:
-            raise GalleryCatalogError(
-                f"Landing page must contain exactly one {token!r}; found {token_count}."
-            )
-        document = document.replace(token, rendered)
-    index_path.write_text(document, encoding="utf-8")
 
 
 def gallery_release_record(repo_root: Path) -> GalleryReleaseRecord:
