@@ -217,7 +217,7 @@
   },
   {
     "path": "docs/source/architecture/batch_workflow_service.rst",
-    "source_sha256": "9398ee4372bf884d0a6c0011a292debab15fa6a7972b31e9b8daab48592c1aa3",
+    "source_sha256": "9051ce949def7776ea93aae6a21536efee71fb04b52f82617e303db6aeedf689",
     "audience": [
       "OpenHCS desktop and execution-service maintainers"
     ],
@@ -246,8 +246,8 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "e58b97f67be471b41a08c3b17a4f6c6ac7662f26c572a75a348676df86888edb",
-        "role": "Coordinates deferred endpoint preparation, projects the browser-owned endpoint snapshot into both status-bar surfaces, and routes endpoint termination to the client lifecycle owner."
+        "sha256": "0daf856ef79f96398c68b33b2e8315ae814c61c6007618d6fb34d0386314e419",
+        "role": "Coordinates post-paint endpoint preparation, projects the browser-owned endpoint snapshot into both status-bar surfaces, and routes endpoint termination to the client lifecycle owner."
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/zmq_server_scan_service.py",
@@ -256,7 +256,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_main_zmq_window_routing.py",
-        "sha256": "994247011e2620070b67b1e05724fd59ea49544fb83297a640d176f47791a32c",
+        "sha256": "86dd4da7bd8fa3ca090ede6f4d3ff0eb82f8795cbfbee17fa46f4b0d1eda4915",
         "role": "Proves startup callbacks only commit observations, one snapshot drives status text and the indicator, and endpoint termination descends to the client lifecycle owner."
       },
       {
@@ -290,7 +290,8 @@
       "Passed 68 focused OpenHCS status, update, tree, and mirror regressions plus 10 generic pyqt-reactive browser lifecycle tests; warning-clean Sphinx rendered all 153 active pages.",
       "On 2026-08-22, rechecked the complete explanation after formatter-only changes to its status-routing regression; the snapshot-owned lifecycle claims remain unchanged.",
       "On 2026-08-23, re-read the complete explanation after catalogue preparation gained owned cancellation and joined shutdown; 53 focused catalogue, help, and plate-inspection regressions passed.",
-      "On 2026-08-24, re-read the complete explanation against ZMQRuntime 0.2.17 and the OpenHCS client teardown path; 149 generic tests, 58 focused OpenHCS regressions, and a fresh real-GUI close during endpoint startup passed without a retained process or false failure."
+      "On 2026-08-24, re-read the complete explanation against ZMQRuntime 0.2.17 and the OpenHCS client teardown path; 149 generic tests, 58 focused OpenHCS regressions, and a fresh real-GUI close during endpoint startup passed without a retained process or false failure.",
+      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; revised its startup wording and confirmed the remaining claims against current source and tests."
     ]
   },
   {
@@ -960,7 +961,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "e58b97f67be471b41a08c3b17a4f6c6ac7662f26c572a75a348676df86888edb",
+        "sha256": "0daf856ef79f96398c68b33b2e8315ae814c61c6007618d6fb34d0386314e419",
         "role": "Routes the desktop analysis action through ExperimentalAnalysisEngine rather than the deprecated wrapper."
       },
       {
@@ -979,7 +980,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/config.py; openhcs/processing/backends/experimental_analysis/unified_analysis_engine.py; openhcs/formats/experimental_result_formats.py; openhcs/pyqt_gui/main.py; tests/unit/test_experimental_analysis_engine.py.",
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate."
     ]
   },
   {

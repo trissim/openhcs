@@ -64,10 +64,10 @@ the saved baseline for the reconciled pipeline, steps, and nested function
 parameters; the Pipeline Editor does not require a separate Save action.
 
 The function browser reads the callable catalogue from the execution endpoint.
-The desktop prepares that endpoint and begins loading its catalogue during
-startup. If loading is still in progress when the browser opens, the browser
-remains responsive and displays the request state until the shared catalogue is
-ready.
+After the initialized main window appears, the desktop prepares that endpoint
+and begins loading its catalogue in the background. If loading is still in
+progress when the browser opens, the browser remains responsive and displays
+the request state until the shared catalogue is ready.
 
 Image and metadata browsing
 ---------------------------

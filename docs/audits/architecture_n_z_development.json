@@ -589,7 +589,7 @@
   },
   {
     "path": "docs/source/architecture/plate_manager_services.rst",
-    "source_sha256": "a391ff7a08e089d953b3fadf6dc886d0e95bf9b14e95ebc11a4b692bd581fe64",
+    "source_sha256": "7d32e878685ae798c0b1f65307001eb74e1922dd34dd267ac496e6848878513a",
     "audience": [
       "OpenHCS desktop workflow maintainers"
     ],
@@ -638,8 +638,8 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "e58b97f67be471b41a08c3b17a4f6c6ac7662f26c572a75a348676df86888edb",
-        "role": "Coordinates deferred endpoint preparation and callable-catalogue prewarming."
+        "sha256": "0daf856ef79f96398c68b33b2e8315ae814c61c6007618d6fb34d0386314e419",
+        "role": "Coordinates post-paint endpoint preparation and callable-catalogue prewarming."
       },
       {
         "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
@@ -668,7 +668,8 @@
       "On 2026-08-21, re-read the service reference against the reconciler, FunctionStep declaration authority, and repeated-step history regression.",
       "On 2026-08-23, re-read the complete reference after the catalogue projection began cancelling and joining its exact preparation worker; the endpoint remains the single catalogue authority.",
       "On 2026-08-24, re-read the complete reference against the unconditional client teardown path; 58 focused OpenHCS regressions and the real-GUI startup cancellation smoke passed with no retained endpoint process.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; revised its startup wording and confirmed the remaining claims against current source and tests."
     ]
   },
   {
@@ -1566,7 +1567,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "e58b97f67be471b41a08c3b17a4f6c6ac7662f26c572a75a348676df86888edb",
+        "sha256": "0daf856ef79f96398c68b33b2e8315ae814c61c6007618d6fb34d0386314e419",
         "role": "Desktop composition and live UIConfig application boundary."
       },
       {
@@ -1590,7 +1591,8 @@
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
+      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate."
     ]
   },
   {
@@ -1941,12 +1943,12 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "e58b97f67be471b41a08c3b17a4f6c6ac7662f26c572a75a348676df86888edb",
+        "sha256": "0daf856ef79f96398c68b33b2e8315ae814c61c6007618d6fb34d0386314e419",
         "role": "Projects the configured endpoint snapshot into central status text and the right-hand indicator, and routes endpoint termination to the client lifecycle owner."
       },
       {
         "path": "tests/unit/pyqt_gui/test_main_zmq_window_routing.py",
-        "sha256": "994247011e2620070b67b1e05724fd59ea49544fb83297a640d176f47791a32c",
+        "sha256": "86dd4da7bd8fa3ca090ede6f4d3ff0eb82f8795cbfbee17fa46f4b0d1eda4915",
         "role": "Proves startup callbacks do not write presentation directly, one snapshot drives every status-bar projection, and endpoint termination descends to the client lifecycle owner."
       },
       {
@@ -1983,7 +1985,8 @@
       "On 2026-08-22, re-read the complete reference against the generic snapshot owner, OpenHCS projection boundary, and focused snapshot-routing regression.",
       "Passed 68 focused OpenHCS status, update, tree, and mirror regressions plus 10 generic pyqt-reactive browser lifecycle tests; warning-clean Sphinx rendered all 153 active pages.",
       "On 2026-08-22, rechecked the complete reference after formatter-only changes to its status-routing regression; browser and presentation ownership remain unchanged.",
-      "On 2026-08-24, re-read the complete reference after launching-viewer rows became current snapshot projections with nominal endpoint-port identity; the focused browser regression proves payload refresh and removal without introducing a second lifecycle authority."
+      "On 2026-08-24, re-read the complete reference after launching-viewer rows became current snapshot projections with nominal endpoint-port identity; the focused browser regression proves payload refresh and removal without introducing a second lifecycle authority.",
+      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate."
     ]
   },
   {

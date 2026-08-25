@@ -73,8 +73,9 @@ Invariants
 - Code-document selection is proof-bearing apply authority. Applying a selected
   Plate Manager document preserves every unselected plate and rejects a payload
   whose plate IDs differ from the scope that was read.
-- Deferred desktop startup uses the batch workflow's persistent endpoint policy,
-  then prewarms the endpoint-owned callable catalogue without blocking Qt.
+- After the initialized desktop first paints, background startup uses the batch
+  workflow's persistent endpoint policy and then prewarms the endpoint-owned
+  callable catalogue without blocking Qt.
 - Cleanup removes listeners and timers owned by the workflow facade and retires
   both admitted clients and in-progress connection attempts through the same
   client owner.

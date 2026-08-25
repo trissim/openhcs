@@ -58,12 +58,12 @@ Function selector is still loading
 ----------------------------------
 
 The function catalogue is supplied by the execution server, which may need to
-import optional processing libraries the first time it starts. OpenHCS starts or
-attaches to the configured server and prewarms this catalogue during desktop
-startup. The selector remains interactive while the shared request completes
-and reports an endpoint error in its status line if loading fails. Inspect that
-error and the execution-server log rather than repeatedly reopening the
-selector.
+import optional processing libraries the first time it starts. After the main
+window appears, OpenHCS starts or attaches to the configured server and prewarms
+this catalogue in the background. The selector remains interactive while the
+shared request completes and reports an endpoint error in its status line if
+loading fails. Inspect that error and the execution-server log rather than
+repeatedly reopening the selector.
 
 Where are outputs?
 ------------------
