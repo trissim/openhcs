@@ -71,6 +71,13 @@ rendering evidence for agent orientation and UI diagnostics; semantic state
 continues to come from code documents, widget fields, state surfaces, and
 declared actions.
 
+Generic widget-tree projection applies its depth and node limits while visiting
+the live tree. pyqt-reactive presents visible siblings first within those bounds
+and retains each child's original Qt or item-model index as its path identity.
+OpenHCS transports that projection and resolves an action through the retained
+identity, independent of presentation order. An exact visible target therefore
+remains usable when another subtree or item model is truncated.
+
 Local client registration
 -------------------------
 

@@ -14,6 +14,7 @@ from pyqt_reactive.services.widget_tree_projection_config import (
     CompactFieldProjection,
     WidgetNodeIdentity,
     WidgetTreeProjectionControls,
+    WidgetTreeProjectionPolicy,
     always_project_compact_field,
     compact_dataclass_projection,
 )
@@ -1470,6 +1471,13 @@ class UiWidgetTreeRequest(
             raise ValueError("max_depth must be non-negative or None")
         if self.max_nodes is not None and self.max_nodes < 1:
             raise ValueError("max_nodes must be positive or None")
+
+    def as_projection_policy(self) -> WidgetTreeProjectionPolicy:
+        return WidgetTreeProjectionControls.as_projection_policy(
+            self,
+            maximum_depth=self.max_depth,
+            maximum_nodes=self.max_nodes,
+        )
 
     def as_tool_arguments(self) -> JsonObject:
         return {

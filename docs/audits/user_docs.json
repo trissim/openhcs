@@ -152,7 +152,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
+        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -620,7 +620,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
+        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -792,7 +792,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
+        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -951,7 +951,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "3481fd64aca3fe0b8fd580da9201be1dabde3b06e77e03860b9bf3650db0e9a4",
+        "sha256": "5480b844f065fcd62b5f7db88536bf6b1fe20021e9be9b86efb841d70d2ae1c1",
         "role": "Proves bidirectional UI-bridge inspection and mutation of live pipeline declarations."
       },
       {
@@ -1037,7 +1037,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "3481fd64aca3fe0b8fd580da9201be1dabde3b06e77e03860b9bf3650db0e9a4",
+        "sha256": "5480b844f065fcd62b5f7db88536bf6b1fe20021e9be9b86efb841d70d2ae1c1",
         "role": "Proves live field help reports the exact accepted inputs for enum-backed configuration fields."
       },
       {
@@ -1267,7 +1267,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
+        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1490,7 +1490,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "3481fd64aca3fe0b8fd580da9201be1dabde3b06e77e03860b9bf3650db0e9a4",
+        "sha256": "5480b844f065fcd62b5f7db88536bf6b1fe20021e9be9b86efb841d70d2ae1c1",
         "role": "Proves stale protocol and OpenHCS versions cannot reach running UI operations."
       }
     ],
@@ -1867,7 +1867,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
+        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -2170,7 +2170,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
+        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2546,7 +2546,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "3481fd64aca3fe0b8fd580da9201be1dabde3b06e77e03860b9bf3650db0e9a4",
+        "sha256": "5480b844f065fcd62b5f7db88536bf6b1fe20021e9be9b86efb841d70d2ae1c1",
         "role": "Proves bidirectional UI-bridge inspection, capability enforcement, semantic no-op handling, and mutation of live declarations."
       },
       {
@@ -2635,7 +2635,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
+        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -2939,7 +2939,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/reactor_providers.py",
-        "sha256": "fde09355ded9d67b40340dbce1c721125dca62b3cb16f26da21955b70325c99f",
+        "sha256": "cf2d0225d5da96d7e4210703cd8a6b5dc0941ee80ce0cea2af0abec9ec729ffb",
         "role": "Registers the log, process, status, and execution reactors consumed by desktop widgets."
       },
       {

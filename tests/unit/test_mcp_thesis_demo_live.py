@@ -737,6 +737,67 @@ def test_structured_tab_target_does_not_require_hidden_tab_content() -> None:
     assert (path_id, target_index) == ("0", 2)
 
 
+def test_artifact_tab_uses_its_exact_visible_target_when_sibling_models_are_bounded(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    ctx = rehearsal_context(tmp_path)
+    trees = iter(
+        (
+            {"actionable_widgets": []},
+            {
+                "tree_truncated": True,
+                "root": {
+                    "class_name": "DualEditorWindow",
+                    "visible": True,
+                    "children": [
+                        {
+                            "class_name": "QModelIndexLimit",
+                            "visible": False,
+                            "children": [],
+                        },
+                        {
+                            "class_name": demo.ArtifactPlanViewWidget.__name__,
+                            "visible": True,
+                            "children": [],
+                        },
+                    ],
+                },
+            },
+        )
+    )
+    monkeypatch.setattr(demo, "pipeline_step_scope_id", lambda *_args: "step-7")
+    monkeypatch.setattr(demo, "navigate_window", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        demo,
+        "tree_for_window",
+        lambda *_args, **_kwargs: next(trees),
+    )
+    monkeypatch.setattr(
+        demo,
+        "select_structured_tab",
+        lambda *_args, **_kwargs: ("1.0.0.0", 2),
+    )
+    monkeypatch.setattr(
+        demo,
+        "snapshot_window",
+        lambda *_args, **_kwargs: {"resource": {"path": "artifact.png"}},
+    )
+
+    result = demo.validate_artifact_tab(
+        ctx,
+        demo.DemoArtifactContracts(
+            function_id="cell-counting",
+            measurement_name="measurements.csv",
+            roi_name="rois.json",
+        ),
+        require_runtime_provenance=False,
+    )
+
+    assert result["window_id"] == "step-7"
+    assert result["snapshot"] == {"path": "artifact.png"}
+
+
 def test_component_selector_requests_full_bounded_tree(monkeypatch) -> None:
     calls = []
 
@@ -793,6 +854,18 @@ def test_component_selector_uses_function_editor_action_bar_structure() -> None:
     )
 
     assert action["path_id"] == "1.0.2"
+
+
+def test_component_selector_requires_the_nominal_dialog() -> None:
+    demo.require_component_selector_dialog(
+        {"root": {"class_name": demo.GroupBySelectorDialog.__name__}}
+    )
+
+    with pytest.raises(
+        demo.RehearsalFailure,
+        match="did not open a GroupBySelectorDialog",
+    ):
+        demo.require_component_selector_dialog({"root": {"class_name": "QMessageBox"}})
 
 
 def test_plate_viewer_tabs_derive_metadata_target_from_image_widget() -> None:

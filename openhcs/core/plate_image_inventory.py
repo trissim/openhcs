@@ -27,7 +27,7 @@ from openhcs.core.virtual_workspace_metadata import (
 )
 
 if TYPE_CHECKING:
-    from openhcs.core.orchestrator.orchestrator import Orchestrator
+    from openhcs.core.orchestrator import PipelineOrchestrator
     from openhcs.microscopes.microscope_interfaces import (
         AnalysisResultDirectory,
         FilenameParser,
@@ -91,7 +91,7 @@ class PlateImageInventory:
     @classmethod
     def from_orchestrator(
         cls,
-        orchestrator: "Orchestrator",
+        orchestrator: "PipelineOrchestrator",
         *,
         all_subdirs: bool = True,
     ) -> "PlateImageInventory":
@@ -246,9 +246,7 @@ class PlateImageInventory:
         resolved_source_metadata = (
             source_metadata
             if source_metadata is not None
-            else None
-            if projection is None
-            else projection.source_metadata_for(lookup)
+            else None if projection is None else projection.source_metadata_for(lookup)
         )
         metadata: dict[str, JsonValue] = {
             "filename": image_file,
@@ -493,8 +491,7 @@ class PlateResultFilePreviewReader:
             roi_area_max=max(areas) if areas else None,
             roi_area_mean=(sum(areas) / len(areas)) if areas else None,
             roi_examples=tuple(
-                cls._roi_example(roi)
-                for roi in semantic_rois[:bounded_examples]
+                cls._roi_example(roi) for roi in semantic_rois[:bounded_examples]
             ),
             truncated=len(semantic_rois) > bounded_examples,
         )
@@ -555,8 +552,7 @@ class PlateResultFilePreviewReader:
         lines: tuple[str, ...],
     ) -> tuple[tuple[str, ...], tuple[Mapping[str, str], ...]]:
         records = tuple(
-            PlateResultFilePreviewReader._csv_line_fields(line)
-            for line in lines
+            PlateResultFilePreviewReader._csv_line_fields(line) for line in lines
         )
         return PlateResultFilePreviewReader._csv_table_from_records(
             records,
@@ -570,10 +566,11 @@ class PlateResultFilePreviewReader:
         max_rows: int,
     ) -> tuple[tuple[str, ...], tuple[Mapping[str, str], ...]]:
         try:
-            with path.open("r", encoding="utf-8", errors="replace", newline="") as handle:
+            with path.open(
+                "r", encoding="utf-8", errors="replace", newline=""
+            ) as handle:
                 records = tuple(
-                    tuple(field.strip() for field in row)
-                    for row in csv.reader(handle)
+                    tuple(field.strip() for field in row) for row in csv.reader(handle)
                 )
         except csv.Error:
             return (), ()
@@ -636,7 +633,7 @@ class PlateResultFileInventory:
     @classmethod
     def from_orchestrator(
         cls,
-        orchestrator: "Orchestrator",
+        orchestrator: "PipelineOrchestrator",
     ) -> "PlateResultFileInventory":
         plate_path = Path(orchestrator.plate_path)
         handler = orchestrator.microscope_handler
@@ -745,7 +742,9 @@ class PlateResultFileInventory:
         return PlateResultFileInventory(
             plate_path=plate_path,
             records=tuple(
-                sorted(records_by_path.values(), key=lambda record: record.relative_path)
+                sorted(
+                    records_by_path.values(), key=lambda record: record.relative_path
+                )
             ),
             scanned_file_count=scanned_file_count,
         )
@@ -871,7 +870,7 @@ class PlateFileInventory:
     @classmethod
     def from_orchestrator(
         cls,
-        orchestrator: "Orchestrator",
+        orchestrator: "PipelineOrchestrator",
         *,
         all_subdirs: bool = True,
     ) -> "PlateFileInventory":
@@ -1215,9 +1214,7 @@ class PlateImageSampler:
                 if statistics_array.size
                 else None
             ),
-            mean=(
-                float(statistics_array.mean()) if statistics_array.size else None
-            ),
+            mean=(float(statistics_array.mean()) if statistics_array.size else None),
             sample_origin_yx=sample_origin_yx,
             sample_shape=tuple(int(value) for value in sample.shape),
             selected_resolution_index=selected_resolution_index,
@@ -1261,10 +1258,7 @@ def _jsonable_metadata_value(value) -> JsonValue:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     if isinstance(value, Mapping):
-        return {
-            str(key): _jsonable_metadata_value(item)
-            for key, item in value.items()
-        }
+        return {str(key): _jsonable_metadata_value(item) for key, item in value.items()}
     if isinstance(value, list | tuple):
         return tuple(_jsonable_metadata_value(item) for item in value)
     return str(value)

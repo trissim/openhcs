@@ -1257,9 +1257,10 @@ class UiWidgetPathResolver:
     ) -> WidgetDescriptor | None:
         current = descriptor
         for child_index in path:
-            if child_index >= len(current.children):
+            child = current.child_at_index(child_index)
+            if child is None:
                 return None
-            current = current.children[child_index]
+            current = child
         return current
 
     @staticmethod
@@ -1892,41 +1893,27 @@ class UiWidgetTreeResultFactory:
             field_semantics = _WidgetFieldSemanticContext.empty(summary.window_id)
         if item_semantics is None:
             item_semantics = _WidgetItemSemanticContext.empty()
-        tree_state = _WidgetTreeBoundState()
-        draft = cls._draft_node(
-            projection.root,
-            request=request,
-            state=tree_state,
-            depth=0,
-        )
         action_draft = cls._draft_node(
             projection.root,
-            request=replace(request, actionable_only=False),
-            state=_WidgetTreeBoundState(),
-            depth=0,
+            actionable_only=False,
         )
-        action_state = _WidgetTreeActionListState()
-        actionable_widgets: tuple[UiWidgetActionSummary, ...] = ()
-        actionable_count = 0
-        if action_draft is not None:
-            actionable_count = cls.included_action_summary_count(action_draft)
-            actionable_widgets = tuple(
-                cls.action_summaries_from_draft(
-                    action_draft,
-                    request=request,
-                    state=action_state,
-                    field_semantics=field_semantics,
-                    item_semantics=item_semantics,
-                )
+        assert action_draft is not None
+        draft = cls._draft_node(
+            projection.root,
+            actionable_only=request.actionable_only,
+        )
+        actionable_widgets = tuple(
+            cls.action_summaries_from_draft(
+                action_draft,
+                field_semantics=field_semantics,
+                item_semantics=item_semantics,
             )
-        returned_state = _WidgetTreeBoundState()
+        )
         root = None
+        returned_widget_count = 0
         if request.include_tree and draft is not None:
-            root = cls.node_from_draft(
-                draft,
-                request=request,
-                state=returned_state,
-            )
+            root = cls.node_from_draft(draft)
+            returned_widget_count = cls.included_node_count(draft)
         return UiWidgetTreeResult(
             schema_version=SCHEMA_VERSION,
             window_id=request.window_id,
@@ -1935,11 +1922,11 @@ class UiWidgetTreeResultFactory:
             actionable_widgets=actionable_widgets,
             summary=summary,
             widget_count=projection.widget_count,
-            actionable_count=actionable_count,
-            returned_widget_count=returned_state.returned_widget_count,
-            returned_actionable_count=action_state.returned_actionable_count,
-            tree_truncated=tree_state.truncated or returned_state.truncated,
-            actionable_widgets_truncated=action_state.truncated,
+            actionable_count=len(actionable_widgets),
+            returned_widget_count=returned_widget_count,
+            returned_actionable_count=len(actionable_widgets),
+            tree_truncated=projection.truncated,
+            actionable_widgets_truncated=projection.truncated,
             actionable_only=request.actionable_only,
             include_tree=request.include_tree,
             max_depth=request.max_depth,
@@ -1951,28 +1938,17 @@ class UiWidgetTreeResultFactory:
         cls,
         descriptor: WidgetDescriptor,
         *,
-        request: UiWidgetTreeRequest,
-        state: "_WidgetTreeBoundState",
-        depth: int,
+        actionable_only: bool,
     ) -> "_WidgetTreeNodeDraft | None":
         children: list[_WidgetTreeNodeDraft] = []
-        if request.max_depth is not None and depth >= request.max_depth:
-            if descriptor.children:
-                state.truncated = True
-        else:
-            for child in descriptor.children:
-                child_draft = cls._draft_node(
-                    child,
-                    request=request,
-                    state=state,
-                    depth=depth + 1,
-                )
-                if child_draft is not None:
-                    children.append(child_draft)
+        for child in descriptor.children:
+            child_draft = cls._draft_node(child, actionable_only=actionable_only)
+            if child_draft is not None:
+                children.append(child_draft)
 
         if (
-            depth > 0
-            and request.actionable_only
+            descriptor.path
+            and actionable_only
             and not descriptor.actionable
             and not children
         ):
@@ -1983,65 +1959,25 @@ class UiWidgetTreeResultFactory:
     def node_from_draft(
         cls,
         draft: "_WidgetTreeNodeDraft",
-        *,
-        request: UiWidgetTreeRequest,
-        state: "_WidgetTreeBoundState",
-    ) -> UiWidgetTreeNode | None:
-        if (
-            request.max_nodes is not None
-            and state.returned_widget_count >= request.max_nodes
-        ):
-            state.truncated = True
-            return None
-        state.returned_widget_count += 1
-
-        children: list[UiWidgetTreeNode] = []
-        for child in sorted(
-            draft.children,
-            key=lambda candidate: not candidate.descriptor.visible,
-        ):
-            child_node = cls.node_from_draft(child, request=request, state=state)
-            if child_node is not None:
-                children.append(child_node)
-            if (
-                request.max_nodes is not None
-                and state.returned_widget_count >= request.max_nodes
-            ):
-                if len(children) < len(draft.children):
-                    state.truncated = True
-                break
-        return cls.node(draft.descriptor, children=tuple(children))
+    ) -> UiWidgetTreeNode:
+        return cls.node(
+            draft.descriptor,
+            children=tuple(cls.node_from_draft(child) for child in draft.children),
+        )
 
     @classmethod
-    def included_action_summary_count(cls, draft: "_WidgetTreeNodeDraft") -> int:
-        count = 0
-        if draft.descriptor.actionable:
-            summary = cls.action_summary(draft.descriptor)
-            if UiWidgetActionSummaryPolicy.includes(summary):
-                count += 1
-        for child in draft.children:
-            count += cls.included_action_summary_count(child)
-        return count
+    def included_node_count(cls, draft: "_WidgetTreeNodeDraft") -> int:
+        return 1 + sum(cls.included_node_count(child) for child in draft.children)
 
     @classmethod
     def action_summaries_from_draft(
         cls,
         draft: "_WidgetTreeNodeDraft",
         *,
-        request: UiWidgetTreeRequest,
-        state: "_WidgetTreeActionListState",
         field_semantics: _WidgetFieldSemanticContext,
         item_semantics: _WidgetItemSemanticContext,
         ancestors: tuple["_WidgetTreeNodeDraft", ...] = (),
     ):
-        if (
-            draft.descriptor.actionable
-            and request.max_nodes is not None
-            and state.returned_actionable_count >= request.max_nodes
-        ):
-            state.truncated = True
-            return
-
         if draft.descriptor.actionable:
             summary = cls.action_summary(
                 draft.descriptor,
@@ -2050,25 +1986,15 @@ class UiWidgetTreeResultFactory:
                 item_semantics=item_semantics,
             )
             if UiWidgetActionSummaryPolicy.includes(summary):
-                state.returned_actionable_count += 1
                 yield summary
 
-        for child_index, child in enumerate(draft.children):
+        for child in draft.children:
             yield from cls.action_summaries_from_draft(
                 child,
-                request=request,
-                state=state,
                 field_semantics=field_semantics,
                 item_semantics=item_semantics,
                 ancestors=(*ancestors, draft),
             )
-            if (
-                request.max_nodes is not None
-                and state.returned_actionable_count >= request.max_nodes
-            ):
-                if child_index < len(draft.children) - 1:
-                    state.truncated = True
-                break
 
     @classmethod
     def action_summary(
@@ -2264,18 +2190,6 @@ class UiWidgetTreeResultFactory:
 class _WidgetTreeNodeDraft:
     descriptor: WidgetDescriptor
     children: tuple["_WidgetTreeNodeDraft", ...]
-
-
-@dataclass(slots=True)
-class _WidgetTreeBoundState:
-    returned_widget_count: int = 0
-    truncated: bool = False
-
-
-@dataclass(slots=True)
-class _WidgetTreeActionListState:
-    returned_actionable_count: int = 0
-    truncated: bool = False
 
 
 class FieldResetWidgetActionSummary:

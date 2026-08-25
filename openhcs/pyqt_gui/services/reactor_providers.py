@@ -40,7 +40,7 @@ from openhcs.pyqt_gui.services.function_catalog_projection import (
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
 if TYPE_CHECKING:
-    from openhcs.core.orchestrator.orchestrator import Orchestrator
+    from openhcs.core.orchestrator import PipelineOrchestrator
 
 DeclarationT = TypeVar("DeclarationT")
 
@@ -207,20 +207,18 @@ class OpenHCSComponentSelectionProvider(ComponentSelectionProviderABC):
 
         return ServiceRegistry.get(PlateManagerWidget)
 
-    def _get_current_orchestrator(self) -> Orchestrator | None:
+    def _get_current_orchestrator(self) -> PipelineOrchestrator | None:
         plate_manager = self._get_plate_manager()
         if plate_manager is None or not plate_manager.selected_plate_path:
             return None
 
         from objectstate import ObjectStateRegistry
 
-        from openhcs.core.orchestrator.orchestrator import (
-            Orchestrator,
-            OrchestratorState,
-        )
+        from openhcs.constants.constants import OrchestratorState
+        from openhcs.core.orchestrator import PipelineOrchestrator
 
         orchestrator = ObjectStateRegistry.get_object(plate_manager.selected_plate_path)
-        if not isinstance(orchestrator, Orchestrator):
+        if not isinstance(orchestrator, PipelineOrchestrator):
             return None
         if orchestrator.state is OrchestratorState.CREATED:
             return None

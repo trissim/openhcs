@@ -1262,7 +1262,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
+        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1425,7 +1425,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
+        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1473,7 +1473,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
+        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -2212,7 +2212,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
+        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2285,7 +2285,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
+        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2320,7 +2320,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
+        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2424,7 +2424,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_agent_bridge.py",
-        "sha256": "3481fd64aca3fe0b8fd580da9201be1dabde3b06e77e03860b9bf3650db0e9a4",
+        "sha256": "5480b844f065fcd62b5f7db88536bf6b1fe20021e9be9b86efb841d70d2ae1c1",
         "role": "Proves stale protocol and application versions fail before UI operation dispatch."
       },
       {
@@ -2690,7 +2690,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
+        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2856,7 +2856,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "55dff137024f7eba21687504ae32dc89bbc23dff963fab46e356b8da9d702cff",
+        "sha256": "2f719fd008fa2106f22d45c12da9f1ad785f8b87622c9ba5fa3a8631bfa7e1d0",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

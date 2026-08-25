@@ -26,6 +26,7 @@ import openhcs  # noqa: F401
 
 # isort: split
 
+from pyqt_reactive.dialogs.group_by_selector_dialog import GroupBySelectorDialog
 from pyqt_reactive.services.function_navigation import FunctionPatternField
 from pyqt_reactive.widgets.shared import DetachableActionBar, ManagedWindowAction
 from zmqruntime import (
@@ -3038,6 +3039,16 @@ def function_component_button_action(tree: Mapping[str, Any]) -> dict[str, Any]:
     return component_button
 
 
+def require_component_selector_dialog(tree: Mapping[str, Any]) -> None:
+    root = tree.get("root")
+    if not isinstance(root, dict):
+        raise RehearsalFailure("Component selector has no projected root widget.")
+    if root.get("class_name") != GroupBySelectorDialog.__name__:
+        raise RehearsalFailure(
+            "Component selector action did not open a GroupBySelectorDialog."
+        )
+
+
 def navigate_exact_field(
     ctx: RunContext,
     *,
@@ -3171,6 +3182,12 @@ def exercise_component_selector(
             f"Component-selector action created {len(created)} windows, expected one."
         )
     dialog_window_id = next(iter(created))
+    dialog_tree = tree_for_window(
+        ctx,
+        dialog_window_id,
+        label=f"{phase}_inspect_component_selector_dialog",
+    )
+    require_component_selector_dialog(dialog_tree)
     snapshot = snapshot_window(
         ctx,
         dialog_window_id,
@@ -4108,10 +4125,7 @@ def validate_artifact_tab(
         ctx,
         step_scope_id,
         label="inspect_selected_artifact_tab_structure",
-        max_nodes=2000,
     )
-    if selected_tree.get("tree_truncated") is True:
-        raise RehearsalFailure("Selected Artifact tab widget projection is truncated.")
     visible_artifact_nodes = [
         node
         for node in nested_widget_nodes(selected_tree)

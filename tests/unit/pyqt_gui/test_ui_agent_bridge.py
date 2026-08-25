@@ -1654,14 +1654,29 @@ def test_embedded_manager_window_summary_carries_shared_row_semantics() -> None:
         pipeline_editor.close()
 
 
-def test_widget_tree_projection_defaults_bound_actionable_paths() -> None:
+def test_widget_tree_request_projects_transport_bounds_into_live_traversal() -> None:
+    request = UiWidgetTreeRequest(
+        window_id="global_config",
+        open_policy=UiWindowOpenPolicy(),
+        max_depth=5,
+        max_nodes=17,
+    )
+
+    policy = request.as_projection_policy()
+
+    assert policy.maximum_depth == 5
+    assert policy.maximum_nodes == 17
+    assert policy.maximum_text_length == request.maximum_text_length
+    assert policy.maximum_item_model_nodes == request.maximum_item_model_nodes
+
+
+def test_widget_tree_result_filters_non_actionable_paths() -> None:
     def descriptor(
         path,
         *,
         class_name: str,
         text: str | None = None,
         actionable: bool = False,
-        visible: bool = True,
         children: tuple[WidgetDescriptor, ...] = (),
     ) -> WidgetDescriptor:
         return WidgetDescriptor(
@@ -1672,7 +1687,7 @@ def test_widget_tree_projection_defaults_bound_actionable_paths() -> None:
             object_name="",
             accessible_name="",
             accessible_description="",
-            visible=visible,
+            visible=True,
             enabled=True,
             geometry=WidgetRect(0, 0, 10, 10),
             global_geometry=WidgetRect(0, 0, 10, 10),
@@ -1719,7 +1734,7 @@ def test_widget_tree_projection_defaults_bound_actionable_paths() -> None:
         UiWidgetTreeRequest(
             window_id="global_config",
             open_policy=UiWindowOpenPolicy(),
-            max_nodes=3,
+            max_nodes=6,
         ),
         UiWindowSummary(
             schema_version="openhcs.agent.v1",
@@ -1742,12 +1757,29 @@ def test_widget_tree_projection_defaults_bound_actionable_paths() -> None:
     assert result.actionable_widgets_truncated is False
     assert [widget.label for widget in result.actionable_widgets] == ["Save", "Cancel"]
 
+    truncated_projection_result = UiWidgetTreeResultFactory.from_projection(
+        UiWidgetTreeRequest(
+            window_id="global_config",
+            open_policy=UiWindowOpenPolicy(),
+        ),
+        result.summary,
+        WidgetTreeProjection(
+            root=root,
+            widget_count=6,
+            actionable_count=2,
+            truncated=True,
+        ),
+    )
+
+    assert truncated_projection_result.tree_truncated is True
+    assert truncated_projection_result.actionable_widgets_truncated is True
+
     tree_result = UiWidgetTreeResultFactory.from_projection(
         UiWidgetTreeRequest(
             window_id="global_config",
             open_policy=UiWindowOpenPolicy(),
             include_tree=True,
-            max_nodes=3,
+            max_nodes=6,
         ),
         UiWindowSummary(
             schema_version="openhcs.agent.v1",
@@ -1761,38 +1793,13 @@ def test_widget_tree_projection_defaults_bound_actionable_paths() -> None:
         WidgetTreeProjection(root=root, widget_count=6, actionable_count=2),
     )
 
-    assert tree_result.returned_widget_count == 3
-    assert tree_result.tree_truncated is True
+    assert tree_result.returned_widget_count == 4
+    assert tree_result.tree_truncated is False
     assert tree_result.root is not None
     assert [child.class_name for child in tree_result.root.children] == ["QWidget"]
-    assert [child.text for child in tree_result.root.children[0].children] == ["Save"]
-
-    visible_first_result = UiWidgetTreeResultFactory.from_projection(
-        UiWidgetTreeRequest(
-            window_id="global_config",
-            open_policy=UiWindowOpenPolicy(),
-            actionable_only=False,
-            include_tree=True,
-            max_nodes=2,
-        ),
-        tree_result.summary,
-        WidgetTreeProjection(
-            root=descriptor(
-                (),
-                class_name="ConfigWindow",
-                children=(
-                    descriptor((0,), class_name="HiddenPanel", visible=False),
-                    descriptor((1,), class_name="VisiblePanel"),
-                ),
-            ),
-            widget_count=3,
-            actionable_count=0,
-        ),
-    )
-
-    assert visible_first_result.root is not None
-    assert [child.class_name for child in visible_first_result.root.children] == [
-        "VisiblePanel"
+    assert [child.text for child in tree_result.root.children[0].children] == [
+        "Save",
+        "Cancel",
     ]
 
 
@@ -2037,6 +2044,8 @@ def test_projected_widget_action_invokes_live_button_by_path_id() -> None:
     app = QtApplicationAuthority.app()
     top_level = QWidget()
     top_level.setWindowTitle("Agent actionable top-level")
+    hidden_button = QPushButton("Hidden", top_level)
+    hidden_button.hide()
     button = QPushButton("Generate", top_level)
     button.setObjectName("generate_button")
     button.resize(120, 32)
@@ -2081,6 +2090,7 @@ def test_projected_widget_action_invokes_live_button_by_path_id() -> None:
             for action in widget_tree.actionable_widgets
             if action.object_name == "generate_button"
         )
+        assert action_summary.path_id == "1"
 
         result = bridge.invoke_widget_action(
             UiWidgetActionInvokeRequest(
