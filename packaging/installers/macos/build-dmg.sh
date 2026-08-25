@@ -24,7 +24,6 @@ if [[ ! -f "$installer_icon" ]]; then
 fi
 
 build_root=$(mktemp -d "${TMPDIR:-/tmp}/openhcs-dmg-build.XXXXXX")
-source_root="$build_root/source"
 mount_point="$build_root/mount"
 writable_dmg="$build_root/OpenHCS-macOS-Installer-writable.dmg"
 mounted_device=
@@ -45,13 +44,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$source_root" "$mount_point" "$(dirname "$output_dmg")"
-ditto "$installer_app" "$source_root/OpenHCS Installer.app"
-ditto "$installer_icon" "$source_root/.VolumeIcon.icns"
+mkdir -p "$mount_point" "$(dirname "$output_dmg")"
+payload_size_kib=$(du -sk "$installer_app" | awk '{print $1}')
+image_size_kib=$((payload_size_kib + payload_size_kib / 4 + 32768))
+if ((image_size_kib < 65536)); then
+  image_size_kib=65536
+fi
 
 hdiutil create \
   -volname "OpenHCS Installer" \
-  -srcfolder "$source_root" \
+  -size "${image_size_kib}k" \
+  -fs APFS \
   -format UDRW \
   "$writable_dmg"
 attachment=$(openhcs_attach_writable_disk_image \
@@ -59,9 +62,11 @@ attachment=$(openhcs_attach_writable_disk_image \
   "$mount_point")
 IFS=$'\t' read -r mounted_device mounted_volume <<< "$attachment"
 
+ditto "$installer_app" "$mount_point/OpenHCS Installer.app"
+ditto "$installer_icon" "$mount_point/.VolumeIcon.icns"
+
 # Finder reads the custom-icon attribute from the mounted volume itself. A flag
-# applied only to the source directory is not preserved when hdiutil creates an
-# APFS image.
+# applied only to a staging directory is not preserved in the final image.
 xcrun SetFile -a V "$mount_point/.VolumeIcon.icns"
 xcrun SetFile -a C "$mount_point"
 xcrun GetFileInfo -a "$mount_point" | grep -q C

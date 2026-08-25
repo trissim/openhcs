@@ -233,6 +233,10 @@ def test_macos_release_is_one_verified_disk_image() -> None:
     assert "packaging/installers/macos/build-dmg.sh" in macos_job
     assert "hdiutil create" in dmg_builder
     assert '-volname "OpenHCS Installer"' in dmg_builder
+    assert "-srcfolder" not in dmg_builder
+    assert '-size "${image_size_kib}k"' in dmg_builder
+    assert "-fs APFS" in dmg_builder
+    assert 'ditto "$installer_app" "$mount_point/OpenHCS Installer.app"' in dmg_builder
     assert "-format UDZO" in dmg_builder
     assert "hdiutil verify" in dmg_builder
     assert "path: OpenHCS-macOS-Installer.dmg" in macos_job

@@ -93,7 +93,7 @@ def test_macos_installer_bundle_and_window_share_the_packaged_icon() -> None:
     assert '"$temporary_app/Contents/Resources/OpenHCS.icns"' in build
     assert "iconView.image = NSImage(named: NSImage.applicationIconName)" in window
     assert "iconView.imageScaling = .scaleProportionallyUpOrDown" in window
-    assert '"$source_root/.VolumeIcon.icns"' in dmg_builder
+    assert '"$mount_point/.VolumeIcon.icns"' in dmg_builder
     assert 'xcrun SetFile -a C "$mount_point"' in dmg_builder
     assert 'xcrun GetFileInfo -a "$mount_point" | grep -q C' in dmg_builder
     assert "-format UDRW" in dmg_builder
