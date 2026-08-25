@@ -2419,7 +2419,7 @@
   },
   {
     "path": "docs/source/development/index.rst",
-    "source_sha256": "c15485770d361d6cfc0a2eb05bd451effa823a787e9a1f8a1ce7c8cce14b585d",
+    "source_sha256": "fd425732b5660df4f8f110174f6e773f070160f73828bb84f7dd641965184fdd",
     "audience": [
       "OpenHCS contributors"
     ],
@@ -2438,7 +2438,7 @@
       },
       {
         "path": "docs/source/development/index.rst",
-        "sha256": "c15485770d361d6cfc0a2eb05bd451effa823a787e9a1f8a1ce7c8cce14b585d",
+        "sha256": "fd425732b5660df4f8f110174f6e773f070160f73828bb84f7dd641965184fdd",
         "role": "Navigation or authoring-policy evidence only; product claims are also grounded in non-documentation authorities."
       }
     ],
@@ -2455,7 +2455,50 @@
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
+      "On 2026-08-25, re-read the complete navigation page after moving the active gallery capture how-to into the maintained developer guide; the new entry follows the focused-guide hierarchy and does not alter product claims."
+    ]
+  },
+  {
+    "path": "docs/source/development/media_gallery_capture.rst",
+    "source_sha256": "e3c70f1625c5ea1cfc8f200e2e81ffb28ae87ec19208a6e6bbc90507f9dd07a8",
+    "audience": [
+      "OpenHCS release-media maintainers"
+    ],
+    "user_need": "Capture real OpenHCS surfaces and publish bounded, reproducible gallery derivatives without fabricating application state.",
+    "diataxis": "how-to",
+    "authority": [
+      {
+        "path": "scripts/capture_media_gallery.py",
+        "sha256": "623318b3fd2dcf841e171561124a25a2034049a5d4cabd8ccb65a289eb81a462",
+        "role": "Owns the typed capture manifest, host-tool discovery, trusted UI snapshot ingestion, X11 capture, deterministic derivative construction, validation, and command-line surface."
+      },
+      {
+        "path": "scripts/gallery_catalog.py",
+        "sha256": "17859d7a63130c5d09a632f4fe8a4e6fe51a464878f5bb7928be4a8feb7e156c",
+        "role": "Owns the nominal gallery scenario lattice, capture targets, derivative inventory, source evidence, card rendering, and generated release record."
+      },
+      {
+        "path": "scripts/website_gallery_projection.py",
+        "sha256": "31b82909faf64ba831dc96ed4b810395883327507eea874090138961e8fea4fe",
+        "role": "Consumes the checked-in release record without importing OpenHCS and verifies projected assets before inserting gallery markup."
+      },
+      {
+        "path": "tests/unit/test_capture_media_gallery.py",
+        "sha256": "5f91ac29efc57f936ed6e49a6f138fcdc25c4a1105b8646020a18ec798d0991f",
+        "role": "Proves manifest bounds, path containment, no-overwrite rules, trusted snapshot ingestion, X11 capture commands, deterministic FFmpeg projection, atomic builds, and independent derivative validation."
+      }
+    ],
+    "findings": [
+      "The active capture workflow lived outside docs/source, so Sphinx navigation and the documentation drift ledger did not own it.",
+      "The original title and opening described a tool rather than leading a competent maintainer toward the publication goal."
+    ],
+    "disposition": "revise",
+    "validation": [
+      "Re-read the complete how-to against scripts/capture_media_gallery.py, scripts/gallery_catalog.py, scripts/website_gallery_projection.py, and tests/unit/test_capture_media_gallery.py; every capture, transformation, ownership, validation, and no-overwrite claim matches its current owner.",
+      "Passed python -m scripts.capture_media_gallery catalog and verified all six declaration-owned scenario ids; python -m scripts.gallery_catalog --check confirmed the checked-in release projection.",
+      "Passed 42 focused capture and website tests, including a real FFmpeg derivative build and independent revalidation.",
+      "Passed scripts/validate_docs.py docs/source and a warning-as-error Sphinx build after adding the page to the focused development-guide navigation."
     ]
   },
   {

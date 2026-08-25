@@ -32,6 +32,7 @@ Focused development guides
    pyclesperanto_simple_implementation
    mcp_development
    agent_workflow_validation
+   media_gallery_capture
    mcp_knowledge_base
    mcp_release
    git_worktree_testing
