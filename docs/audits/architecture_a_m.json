@@ -822,7 +822,7 @@
   },
   {
     "path": "docs/source/architecture/declarative_window_system.rst",
-    "source_sha256": "c300665a7653360584f2425a64f111f4953b43f2bcbfa2a2035411e66404c33a",
+    "source_sha256": "480757c11ae720000f495ecfd073bc695a59f3ccf60a1c4069e0990a28828f96",
     "audience": [
       "OpenHCS UI maintainers following the former declarative-window URL"
     ],
@@ -831,8 +831,8 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/window_manager.py",
-        "sha256": "02744b4ff2ce38ef4f49e7f9f5bd805cb443134550eb4841905c1267eb13dcd5",
-        "role": "Implements generic registered window lifecycle, reuse, parentage, and cleanup."
+        "sha256": "51c4a874446f2d755a78a474dca049628fc4f6f2f33e50d9d00d18101f4df83a",
+        "role": "Implements live top-level window discovery plus generic registered window lifecycle, reuse, parentage, and cleanup."
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/scope_window_factory.py",
@@ -966,7 +966,7 @@
   },
   {
     "path": "docs/source/architecture/external_foundations.rst",
-    "source_sha256": "1358ed72c3abbe7476ebddb9bca26e0625a32808bc135a8e139230ab615b2100",
+    "source_sha256": "015fae795151e3a0479790c36bc234ea593ba251ffe70a874229297c4a8c9f60",
     "audience": [
       "OpenHCS maintainers",
       "first-party package integrators"
@@ -976,7 +976,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
+        "sha256": "46b221bd46969f47f99d8d60eb98729870e9224b5216b035163f8b7e4c9fed64",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -1129,7 +1129,7 @@
       },
       {
         "path": "external/pyqt-reactive/tests/test_core.py",
-        "sha256": "9a836abdcf3629b0e11a8c2fdf9a9ee81c5c22bbda43783411b355d8ecf1477e",
+        "sha256": "cb05d4d10b7b938bc05f1b8137ff4f2978952ed6f3d3c9f51ff5d9613bac7212",
         "role": "Exercises reusable reactive update and lifecycle behaviour."
       }
     ],
@@ -1516,7 +1516,7 @@
   },
   {
     "path": "docs/source/architecture/mcp_distribution.rst",
-    "source_sha256": "fce937c812f17d3d573ce10d86c756a4abcaefb07fe77684c4f6373495960b99",
+    "source_sha256": "ff2762ffb3cc0fa4c06ff6db9dbae8413aa95b052b1b2fee48f8757d887cbfa0",
     "audience": [
       "OpenHCS MCP maintainers",
       "packaging and hosted-deployment integrators"
@@ -1591,7 +1591,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/ui_bridge_windows.py",
-        "sha256": "5174dc0f246d147be607ba1072fdcd1dcf1d08ba7b6bfb94e8492d4b2230746a",
+        "sha256": "0b5b46ea5aa32a20ca94c1616c4a4f8454c4709084e9d31df1d327864da5fab2",
         "role": "Resolves authorised OpenHCS windows and projects generic snapshot results into application DTOs."
       },
       {

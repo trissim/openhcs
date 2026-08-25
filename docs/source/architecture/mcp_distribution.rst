@@ -58,10 +58,12 @@ Window-capture boundary
 
 Agent-visible screenshots are bounded to an explicitly resolved OpenHCS or
 viewer ``QWidget``. pyqt-reactive owns the generic capture declaration and
-renders either that widget or its owning Qt window. OpenHCS owns window
-discovery, access checks, application DTOs, and transport. Native desktop
-screen grabs are not a supported capture scope because a window-system grab
-can include pixels from unrelated applications under some compositors.
+renders either that widget or its owning Qt window. Its window manager also
+filters Qt's live visible top-level windows before application projection.
+OpenHCS owns application window identity, access checks, DTOs, and transport.
+Native desktop screen grabs are not a supported capture scope because a
+window-system grab can include pixels from unrelated applications under some
+compositors.
 
 Snapshot results identify the requested application window and carry the PNG
 path, URI, dimensions, byte size, digest, and selected capture scope. They are

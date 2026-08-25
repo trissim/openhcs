@@ -42,9 +42,10 @@ PolyStore
 
 pyqt-reactive
   Owns generic reactive forms, widget protocols and strategies, managers,
-  previews, reusable services, window infrastructure, and Qt-rendered window
-  snapshots. OpenHCS owns concrete workflows, Plate Manager, pipeline editors,
-  window discovery and authorisation, and domain transport adapters. See
+  previews, reusable services, live Qt-window discovery and infrastructure, and
+  Qt-rendered window snapshots. OpenHCS owns concrete workflows, Plate Manager,
+  pipeline editors, application window identity and authorisation, and domain
+  transport adapters. See
   :external+pyqt-reactive:doc:`pyqt-reactive documentation <index>`.
 
 python-introspect

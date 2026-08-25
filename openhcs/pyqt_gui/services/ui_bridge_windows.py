@@ -12,7 +12,6 @@ from objectstate import ObjectState
 from PyQt6.QtCore import QItemSelectionModel, QModelIndex, Qt, QTimer
 from PyQt6.QtWidgets import (
     QAbstractItemView,
-    QApplication,
     QMessageBox,
     QWidget,
 )
@@ -1097,23 +1096,11 @@ class QtTopLevelWindowProjection(
             semantic_markers=self._semantic_markers(widget),
         )
 
-    @staticmethod
-    def _top_level_widgets() -> tuple[QWidget, ...]:
-        application = QApplication.instance()
-        if application is None:
-            return ()
-        del application
-        return tuple(
-            widget
-            for widget in QApplication.topLevelWidgets()
-            if widget.isWindow() and widget.isVisible()
-        )
-
     def _projected_top_level_widgets(self) -> tuple[QWidget, ...]:
         excluded_widgets = self._excluded_widgets()
         return tuple(
             widget
-            for widget in self._top_level_widgets()
+            for widget in WindowManager.visible_top_level_windows()
             if widget not in excluded_widgets
         )
 

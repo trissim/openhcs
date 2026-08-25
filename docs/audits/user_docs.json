@@ -152,7 +152,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
+        "sha256": "46b221bd46969f47f99d8d60eb98729870e9224b5216b035163f8b7e4c9fed64",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -620,7 +620,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
+        "sha256": "46b221bd46969f47f99d8d60eb98729870e9224b5216b035163f8b7e4c9fed64",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -792,7 +792,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
+        "sha256": "46b221bd46969f47f99d8d60eb98729870e9224b5216b035163f8b7e4c9fed64",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1267,7 +1267,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
+        "sha256": "46b221bd46969f47f99d8d60eb98729870e9224b5216b035163f8b7e4c9fed64",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1867,7 +1867,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
+        "sha256": "46b221bd46969f47f99d8d60eb98729870e9224b5216b035163f8b7e4c9fed64",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -2170,7 +2170,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
+        "sha256": "46b221bd46969f47f99d8d60eb98729870e9224b5216b035163f8b7e4c9fed64",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2635,7 +2635,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "4bd61bfc9cd14882b0ab63700c766a49c2b8023d0c9b1191b9f19a968a3b8d32",
+        "sha256": "46b221bd46969f47f99d8d60eb98729870e9224b5216b035163f8b7e4c9fed64",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
