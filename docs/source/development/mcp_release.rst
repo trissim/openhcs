@@ -130,7 +130,8 @@ the code that is actually on ``main``. The Linux wheel-candidate job runs the
 live GUI/MCP probe before its installed integration suite. A complementary
 desktop candidate matrix builds the same recursively recorded first-party
 wheels and runs that probe on Windows and both macOS architectures. Each job
-retains its typed JSON result and native Qt screenshots for 14 days. It has no
+retains its typed JSON result and native Qt screenshots for 14 days, together
+with execution-server startup evidence when the probe fails. It has no
 dependency on the PyPI readiness job, so every supported desktop release
 boundary proves the candidate before the first dependency is published.
 The native Windows and dual-architecture macOS installer matrix is independent

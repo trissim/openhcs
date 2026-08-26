@@ -270,7 +270,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: desktop-candidate-gui-${{ matrix.os }}
-          path: ${{ runner.temp }}/openhcs-desktop-candidate-evidence
+          path: |
+            ${{ runner.temp }}/openhcs-desktop-candidate-evidence
+            ${{ runner.temp }}/openhcs-desktop-candidate-data/openhcs/logs
           if-no-files-found: warn
           retention-days: 14
 
@@ -1416,17 +1418,20 @@ jobs:
             Write-Host "Windows installer log was not created at '$installerLog'."
           }
 
-          $viewerLogRoot = Join-Path $HOME ".local\share\openhcs\logs"
-          if (Test-Path -LiteralPath $viewerLogRoot -PathType Container) {
-            Get-ChildItem -LiteralPath $viewerLogRoot -Filter "*_detached_port_*.log" |
+          $installRoot = Join-Path `
+            ([Environment]::GetFolderPath("LocalApplicationData")) `
+            "OpenHCS"
+          $runtimeLogRoot = Join-Path $installRoot "gui-data\openhcs\logs"
+          if (Test-Path -LiteralPath $runtimeLogRoot -PathType Container) {
+            Get-ChildItem -LiteralPath $runtimeLogRoot -File |
               Sort-Object FullName |
               ForEach-Object {
-                Write-Host "=== Detached viewer log: $($_.FullName) ==="
+                Write-Host "=== OpenHCS runtime evidence: $($_.FullName) ==="
                 Get-Content -LiteralPath $_.FullName
               }
           }
           else {
-            Write-Host "Detached viewer log directory was not created at '$viewerLogRoot'."
+            Write-Host "OpenHCS runtime log directory was not created at '$runtimeLogRoot'."
           }
 
       - name: Validate macOS installer sources

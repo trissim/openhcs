@@ -96,6 +96,16 @@ def test_logging_config_owns_level_location_destinations_and_rotation(tmp_path) 
         logging.disable(previous_disable)
 
 
+def test_default_log_directory_follows_openhcs_data_authority(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_home = tmp_path / "data"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+
+    assert LoggingConfig().resolved_log_directory() == data_home / "openhcs" / "logs"
+
+
 def test_logging_config_replaces_bootstrap_console_handler() -> None:
     root_logger = logging.getLogger()
     previous_level = root_logger.level

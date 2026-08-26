@@ -2,22 +2,21 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
-from pathlib import Path
 import threading
+from dataclasses import dataclass
 from typing import Any, Callable
 
+from zmqruntime.execution.logs import ExecutionWorkerLogIdentity
 from zmqruntime.messages import ExecutionStatus
 
 from openhcs.core.compiled_execution import CompiledExecutionBundle
 from openhcs.core.orchestrator.cancellation import ExecutionCancelledError
-from zmqruntime.execution.logs import ExecutionWorkerLogIdentity
 from openhcs.core.orchestrator.compiled_plate_execution import (
     CompiledPlateExecutionExtras,
     CompiledPlateExecutionResults,
 )
-
+from openhcs.core.xdg_paths import get_openhcs_log_dir
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +34,7 @@ class ZMQWorkerExecutionRequest:
     forward_worker_progress: Callable[[Any], None]
 
     def execute(self) -> Any:
-        log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
+        log_dir = get_openhcs_log_dir()
         log_dir.mkdir(parents=True, exist_ok=True)
 
         execution_bundle = self.execution_bundle

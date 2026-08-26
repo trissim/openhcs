@@ -205,6 +205,9 @@ def test_desktop_candidate_canary_precedes_dependency_publication() -> None:
     )
     assert evidence_step["if"] == "always()"
     assert evidence_step["with"]["name"] == "desktop-candidate-gui-${{ matrix.os }}"
+    evidence_paths = evidence_step["with"]["path"]
+    assert "openhcs-desktop-candidate-evidence" in evidence_paths
+    assert "openhcs-desktop-candidate-data/openhcs/logs" in evidence_paths
     assert evidence_step["with"]["if-no-files-found"] == "warn"
     assert evidence_step["with"]["retention-days"] == 14
 

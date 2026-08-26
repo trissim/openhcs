@@ -661,7 +661,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "3bfb1fe4043bb9f0b5dfc6aa8567b458f0431003507897b50e2509aa9c1f311e",
+        "sha256": "fec6354c3d6c65da7094d9efc06540bd5d078fc9e5380ac367626ead47bd15b6",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -897,7 +897,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "c2b3d8a185e08cf2b6998470a3614d08a2804f239126e73119a302fc3456533a",
+        "sha256": "189a194a552892efb63689ac485b039614670797233b05d5221beac2c5c83e96",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -1435,7 +1435,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/troubleshooting_FAQ.rst",
-    "source_sha256": "2669866e80e49756310067629dfd7087b0d4403258de785bd6b536a997667bc8",
+    "source_sha256": "c895d4c8bc4c00b0b38c614844c7e4542fea0b65f17574bf203d319dd9697d21",
     "audience": [
       "desktop operators diagnosing a failed workflow"
     ],
@@ -1459,12 +1459,12 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "3bfb1fe4043bb9f0b5dfc6aa8567b458f0431003507897b50e2509aa9c1f311e",
+        "sha256": "fec6354c3d6c65da7094d9efc06540bd5d078fc9e5380ac367626ead47bd15b6",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "0f07a33a669a59047a8fa6387b8bbd681a2786cbd7a6b1418ebb25f18afbe5c3",
+        "sha256": "04798fc0954d1a9cf017171b3adf88776239375b9ea718354c84a86ee64e61ca",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       },
       {
@@ -1673,7 +1673,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "3bfb1fe4043bb9f0b5dfc6aa8567b458f0431003507897b50e2509aa9c1f311e",
+        "sha256": "fec6354c3d6c65da7094d9efc06540bd5d078fc9e5380ac367626ead47bd15b6",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -1720,7 +1720,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "3bfb1fe4043bb9f0b5dfc6aa8567b458f0431003507897b50e2509aa9c1f311e",
+        "sha256": "fec6354c3d6c65da7094d9efc06540bd5d078fc9e5380ac367626ead47bd15b6",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -2041,7 +2041,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "244b5b355732aa023ef9898a46e79673a75b960e735d34ec2e33b7861897e81f",
+    "source_sha256": "cac64aeb578229365f8d2444277370b8eeef6d6a1c31991f5f7ba937eccf27e6",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -2061,7 +2061,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "c2b3d8a185e08cf2b6998470a3614d08a2804f239126e73119a302fc3456533a",
+        "sha256": "189a194a552892efb63689ac485b039614670797233b05d5221beac2c5c83e96",
         "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, retained native screenshot artifacts, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
@@ -2096,7 +2096,7 @@
       },
       {
         "path": "tests/unit/test_ci_package_boundaries.py",
-        "sha256": "942e6c3b24de93a349b2cbc5bb92ff9604460fd851269b12bc8ffeb1831239b6",
+        "sha256": "efe41a0bda50271838e0e1a1dffa2fb8279a25e44497437dd44d8defff80af15",
         "role": "Proves source-gate coverage fails closed and that cross-platform candidate and published GUI canaries retain their typed screenshot evidence."
       },
       {
@@ -2121,12 +2121,12 @@
       },
       {
         "path": "openhcs/pyqt_gui/config.py",
-        "sha256": "5f201d4ccf03df33100eb2dd04e27da43f96de94c928cd4e5e160ecf3821c75d",
+        "sha256": "331272ab8d3306f16ffa7b3d821cd9e2331144c0a8dbe2e114019bfa389000e7",
         "role": "Declares UI configuration, including logging, theming, viewer, and execution-server settings."
       },
       {
         "path": "openhcs/core/xdg_paths.py",
-        "sha256": "895ddee423bdaf6bc1fde0a0c65e6369acd530e5c217a20bdd710d1e94fac803",
+        "sha256": "c0ecf7576243107dbd1a76fd74f1162ab31cb98634e458294b0210cf88774513",
         "role": "Resolves OpenHCS data, cache, state, and log locations from the platform and XDG environment."
       },
       {
@@ -2225,7 +2225,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "3bfb1fe4043bb9f0b5dfc6aa8567b458f0431003507897b50e2509aa9c1f311e",
+        "sha256": "fec6354c3d6c65da7094d9efc06540bd5d078fc9e5380ac367626ead47bd15b6",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {
@@ -2393,7 +2393,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/config.py",
-        "sha256": "5f201d4ccf03df33100eb2dd04e27da43f96de94c928cd4e5e160ecf3821c75d",
+        "sha256": "331272ab8d3306f16ffa7b3d821cd9e2331144c0a8dbe2e114019bfa389000e7",
         "role": "Declares UI configuration, including logging, theming, viewer, and execution-server settings."
       },
       {
@@ -3144,12 +3144,12 @@
       },
       {
         "path": "openhcs/pyqt_gui/config.py",
-        "sha256": "5f201d4ccf03df33100eb2dd04e27da43f96de94c928cd4e5e160ecf3821c75d",
+        "sha256": "331272ab8d3306f16ffa7b3d821cd9e2331144c0a8dbe2e114019bfa389000e7",
         "role": "Declares UI configuration, including logging, theming, viewer, and execution-server settings."
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "0f07a33a669a59047a8fa6387b8bbd681a2786cbd7a6b1418ebb25f18afbe5c3",
+        "sha256": "04798fc0954d1a9cf017171b3adf88776239375b9ea718354c84a86ee64e61ca",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       }
     ],
@@ -3255,7 +3255,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "3bfb1fe4043bb9f0b5dfc6aa8567b458f0431003507897b50e2509aa9c1f311e",
+        "sha256": "fec6354c3d6c65da7094d9efc06540bd5d078fc9e5380ac367626ead47bd15b6",
         "role": "Declares the transport-independent viewer messages, stream configuration, and server contract."
       },
       {

@@ -54,6 +54,12 @@ same declaration-owned framework requirements therefore govern parent
 admission, catalogue preparation, and server startup; OpenHCS does not rebuild
 NVIDIA wheel paths in either launcher.
 
+The execution client starts its server from the OpenHCS data directory rather
+than inheriting an arbitrary caller working directory. The shared OpenHCS log
+path declaration owns both the server log and its startup journal. A successful
+readiness handshake removes the journal; a failed startup retains it beside the
+log so the last reported phase remains available for diagnosis.
+
 ``RegistryService`` admits an optional backend only after that backend's own
 registry declaration proves its runtime warm-up and complete module inventory.
 The admitted inventory remains fixed for the interpreter lifetime and is reused

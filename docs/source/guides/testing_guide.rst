@@ -107,10 +107,11 @@ The Linux wheel job runs this operation before its installed integration suite.
 A complementary desktop candidate matrix runs it on Windows and both macOS
 architectures using wheels built from the recursively recorded first-party
 submodules. Each job retains the JSON result and native Qt screenshots as a
-14-day ``desktop-candidate-gui-*`` artifact. These jobs run independently of
-dependency publication, providing cross-platform behavioral and visual
-evidence for an unreleased dependency graph before the PyPI lanes become
-eligible.
+14-day ``desktop-candidate-gui-*`` artifact. The artifact also retains the
+isolated OpenHCS log directory, including the failed endpoint's startup journal
+when readiness is not reached. These jobs run independently of dependency
+publication, providing cross-platform behavioural and visual evidence for an
+unreleased dependency graph before the PyPI lanes become eligible.
 
 The daily Published Release Canary installs the latest stable desktop package
 from PyPI on Linux, Windows, and macOS and repeats that live GUI/MCP probe. It is

@@ -220,7 +220,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "3bfb1fe4043bb9f0b5dfc6aa8567b458f0431003507897b50e2509aa9c1f311e",
+        "sha256": "fec6354c3d6c65da7094d9efc06540bd5d078fc9e5380ac367626ead47bd15b6",
         "role": "Distinguishes external viewer clients from owned viewer processes during failed-bootstrap rollback."
       },
       {
@@ -1340,7 +1340,7 @@
       },
       {
         "path": "openhcs/runtime/viewer_protocol.py",
-        "sha256": "3bfb1fe4043bb9f0b5dfc6aa8567b458f0431003507897b50e2509aa9c1f311e",
+        "sha256": "fec6354c3d6c65da7094d9efc06540bd5d078fc9e5380ac367626ead47bd15b6",
         "role": "OpenHCS viewer persistence policy, exact process ownership, platform policy, readiness, and settlement contracts."
       },
       {
@@ -1610,7 +1610,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/config.py",
-        "sha256": "5f201d4ccf03df33100eb2dd04e27da43f96de94c928cd4e5e160ecf3821c75d",
+        "sha256": "331272ab8d3306f16ffa7b3d821cd9e2331144c0a8dbe2e114019bfa389000e7",
         "role": "UIConfig, logging, progress, performance, shortcut, and agent-bridge declarations."
       },
       {
@@ -1690,7 +1690,7 @@
   },
   {
     "path": "docs/source/architecture/zmq_execution_service_extracted.rst",
-    "source_sha256": "8243f26da3b7a0fa32434e6ee426ad66ee0c8dd957e4ccd6f9915ee799fd304b",
+    "source_sha256": "6dd0231cb860a61c6ea16aadfd8e37edbfcaa583d987a920d4368deb937c5e3e",
     "audience": [
       "OpenHCS contributors following the former local ZMQ execution-service URL"
     ],
@@ -1749,7 +1749,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "0f07a33a669a59047a8fa6387b8bbd681a2786cbd7a6b1418ebb25f18afbe5c3",
+        "sha256": "04798fc0954d1a9cf017171b3adf88776239375b9ea718354c84a86ee64e61ca",
         "role": "Spawns the execution server with the ArrayBridge-projected child environment and carries typed execution transport."
       },
       {
@@ -1779,7 +1779,7 @@
       },
       {
         "path": "tests/unit/test_zmq_execution_server_process.py",
-        "sha256": "3fab9f599478e2bb0364d9bbb1ea2b8a9b4528e4ff726d8ebc4221fe4431abfe",
+        "sha256": "fb89e590de84265f1a6662b0a7f9647517b31638596ecba3b08e26feef58505b",
         "role": "Proves capability-preparation mode does not construct or bind the execution server."
       },
       {
@@ -2603,7 +2603,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "0f07a33a669a59047a8fa6387b8bbd681a2786cbd7a6b1418ebb25f18afbe5c3",
+        "sha256": "04798fc0954d1a9cf017171b3adf88776239375b9ea718354c84a86ee64e61ca",
         "role": "Owns the total headless submission budget and the pre-dispatch timeout boundary documented for MCP developers."
       },
       {
@@ -2728,7 +2728,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "bda580f69f79b8853b19c75521769c4cf5e14a9b3fcd10c9b9a1933f6127df59",
+    "source_sha256": "8b86289a4d007e3471858e1e6bfbe6d0d8abe8dae4136c03ef1444cdb5ea428a",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2792,7 +2792,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "c2b3d8a185e08cf2b6998470a3614d08a2804f239126e73119a302fc3456533a",
+        "sha256": "189a194a552892efb63689ac485b039614670797233b05d5221beac2c5c83e96",
         "role": "Cross-platform source-candidate and published-dependency readiness, installed-wheel live GUI/MCP operation with retained native screenshots, native installer, signing-helper parse, and staged-update validation matrix."
       },
       {
@@ -2847,7 +2847,7 @@
       },
       {
         "path": "tests/unit/test_ci_package_boundaries.py",
-        "sha256": "942e6c3b24de93a349b2cbc5bb92ff9604460fd851269b12bc8ffeb1831239b6",
+        "sha256": "efe41a0bda50271838e0e1a1dffa2fb8279a25e44497437dd44d8defff80af15",
         "role": "Proves publication consumes central release requirements and that candidate and published GUI matrices retain their typed screenshot evidence."
       }
     ],
@@ -2966,7 +2966,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "c2b3d8a185e08cf2b6998470a3614d08a2804f239126e73119a302fc3456533a",
+        "sha256": "189a194a552892efb63689ac485b039614670797233b05d5221beac2c5c83e96",
         "role": "Runs explicitly selected live OMERO variants and preserves component and table-service diagnostics on failure."
       }
     ],

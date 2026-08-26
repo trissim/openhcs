@@ -42,7 +42,8 @@ def test_execution_server_preserves_worker_interpreter_and_background_flags(
                 popen_arguments=lambda: {"creationflags": 73},
             )
 
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    data_home = tmp_path / "data"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
     monkeypatch.setattr("subprocess.Popen", capture_popen)
     monkeypatch.setattr(
         zmq_execution_client,
@@ -75,6 +76,8 @@ def test_execution_server_preserves_worker_interpreter_and_background_flags(
     assert popen_call["creationflags"] == 73
     assert "start_new_session" not in popen_call
     assert popen_call["env"] is subprocess_environment
+    assert popen_call["cwd"] == data_home / "openhcs"
+    assert Path(popen_call["stdout"].name).parent == data_home / "openhcs" / "logs"
 
 
 def test_execution_server_launcher_advertises_ready_after_start(monkeypatch) -> None:
@@ -221,3 +224,24 @@ def test_child_startup_events_are_resequenced_by_client_owner(
         EndpointStartupPhase.IMPORTING_RUNTIME,
     ]
     assert not startup_path.exists()
+
+
+def test_failed_child_startup_journal_remains_available(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    startup_path = tmp_path / "startup.jsonl"
+    writer = EndpointStartupStatusWriter(startup_path)
+    writer.emit(EndpointStartupPhase.FAILED, "Import failed")
+    client = ZMQExecutionClient()
+    client._startup_status_path = startup_path
+    process = SimpleNamespace(exit=lambda: None)
+
+    monkeypatch.setattr(
+        zmq_execution_client,
+        "wait_for_endpoint_ready",
+        lambda *_args, **_kwargs: None,
+    )
+
+    assert client._wait_for_endpoint_ready(process) is None
+    assert startup_path.exists()

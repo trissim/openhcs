@@ -51,6 +51,7 @@ from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.core.streaming_config_factory import (
     StreamingViewerRuntimeConfig,
 )
+from openhcs.core.xdg_paths import get_openhcs_log_dir
 from openhcs.runtime.viewer_controls import (
     ViewerLayerIsolationControlOptions as ViewerLayerIsolationControlOptions,
 )
@@ -805,11 +806,7 @@ class DetachedViewerLaunchRequest(ViewerTypeIdentity):
         port: int,
         log_dir: Path | None = None,
     ) -> Path:
-        launch_log_dir = (
-            Path.home() / ".local" / "share" / "openhcs" / "logs"
-            if log_dir is None
-            else log_dir
-        )
+        launch_log_dir = get_openhcs_log_dir() if log_dir is None else log_dir
         return launch_log_dir / (f"{viewer_type.wire_value}_detached_port_{port}.log")
 
     def command(self) -> list[str]:

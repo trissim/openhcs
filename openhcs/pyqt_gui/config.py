@@ -40,6 +40,7 @@ from openhcs.agent.services.ui_bridge_service import (
 from openhcs.agent.ui_bridge_environment import UiBridgeDescriptorEnvironment
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.config_cache import ConfigCacheSpec
+from openhcs.core.xdg_paths import get_openhcs_log_dir
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
 logger = logging.getLogger(__name__)
@@ -133,9 +134,7 @@ class LoggingConfig:
 
         if self.log_directory is not None:
             return self.log_directory.expanduser().resolve(strict=False)
-        from openhcs.core.xdg_paths import get_openhcs_data_dir
-
-        return get_openhcs_data_dir() / "logs"
+        return get_openhcs_log_dir()
 
     def __post_init__(self) -> None:
         validate_annotated_dataclass(self)

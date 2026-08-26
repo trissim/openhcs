@@ -41,6 +41,7 @@ from openhcs.core.pipeline_document import (
     PipelineDocumentAuthority,
 )
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.core.xdg_paths import get_openhcs_data_dir, get_openhcs_log_dir
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 from openhcs.runtime.zmq_execution_signature import (
     ZMQExecutionCompileControl,
@@ -847,7 +848,8 @@ class ZMQExecutionClient(
     def _spawn_server_process(self):
         import logging
 
-        log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
+        runtime_dir = get_openhcs_data_dir()
+        log_dir = get_openhcs_log_dir()
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file_path = (
             log_dir
@@ -890,13 +892,15 @@ class ZMQExecutionClient(
 
         cmd.extend(["--log-level", log_level_name])
 
-        return subprocess.Popen(
-            cmd,
-            stdout=open(log_file_path, "w"),
-            stderr=subprocess.STDOUT,
-            env=MemoryType.subprocess_environment(),
-            **launch_policy.popen_arguments(),
-        )
+        with log_file_path.open("w", encoding="utf-8") as log_stream:
+            return subprocess.Popen(
+                cmd,
+                stdout=log_stream,
+                stderr=subprocess.STDOUT,
+                cwd=runtime_dir,
+                env=MemoryType.subprocess_environment(),
+                **launch_policy.popen_arguments(),
+            )
 
     @override
     def _wait_for_endpoint_ready(
@@ -942,8 +946,9 @@ class ZMQExecutionClient(
             process_has_exited=lambda: process.exit() is not None,
         )
 
+        endpoint: PongResponse | None = None
         try:
-            return wait_for_endpoint_ready(
+            endpoint = wait_for_endpoint_ready(
                 self.port,
                 self.transport_mode,
                 host=self.host,
@@ -953,8 +958,9 @@ class ZMQExecutionClient(
                 startup_observer=self._connection_startup_observer(startup_monitor),
                 operation_deadline=operation_deadline,
             )
+            return endpoint
         finally:
-            if self._startup_status_path is not None:
+            if endpoint is not None and self._startup_status_path is not None:
                 self._startup_status_path.unlink(missing_ok=True)
 
     @override

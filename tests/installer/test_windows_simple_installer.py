@@ -734,7 +734,7 @@ def test_windows_installer_ci_uses_napari_tested_software_opengl() -> None:
     assert "          wm: herbstluftwm" in desktop_job
 
 
-def test_windows_installer_ci_surfaces_detached_viewer_logs_on_failure() -> None:
+def test_windows_installer_ci_surfaces_runtime_evidence_on_failure() -> None:
     workflow = INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
     failure_step = workflow[
         workflow.index(
@@ -742,6 +742,6 @@ def test_windows_installer_ci_surfaces_detached_viewer_logs_on_failure() -> None
         ) : workflow.index("      - name: Validate macOS installer sources")
     ]
 
-    assert 'Join-Path $HOME ".local\\share\\openhcs\\logs"' in failure_step
-    assert 'Filter "*_detached_port_*.log"' in failure_step
+    assert 'Join-Path $installRoot "gui-data\\openhcs\\logs"' in failure_step
+    assert "Get-ChildItem -LiteralPath $runtimeLogRoot -File" in failure_step
     assert "Get-Content -LiteralPath $_.FullName" in failure_step

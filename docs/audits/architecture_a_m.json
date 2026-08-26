@@ -1629,7 +1629,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/config.py",
-        "sha256": "5f201d4ccf03df33100eb2dd04e27da43f96de94c928cd4e5e160ecf3821c75d",
+        "sha256": "331272ab8d3306f16ffa7b3d821cd9e2331144c0a8dbe2e114019bfa389000e7",
         "role": "Declares UIConfig and projects its unique execution endpoint without constructing unrelated UI configuration."
       },
       {

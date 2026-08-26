@@ -8,11 +8,13 @@ shared between TUI and PyQt GUI implementations.
 import logging
 import time
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional
 
 from pyqt_reactive.core.log_utils import LogFileInfo, LogType
 from zmqruntime.execution.logs import ExecutionWorkerLogIdentity
 from zmqruntime.messages import ProcessIdentity
+
+from openhcs.core.xdg_paths import get_openhcs_log_dir
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +35,7 @@ def get_current_log_file_path() -> str:
                 return handler.baseFilename
 
         # Last resort: create a default path
-        log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
+        log_dir = get_openhcs_log_dir()
         log_dir.mkdir(parents=True, exist_ok=True)
         return str(log_dir / f"openhcs_subprocess_{int(time.time())}.log")
 
@@ -42,8 +44,11 @@ def get_current_log_file_path() -> str:
         raise RuntimeError(f"Could not determine log file path: {e}")
 
 
-def discover_logs(base_log_path: Optional[str] = None, include_main_log: bool = True,
-                 log_directory: Optional[Path] = None) -> List[LogFileInfo]:
+def discover_logs(
+    base_log_path: Optional[str] = None,
+    include_main_log: bool = True,
+    log_directory: Optional[Path] = None,
+) -> List[LogFileInfo]:
     """
     Discover OpenHCS log files and return as classified LogFileInfo objects.
 
@@ -77,7 +82,9 @@ def discover_logs(base_log_path: Optional[str] = None, include_main_log: bool = 
         if log_dir.exists():
             for log_file in log_dir.glob("*.log"):
                 if is_relevant_log_file(log_file, base_log_path):
-                    log_info = classify_log_file(log_file, base_log_path, include_main_log)
+                    log_info = classify_log_file(
+                        log_file, base_log_path, include_main_log
+                    )
                     if log_info.path not in discovered_paths:
                         discovered_logs.append(log_info)
                         discovered_paths.add(log_info.path)
@@ -85,21 +92,29 @@ def discover_logs(base_log_path: Optional[str] = None, include_main_log: bool = 
     # Discover all OpenHCS logs if no specific base_log_path
     elif log_directory or not base_log_path:
         if log_directory is None:
-            log_directory = Path.home() / ".local" / "share" / "openhcs" / "logs"
+            log_directory = get_openhcs_log_dir()
 
         if log_directory.exists():
             for log_file in log_directory.glob("*.log"):
                 if is_openhcs_log_file(log_file) and log_file not in discovered_paths:
                     # Infer base_log_path for proper classification
-                    inferred_base = infer_base_log_path(log_file) if 'subprocess_' in log_file.name else None
-                    log_info = classify_log_file(log_file, inferred_base, include_main_log)
+                    inferred_base = (
+                        infer_base_log_path(log_file)
+                        if "subprocess_" in log_file.name
+                        else None
+                    )
+                    log_info = classify_log_file(
+                        log_file, inferred_base, include_main_log
+                    )
                     discovered_logs.append(log_info)
                     discovered_paths.add(log_info.path)
 
     return discovered_logs
 
 
-def classify_log_file(log_path: Path, base_log_path: Optional[str] = None, include_tui_log: bool = True) -> LogFileInfo:
+def classify_log_file(
+    log_path: Path, base_log_path: Optional[str] = None, include_tui_log: bool = True
+) -> LogFileInfo:
     """
     Pure function: Classify a log file and extract metadata.
 
@@ -127,10 +142,14 @@ def classify_log_file(log_path: Path, base_log_path: Optional[str] = None, inclu
             pass  # TUI log not found, continue with other classification
 
     # Check for ZMQ server logs (openhcs_zmq_server_port_{port}_{timestamp}.log)
-    if file_name.startswith('openhcs_zmq_server_port_'):
+    if file_name.startswith("openhcs_zmq_server_port_"):
         # Extract port from filename
-        parts = file_name.replace('openhcs_zmq_server_port_', '').replace('.log', '').split('_')
-        port = parts[0] if parts else 'unknown'
+        parts = (
+            file_name.replace("openhcs_zmq_server_port_", "")
+            .replace(".log", "")
+            .split("_")
+        )
+        port = parts[0] if parts else "unknown"
         return LogFileInfo(
             log_path,
             LogType.ZMQ_SERVER,
@@ -149,8 +168,8 @@ def classify_log_file(log_path: Path, base_log_path: Optional[str] = None, inclu
         )
 
     # Check for Napari viewer logs
-    if file_name.startswith('napari_detached_port_'):
-        port = file_name.replace('napari_detached_port_', '').replace('.log', '')
+    if file_name.startswith("napari_detached_port_"):
+        port = file_name.replace("napari_detached_port_", "").replace(".log", "")
         return LogFileInfo(
             log_path,
             LogType.NAPARI,
@@ -166,10 +185,14 @@ def classify_log_file(log_path: Path, base_log_path: Optional[str] = None, inclu
             return LogFileInfo(log_path, LogType.MAIN)
 
         # Check if it's a worker log: {base_name}_worker_*.log
-        if file_name.startswith(f"{base_name}_worker_") and file_name.endswith('.log'):
+        if file_name.startswith(f"{base_name}_worker_") and file_name.endswith(".log"):
             # Extract worker ID (everything between _worker_ and .log)
-            worker_part = file_name[len(f"{base_name}_worker_"):-4]  # Remove .log suffix
-            worker_id = worker_part.split('_')[0]  # Take first part before any additional underscores
+            worker_part = file_name[
+                len(f"{base_name}_worker_") : -4
+            ]  # Remove .log suffix
+            worker_id = worker_part.split("_")[
+                0
+            ]  # Take first part before any additional underscores
             return LogFileInfo(log_path, LogType.WORKER, worker_id)
 
     # Unknown or malformed log file
@@ -198,7 +221,7 @@ def is_relevant_log_file(file_path: Path, base_log_path: Optional[str]) -> bool:
     if file_name == f"{base_name}.log":
         return True
 
-    if file_name.startswith(f"{base_name}_worker_") and file_name.endswith('.log'):
+    if file_name.startswith(f"{base_name}_worker_") and file_name.endswith(".log"):
         return True
 
     return False
@@ -214,7 +237,7 @@ def is_openhcs_log_file(file_path: Path) -> bool:
     Returns:
         bool: True if file is an OpenHCS log file
     """
-    if not file_path.name.endswith('.log'):
+    if not file_path.name.endswith(".log"):
         return False
 
     file_name = file_path.name
@@ -228,10 +251,10 @@ def is_openhcs_log_file(file_path: Path) -> bool:
     # - napari_detached_port_*.log (Napari viewer)
 
     openhcs_patterns = [
-        'openhcs_',
-        'pyqt_gui_subprocess_',
-        'zmq_worker_',
-        'napari_detached_'
+        "openhcs_",
+        "pyqt_gui_subprocess_",
+        "zmq_worker_",
+        "napari_detached_",
     ]
 
     return any(file_name.startswith(pattern) for pattern in openhcs_patterns)
@@ -250,8 +273,8 @@ def infer_base_log_path(file_path: Path) -> str:
     file_name = file_path.name
 
     # Handle worker logs: remove _worker_* suffix
-    if '_worker_' in file_name:
-        base_name = file_name.split('_worker_')[0]
+    if "_worker_" in file_name:
+        base_name = file_name.split("_worker_")[0]
     else:
         # Handle main subprocess logs: remove .log extension
         base_name = file_path.stem
