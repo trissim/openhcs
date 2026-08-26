@@ -978,7 +978,7 @@
       },
       {
         "path": "openhcs/agent/services/ui_bridge_service.py",
-        "sha256": "60aae652a9ca101761590382f9aa327153ccdeadb0843237b9aa2e78ac17c469",
+        "sha256": "7892f15a32e824ef361b81b671eafca5ef787c8d7982666e5d1f696721328000",
         "role": "Owns agent-to-UI declaration inspection and mutation, including code and form synchronisation."
       },
       {
@@ -1033,7 +1033,8 @@
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete reference against the current UI bridge and config-window navigation owners; focused tests and a fresh desktop MCP probe proved that field requests select their declared tab and unsupported targets are not reported as navigated.",
       "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; revised its startup wording and confirmed the remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete interface reference against the shared endpoint catalogue service; a live dark-themed Function Selector remained responsive during loading and resolved the exact selected callable."
+      "On 2026-08-25, re-read the complete interface reference against the shared endpoint catalogue service; a live dark-themed Function Selector remained responsive during loading and resolved the exact selected callable.",
+      "On 2026-08-26, re-read the complete interface reference after the UI bridge service default became a projection of its connection declaration; desktop workspace, editing, and navigation guidance remains accurate."
     ]
   },
   {
@@ -2694,7 +2695,7 @@
       },
       {
         "path": "openhcs/agent/services/ui_bridge_service.py",
-        "sha256": "60aae652a9ca101761590382f9aa327153ccdeadb0843237b9aa2e78ac17c469",
+        "sha256": "7892f15a32e824ef361b81b671eafca5ef787c8d7982666e5d1f696721328000",
         "role": "Owns agent-to-UI declaration inspection and mutation, including code and form synchronisation."
       },
       {
@@ -2764,7 +2765,8 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-read the complete guide and changed authorities; 137 focused UI bridge and Pipeline Editor tests passed, including read-only rejection and semantic no-op application, and live UI round trips confirmed apply, repeat, and stale-revision behaviour.",
       "Re-read callable occurrence claims against FunctionStep.same_declaration and the repeated-step history regression.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-26, re-read the complete how-to after the UI bridge default connection stopped repeating its timeout value; code-document editing and state-reconciliation behavior remains unchanged."
     ]
   },
   {
@@ -3193,7 +3195,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "6f13c9f0c1e1d4d744f03f94edc90d881fa1dc19144a9fab01a5ad4568feac54",
+        "sha256": "521690e64d30c750675cb4d338ac673be381ec3a572ec944685eed643bd9bf28",
         "role": "Proves MCP server tool registration, request handling, and lifecycle behaviour."
       }
     ],
@@ -3214,7 +3216,8 @@
       "On 2026-08-24, re-read the complete client how-to after selected-workflow receipt outcomes became declaration-owned; installation, connection, discovery, and recovery guidance remain accurate.",
       "On 2026-08-24, re-read the complete client how-to after stdio output containment moved to a dedicated transport owner; installation, registration, path-policy, and reconnect guidance remain accurate.",
       "On 2026-08-25, re-read the complete client how-to after viewer-only MCP regressions changed the shared server test authority; installation, registration, path-policy, and reconnect guidance remain unchanged.",
-      "On 2026-08-25, re-read the complete client how-to after declaration-derived development-client surface preflight changed shared capability and test authorities; installed-server surface selection and user-client guidance remain accurate."
+      "On 2026-08-25, re-read the complete client how-to after declaration-derived development-client surface preflight changed shared capability and test authorities; installed-server surface selection and user-client guidance remain accurate.",
+      "On 2026-08-26, re-read the complete client how-to after UI and viewer MCP timeout regressions changed the shared server-test authority; installation, registration, path policy, and GUI attachment guidance remains accurate."
     ]
   },
   {

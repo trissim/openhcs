@@ -1572,7 +1572,7 @@
   },
   {
     "path": "docs/source/architecture/mcp_distribution.rst",
-    "source_sha256": "15644f93a243fa84b657092f8fa42f432111d7ca5a18f63775b05525d7e3467e",
+    "source_sha256": "f9dec98aa36cd77a8d9cb3a3fd05bcdaeed355147794fc80e51c2f4860055142",
     "audience": [
       "OpenHCS MCP maintainers",
       "packaging and hosted-deployment integrators"
@@ -1604,6 +1604,21 @@
         "path": "openhcs/mcp/server.py",
         "sha256": "6f586551780a9981c472808571569f39a63710132e091fe9231914f8aee35944",
         "role": "Binds the selected declaration registry into the local stdio MCP server."
+      },
+      {
+        "path": "openhcs/mcp/control_timeout.py",
+        "sha256": "4934c6333edc73a15f7df9788505f9ccf1859d47e9ca95a4f55e0c18395828ca",
+        "role": "Projects UI-bridge and viewer connection timeout declarations into bounded MCP caller policies."
+      },
+      {
+        "path": "openhcs/agent/dto/ui_bridge.py",
+        "sha256": "1f85b0ec5f10b03e97d067b1805bf4782abd756114fd6c881586b33583921ca4",
+        "role": "Declares the UI bridge connection and its default control timeout."
+      },
+      {
+        "path": "openhcs/agent/dto/viewer.py",
+        "sha256": "bb3ca36d0cca3f0c5287142a15ca9c882003bb290f3c1cdafbcd5f5b24a704a2",
+        "role": "Declares viewer control requests and their default timeout."
       },
       {
         "path": "openhcs/mcp/context.py",
@@ -1692,11 +1707,12 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "6f13c9f0c1e1d4d744f03f94edc90d881fa1dc19144a9fab01a5ad4568feac54",
+        "sha256": "521690e64d30c750675cb4d338ac673be381ec3a572ec944685eed643bd9bf28",
         "role": "Proves MCP registration, declaration-derived development-client surface preflight, and rejection of undeclared native capture."
       }
     ],
     "findings": [
+      "The MCP adapter owned a separate 750-millisecond default and two-second cap for UI and viewer requests; it now derives both bounds from the corresponding connection declarations.",
       "The page claimed multiple transport projections but described only local stdio; it now explains the declaration-filtered, read-only hosted HTTP lane and its security owner.",
       "The desktop profile boundary now states that both UI-owned and independent headless execution are available while retaining separate state owners.",
       "The Windows distribution explanation now distinguishes the stable launcher cache from the separately published current-environment authority and its bounded sharing-violation retry.",
@@ -1727,7 +1743,8 @@
       "On 2026-08-25, a combined UI bridge run exposed a deleted QDockWidget wrapper during dynamic target lookup; the new regression deletes the C++ object after discovery and proves OpenHCS reuses pyqt-reactive's live-window projection instead of calling QWidget APIs on stale wrappers.",
       "On 2026-08-25, re-read the complete explanation and revised its local-surface section after the development client gained declaration-derived preflight; focused capability and MCP tests plus fresh desktop/full probes proved the selected-profile boundary.",
       "On 2026-08-25, re-read the complete distribution explanation against the local saved-endpoint composition root and the hosted self-contained boundary; a fresh stdio MCP client used a non-default TCP endpoint to author and render a valid step.",
-      "On 2026-08-25, re-read the complete page after the saved endpoint became a schema-derived field projection; 25 focused config and headless MCP regressions passed, and a fresh stdio MCP process used TCP port 17994 to resolve, validate, and render an exact threshold_otsu step."
+      "On 2026-08-25, re-read the complete page after the saved endpoint became a schema-derived field projection; 25 focused config and headless MCP regressions passed, and a fresh stdio MCP process used TCP port 17994 to resolve, validate, and render an exact threshold_otsu step.",
+      "On 2026-08-26, re-read the complete explanation after MCP UI and viewer timeout bounds began deriving from their connection declarations; 285 MCP regressions and an isolated live desktop/MCP action probe passed."
     ]
   },
   {

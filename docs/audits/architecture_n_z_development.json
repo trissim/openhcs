@@ -2511,7 +2511,7 @@
   },
   {
     "path": "docs/source/development/mcp_development.rst",
-    "source_sha256": "de9684b35661b0f1bfaff91a3b35751e16c8b5f968758fe56643d6392770efb7",
+    "source_sha256": "f30e4359e9767cd5f00fa61d648e3adb4871fcc9459781f50d0d8c1b4401a8b9",
     "audience": [
       "OpenHCS MCP developers"
     ],
@@ -2534,6 +2534,21 @@
         "role": "MCP dev-client session, declaration-derived command surface validation, receipt decoding, skip-reason-owned summary status, timeout, and workflow-owned terminal-state criteria."
       },
       {
+        "path": "openhcs/mcp/control_timeout.py",
+        "sha256": "4934c6333edc73a15f7df9788505f9ccf1859d47e9ca95a4f55e0c18395828ca",
+        "role": "Projects the UI-bridge and viewer declarations into bounded development-client control timeouts."
+      },
+      {
+        "path": "openhcs/agent/dto/ui_bridge.py",
+        "sha256": "1f85b0ec5f10b03e97d067b1805bf4782abd756114fd6c881586b33583921ca4",
+        "role": "Declares the default UI bridge connection timeout."
+      },
+      {
+        "path": "openhcs/agent/dto/viewer.py",
+        "sha256": "bb3ca36d0cca3f0c5287142a15ca9c882003bb290f3c1cdafbcd5f5b24a704a2",
+        "role": "Declares the default viewer control timeout."
+      },
+      {
         "path": "openhcs/mcp/dev_client_commands/ui.py",
         "sha256": "687be22c8240023d423f1214980df1d7a4ba877f07ffc9b311bd6c681bdf0001",
         "role": "Selected-workflow dispatch ordering: baseline, bridge receipt, criterion-governed domain-state polling, and compact result rendering."
@@ -2545,7 +2560,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "6f13c9f0c1e1d4d744f03f94edc90d881fa1dc19144a9fab01a5ad4568feac54",
+        "sha256": "521690e64d30c750675cb4d338ac673be381ec3a572ec944685eed643bd9bf28",
         "role": "Regression proof for selected-surface preflight, stale-row rejection, idempotent initialization, and every declared or malformed bridge-receipt continuation outcome."
       },
       {
@@ -2615,6 +2630,7 @@
       }
     ],
     "findings": [
+      "The development guide described bounded UI and viewer calls without identifying their connection declarations as the timeout authority or stating the five-second bound.",
       "The development workflow did not explain that submit_timeout_ms spans cold startup or distinguish a known pre-dispatch timeout from an unknown post-dispatch outcome.",
       "The workflow did not explain how to recover when a client-owned MCP process and desktop bridge were launched from incompatible OpenHCS environments.",
       "The selected-workflow waiter could accept a terminal Plate Manager row from an earlier operation without proving dispatch receipt or a state revision.",
@@ -2643,7 +2659,8 @@
       "On 2026-08-25, re-read the complete how-to against the current viewer command declarations and added the bounded ROI-summary and atomic-isolation probes without duplicating their argument schema.",
       "Three isolated real desktop, MCP, ZMQ, execution, and Napari rehearsals completed all nine acceptance requirements; ROI summaries returned in 0.063-0.485 seconds and bulk isolation in 0.078-1.078 seconds within the 2-second command budget, with no UI-log errors.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete how-to and revised the fresh and persistent development workflow after declaration-derived selected-surface preflight was added; focused tests and fresh desktop/full probes passed."
+      "On 2026-08-25, re-read the complete how-to and revised the fresh and persistent development workflow after declaration-derived selected-surface preflight was added; focused tests and fresh desktop/full probes passed.",
+      "On 2026-08-26, re-read the complete how-to against the declaration-derived UI and viewer timeout policies; the explicit two-second example remains valid beneath the declared five-second maximum, and focused MCP plus live desktop probes passed."
     ]
   },
   {

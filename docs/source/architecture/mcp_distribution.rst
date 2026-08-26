@@ -42,6 +42,9 @@ Local process lane
 The local MCP server runs over stdio and is owned by the client process. It
 does not import or host the PyQt UI. GUI, viewer, and local runtime capabilities
 remain local-only and attach through their authenticated process bridges.
+UI-bridge and viewer control budgets remain facts of their respective
+connection declarations. MCP timeout policies bound caller overrides from
+those declarations instead of owning a separate adapter timeout.
 
 Local function discovery attaches to the configured execution endpoint and
 uses the same endpoint-owned catalogue as the desktop Function Selector. Search

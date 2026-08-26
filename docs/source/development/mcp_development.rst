@@ -138,9 +138,11 @@ OpenHCS source.
 
 Use ``--timeout-seconds`` for the MCP client-side timeout. In shell mode it is
 the default for entered commands, while an option on an entered command wins.
-UI and viewer tools
-also use bounded OpenHCS control timeouts, so a broken bridge or stale viewer
-should fail quickly instead of blocking the development loop.
+UI and viewer tools also use bounded OpenHCS control timeouts derived from their
+connection declarations. Their default and maximum control budget is currently
+five seconds; ``--timeout-ms`` can request a shorter budget, as in the example
+above. A broken bridge or stale viewer therefore fails within a declared bound
+instead of blocking the development loop.
 
 Headless compile and execution submissions apply ``submit_timeout_ms`` as one
 budget across execution-server startup, progress registration, task
