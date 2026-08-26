@@ -77,10 +77,7 @@ def test_settled_viewer_state_survives_zmq_execution_result_transport(
         client_address=None,
         status=ExecutionStatus.RUNNING.value,
     )
-    monkeypatch.setattr(
-        "openhcs.runtime.zmq_worker_execution.Path.home",
-        lambda: tmp_path,
-    )
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
 
     returned = ZMQWorkerExecutionRequest(
         execution_id="exec",
