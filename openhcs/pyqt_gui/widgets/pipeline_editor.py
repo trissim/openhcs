@@ -22,6 +22,7 @@ from typing import (
     Self,
     Tuple,
     TypeVar,
+    cast,
 )
 
 from objectstate.object_state import ObjectState, ObjectStateRegistry
@@ -174,6 +175,8 @@ PipelineEditorActionTargetT = TypeVar("PipelineEditorActionTargetT")
 class PipelineEditorActionTargetMode(str, Enum):
     """ObjectState target mode carrying its target-selection behavior."""
 
+    _selector: Callable[[object, object], object]
+
     CURRENT_PIPELINE = (
         "current_pipeline",
         lambda current_pipeline, _selected_steps: current_pipeline,
@@ -200,7 +203,10 @@ class PipelineEditorActionTargetMode(str, Enum):
         selected_steps: PipelineEditorActionTargetT,
     ) -> PipelineEditorActionTargetT:
         """Select the action target through this member's leaf."""
-        return self._selector(current_pipeline, selected_steps)
+        return cast(
+            PipelineEditorActionTargetT,
+            self._selector(current_pipeline, selected_steps),
+        )
 
 
 class PipelineEditorAction(ManagerButtonPresentationMixin, str, Enum):

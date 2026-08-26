@@ -249,6 +249,8 @@ class HostedHttpCapabilityTransportSemantics(CapabilityTransportSemanticsABC):
 class CapabilityTransport(Enum):
     """MCP exposure boundary carrying its nominal server semantics."""
 
+    _semantics_type: type[CapabilityTransportSemanticsABC]
+
     LOCAL_STDIO = ("local_stdio", LocalStdioCapabilityTransportSemantics)
     HOSTED_STREAMABLE_HTTP = (
         "hosted_streamable_http",
