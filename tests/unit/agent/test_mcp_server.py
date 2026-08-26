@@ -14773,13 +14773,19 @@ def test_mcp_stdio_bootstrap_failure_keeps_transport_open(tmp_path):
     current_pythonpath = os.environ.get("PYTHONPATH")
     if current_pythonpath is not None:
         pythonpath_parts.append(current_pythonpath)
+    # Subprocess tracing races the MCP SDK teardown after successful responses.
+    child_environment = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.startswith("COV_CORE_")
+    }
 
     async def call_stdio_server():
         parameters = StdioServerParameters(
             command=sys.executable,
             args=("-m", "openhcs.mcp"),
             env={
-                **os.environ,
+                **child_environment,
                 "PYTHONPATH": os.pathsep.join(pythonpath_parts),
             },
         )

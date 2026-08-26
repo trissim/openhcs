@@ -2562,7 +2562,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "bd226013c840132d901b46b2cabf6cb4aecf3b98eaf6f1a8dc3ab58c6a15f472",
+        "sha256": "8fbd6632f929186485697b1739a49cda9b55254c08c800e7daa2f446bcf9f5fe",
         "role": "Regression proof for selected-surface preflight, stale-row rejection, idempotent initialization, and every declared or malformed bridge-receipt continuation outcome."
       },
       {
@@ -2663,7 +2663,8 @@
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete how-to and revised the fresh and persistent development workflow after declaration-derived selected-surface preflight was added; focused tests and fresh desktop/full probes passed.",
       "On 2026-08-26, re-read the complete how-to against the declaration-derived UI and viewer timeout policies; the explicit two-second example remains valid beneath the declared five-second maximum, and focused MCP plus live desktop probes passed.",
-      "On 2026-08-26, re-read the complete how-to after duplicate UI and viewer command-profile subclasses were removed; both commands still derive the same five-second maximum from their connection contracts, so documented invocations and timeout behavior remain unchanged."
+      "On 2026-08-26, re-read the complete how-to after duplicate UI and viewer command-profile subclasses were removed; both commands still derive the same five-second maximum from their connection contracts, so documented invocations and timeout behavior remain unchanged.",
+      "On 2026-08-26, re-read the complete how-to after the stdio bootstrap regression isolated its spawned process from pytest-cov instrumentation; current-checkout commands, timeout ownership, and restart guidance remain unchanged."
     ]
   },
   {

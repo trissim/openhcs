@@ -1709,7 +1709,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "bd226013c840132d901b46b2cabf6cb4aecf3b98eaf6f1a8dc3ab58c6a15f472",
+        "sha256": "8fbd6632f929186485697b1739a49cda9b55254c08c800e7daa2f446bcf9f5fe",
         "role": "Proves MCP registration, declaration-derived development-client surface preflight, and rejection of undeclared native capture."
       }
     ],
@@ -1750,7 +1750,8 @@
       "On 2026-08-25, re-read the complete distribution explanation against the local saved-endpoint composition root and the hosted self-contained boundary; a fresh stdio MCP client used a non-default TCP endpoint to author and render a valid step.",
       "On 2026-08-25, re-read the complete page after the saved endpoint became a schema-derived field projection; 25 focused config and headless MCP regressions passed, and a fresh stdio MCP process used TCP port 17994 to resolve, validate, and render an exact threshold_otsu step.",
       "On 2026-08-26, re-read the complete explanation after MCP UI and viewer timeout bounds began deriving from their connection declarations; 285 MCP regressions and an isolated live desktop/MCP action probe passed.",
-      "On 2026-08-26, re-read the complete distribution explanation against the changed capability, server, timeout-policy, client-registration, and regression-test authorities; 342 focused tests passed, and NRA no longer reports the former transport, timeout-profile, or Claude platform redispatch."
+      "On 2026-08-26, re-read the complete distribution explanation against the changed capability, server, timeout-policy, client-registration, and regression-test authorities; 342 focused tests passed, and NRA no longer reports the former transport, timeout-profile, or Claude platform redispatch.",
+      "On 2026-08-26, re-read the complete explanation after the stdio bootstrap regression isolated its spawned process from pytest-cov instrumentation; product transport, capability, and distribution semantics remain unchanged."
     ]
   },
   {

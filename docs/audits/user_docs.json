@@ -3197,7 +3197,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "bd226013c840132d901b46b2cabf6cb4aecf3b98eaf6f1a8dc3ab58c6a15f472",
+        "sha256": "8fbd6632f929186485697b1739a49cda9b55254c08c800e7daa2f446bcf9f5fe",
         "role": "Proves MCP server tool registration, request handling, and lifecycle behaviour."
       }
     ],
@@ -3220,7 +3220,8 @@
       "On 2026-08-25, re-read the complete client how-to after viewer-only MCP regressions changed the shared server test authority; installation, registration, path-policy, and reconnect guidance remain unchanged.",
       "On 2026-08-25, re-read the complete client how-to after declaration-derived development-client surface preflight changed shared capability and test authorities; installed-server surface selection and user-client guidance remain accurate.",
       "On 2026-08-26, re-read the complete client how-to after UI and viewer MCP timeout regressions changed the shared server-test authority; installation, registration, path policy, and GUI attachment guidance remains accurate.",
-      "On 2026-08-26, re-read the complete client how-to against the changed capability, registration, and regression-test authorities; registered platform leaves now own Claude Desktop paths, while supported clients, commands, configuration behavior, and reconnect guidance remain unchanged."
+      "On 2026-08-26, re-read the complete client how-to against the changed capability, registration, and regression-test authorities; registered platform leaves now own Claude Desktop paths, while supported clients, commands, configuration behavior, and reconnect guidance remain unchanged.",
+      "On 2026-08-26, re-read the complete client how-to after the stdio bootstrap regression isolated its spawned process from pytest-cov instrumentation; installation, registration, reconnect, and GUI attachment guidance remains unchanged."
     ]
   },
   {
