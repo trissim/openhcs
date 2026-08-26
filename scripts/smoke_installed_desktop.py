@@ -361,6 +361,8 @@ def _smoke_installed_gui(
             str(INSTALLED_GUI_SMOKE_PATH.resolve()),
             "--forbid-import-root",
             str(REPOSITORY_ROOT),
+            "--evidence-directory",
+            str((install_root / "gui-evidence").resolve()),
         ],
         cwd=install_root,
         environment=environment,

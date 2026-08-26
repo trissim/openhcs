@@ -75,5 +75,17 @@ jobs:
           if [ "$RUNNER_OS" == "Linux" ]; then
             export QT_QPA_PLATFORM=offscreen
           fi
+          mkdir -p "$RUNNER_TEMP/openhcs-published-gui-evidence"
           python "$GITHUB_WORKSPACE/scripts/smoke_installed_gui.py" \
-            --forbid-import-root "$GITHUB_WORKSPACE"
+            --forbid-import-root "$GITHUB_WORKSPACE" \
+            --evidence-directory "$RUNNER_TEMP/openhcs-published-gui-evidence" | \
+            tee "$RUNNER_TEMP/openhcs-published-gui-evidence/smoke.json"
+
+      - name: Upload published GUI evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: published-gui-${{ matrix.os }}
+          path: ${{ runner.temp }}/openhcs-published-gui-evidence
+          if-no-files-found: warn
+          retention-days: 14

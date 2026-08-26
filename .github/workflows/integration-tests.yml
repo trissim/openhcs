@@ -259,8 +259,20 @@ jobs:
           if [ "$RUNNER_OS" == "Linux" ]; then
             export QT_QPA_PLATFORM=offscreen
           fi
+          mkdir -p "$RUNNER_TEMP/openhcs-desktop-candidate-evidence"
           python -I "$GITHUB_WORKSPACE/scripts/smoke_installed_gui.py" \
-            --forbid-import-root "$GITHUB_WORKSPACE"
+            --forbid-import-root "$GITHUB_WORKSPACE" \
+            --evidence-directory "$RUNNER_TEMP/openhcs-desktop-candidate-evidence" | \
+            tee "$RUNNER_TEMP/openhcs-desktop-candidate-evidence/smoke.json"
+
+      - name: Upload native GUI evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-candidate-gui-${{ matrix.os }}
+          path: ${{ runner.temp }}/openhcs-desktop-candidate-evidence
+          if-no-files-found: warn
+          retention-days: 14
 
   # Group 1: Python version boundary testing (6 jobs)
   # Test oldest (3.11) and newest (3.13) Python on all 3 OSes
@@ -1747,8 +1759,10 @@ jobs:
           if [ "$RUNNER_OS" == "Linux" ]; then
             export QT_QPA_PLATFORM=offscreen
           fi
+          mkdir -p "$RUNNER_TEMP/openhcs-pypi-gui-evidence"
           python "$GITHUB_WORKSPACE/scripts/smoke_installed_gui.py" \
-            --forbid-import-root "$GITHUB_WORKSPACE"
+            --forbid-import-root "$GITHUB_WORKSPACE" \
+            --evidence-directory "$RUNNER_TEMP/openhcs-pypi-gui-evidence"
 
   # Run the real 30-case headless comparator once. The cross-OS/Python matrix
   # above owns generated public-boundary coverage; this lane owns semantic
@@ -2164,7 +2178,8 @@ jobs:
           XDG_CONFIG_HOME="$RUNNER_TEMP/openhcs-live-mcp-config" \
           XDG_DATA_HOME="$RUNNER_TEMP/openhcs-live-mcp-data" \
             python -I "$GITHUB_WORKSPACE/scripts/smoke_installed_gui.py" \
-              --forbid-import-root "$GITHUB_WORKSPACE"
+              --forbid-import-root "$GITHUB_WORKSPACE" \
+              --evidence-directory "$RUNNER_TEMP/openhcs-wheel-gui-evidence"
           python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" -- \
             tests/unit/pyqt_gui/test_progress_tree_aggregation.py -q
           for group in 1 2 3 4 5 6; do

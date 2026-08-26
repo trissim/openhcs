@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import shutil
 import sys
 import tempfile
 import threading
@@ -15,11 +17,90 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar, get_type_hints
 
 if TYPE_CHECKING:
-    from openhcs.mcp.dev_client import McpDevCommandExecution
+    from openhcs.agent.dto.ui_bridge import UiWindowSnapshotResult
+    from openhcs.mcp.dev_client import McpDevClient, McpDevCommandExecution
     from openhcs.pyqt_gui.config import UIConfig
 
 JsonValue = str | int | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
 AgentDtoT = TypeVar("AgentDtoT")
+
+
+class InstalledGuiSnapshotEvidenceAuthority:
+    """Retain capability-owned native screenshot evidence for CI."""
+
+    @staticmethod
+    def _require_content_identity(
+        path: Path,
+        *,
+        sha256: str,
+        size_bytes: int,
+    ) -> None:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+        if digest.hexdigest() != sha256:
+            raise AssertionError(
+                "Installed GUI snapshot SHA-256 does not match its file."
+            )
+        if path.stat().st_size != size_bytes:
+            raise AssertionError("Installed GUI snapshot size does not match its file.")
+
+    @classmethod
+    def retain(
+        cls,
+        result: UiWindowSnapshotResult,
+        *,
+        evidence_directory: Path,
+    ) -> UiWindowSnapshotResult:
+        """Validate and retain one capability result without mirroring its fields."""
+
+        if not result.captured or result.errors:
+            raise AssertionError(f"Installed GUI snapshot failed: {result}")
+        resource = result.resource
+        if resource is None or resource.path is None:
+            raise AssertionError("Installed GUI snapshot omitted its resource path.")
+        if resource.sha256 is None or resource.size_bytes is None:
+            raise AssertionError("Installed GUI snapshot omitted content identity.")
+        if resource.mime_type != "image/png":
+            raise AssertionError(
+                f"Installed GUI snapshot has unexpected MIME type: {resource.mime_type}"
+            )
+        if result.width is None or result.width <= 0:
+            raise AssertionError("Installed GUI snapshot omitted a valid width.")
+        if result.height is None or result.height <= 0:
+            raise AssertionError("Installed GUI snapshot omitted a valid height.")
+
+        source_path = Path(resource.path).resolve()
+        evidence_root = evidence_directory.resolve()
+        if source_path.suffix.lower() != ".png" or not source_path.is_file():
+            raise AssertionError(
+                f"Installed GUI snapshot is not a readable PNG: {source_path}"
+            )
+        cls._require_content_identity(
+            source_path,
+            sha256=resource.sha256,
+            size_bytes=resource.size_bytes,
+        )
+
+        evidence_root.mkdir(parents=True, exist_ok=True)
+        snapshot_path = evidence_root / source_path.name
+        if source_path != snapshot_path:
+            shutil.copy2(source_path, snapshot_path)
+        cls._require_content_identity(
+            snapshot_path,
+            sha256=resource.sha256,
+            size_bytes=resource.size_bytes,
+        )
+        return replace(
+            result,
+            output_dir_path=str(evidence_root),
+            resource=replace(
+                resource,
+                uri=snapshot_path.as_uri(),
+                path=str(snapshot_path),
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +115,7 @@ class InstalledLiveMcpSmokeResult:
     health_status: str
     mcp_server_source_path: str
     mcp_server_version: str
+    snapshots: tuple[UiWindowSnapshotResult, ...]
     window_count_after_action: int
     window_count_before_action: int
 
@@ -277,9 +359,49 @@ def _declared_identity_values(
     return tuple(value for value in values if isinstance(value, str))
 
 
+def _capture_installed_gui_snapshot(
+    client: McpDevClient,
+    *,
+    descriptor_path: Path,
+    evidence_directory: Path,
+    timeout_seconds: float,
+    window_id: str,
+) -> UiWindowSnapshotResult:
+    """Capture one live window through the production MCP capability."""
+
+    from pyqt_reactive.services.window_snapshot import WindowSnapshotCaptureScope
+
+    from openhcs.agent.capabilities import UiSnapshotWindowCapability
+    from openhcs.agent.dto.ui_bridge import UiWindowSnapshotResult
+    from openhcs.mcp.dev_client_commands.ui import WindowSnapshotCommandSpec
+
+    execution = client.execute(
+        (
+            WindowSnapshotCommandSpec.command,
+            window_id,
+            "--capture-scope",
+            WindowSnapshotCaptureScope.WINDOW.value,
+            "--descriptor-file-path",
+            str(descriptor_path),
+            "--json",
+        ),
+        timeout_seconds=timeout_seconds,
+    )
+    result = _typed_tool_payload(
+        execution,
+        tool_name=UiSnapshotWindowCapability.name,
+        payload_type=UiWindowSnapshotResult,
+    )
+    return InstalledGuiSnapshotEvidenceAuthority.retain(
+        result,
+        evidence_directory=evidence_directory,
+    )
+
+
 def run_installed_live_mcp_smoke(
     *,
     descriptor_path: Path,
+    evidence_directory: Path,
     forbidden_root: Path,
     timeout_seconds: float,
 ) -> InstalledLiveMcpSmokeResult:
@@ -433,6 +555,36 @@ def run_installed_live_mcp_smoke(
                 f"before={len(windows_before)} after={len(windows_after)}"
             )
 
+        window_ids_before = frozenset(
+            _declared_identity_values(
+                windows_before,
+                identity_type=UiWindowIdentity,
+            )
+        )
+        window_ids_after = frozenset(
+            _declared_identity_values(
+                windows_after,
+                identity_type=UiWindowIdentity,
+            )
+        )
+        new_window_ids = window_ids_after - window_ids_before
+        if not new_window_ids:
+            raise AssertionError("Installed UI action exposed no new window identity.")
+        evidence_directory.mkdir(parents=True, exist_ok=True)
+        snapshots = tuple(
+            _capture_installed_gui_snapshot(
+                client,
+                descriptor_path=descriptor_path,
+                evidence_directory=evidence_directory,
+                timeout_seconds=timeout_seconds,
+                window_id=window_id,
+            )
+            for window_id in (
+                MainWindowWidgetIdentity.require_value(),
+                *sorted(new_window_ids),
+            )
+        )
+
     return InstalledLiveMcpSmokeResult(
         action_status=action_result.status,
         bridge_count=len(bridge_catalog.bridges),
@@ -444,6 +596,7 @@ def run_installed_live_mcp_smoke(
         health_status=health.status,
         mcp_server_source_path=str(server_source_path),
         mcp_server_version=health.openhcs_version,
+        snapshots=snapshots,
         window_count_after_action=len(windows_after),
         window_count_before_action=len(windows_before),
     )
@@ -475,6 +628,7 @@ def shutdown_isolated_execution_endpoint(ui_config: UIConfig) -> None:
 
 def run_installed_gui_smoke(
     *,
+    evidence_directory: Path,
     forbidden_root: Path,
     timeout_seconds: float,
 ) -> InstalledGuiSmokeResult:
@@ -544,6 +698,7 @@ def run_installed_gui_smoke(
                 result: InstalledLiveMcpSmokeResult | Exception = (
                     run_installed_live_mcp_smoke(
                         descriptor_path=descriptor_path,
+                        evidence_directory=evidence_directory,
                         forbidden_root=forbidden_root,
                         timeout_seconds=max(5.0, timeout_seconds / 4),
                     )
@@ -618,6 +773,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Source checkout that must not own the imported openhcs package.",
     )
     parser.add_argument(
+        "--evidence-directory",
+        type=Path,
+        required=True,
+        help="Directory that receives validated native GUI screenshot evidence.",
+    )
+    parser.add_argument(
         "--timeout-seconds",
         type=float,
         default=60.0,
@@ -625,11 +786,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     original_working_directory = Path.cwd()
+    evidence_directory = args.evidence_directory.resolve()
     with tempfile.TemporaryDirectory(prefix="openhcs-installed-gui-") as directory:
         working_directory = Path(directory).resolve()
         os.chdir(working_directory)
         try:
             result = run_installed_gui_smoke(
+                evidence_directory=evidence_directory,
                 forbidden_root=args.forbid_import_root,
                 timeout_seconds=args.timeout_seconds,
             )

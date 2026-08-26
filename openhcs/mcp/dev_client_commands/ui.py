@@ -53,6 +53,7 @@ from openhcs.mcp.dev_client_core import (
     WorkflowStatePollPolicy,
     add_code_document_source_options,
     add_object_state_field_filter_options,
+    add_request_field_option,
     add_ui_connection_options,
     call_mcp_tool,
     code_document_source_from_args,
@@ -64,8 +65,8 @@ from openhcs.mcp.dev_client_core import (
     ui_connection_arguments,
     ui_request_tool_arguments,
     ui_tool_arguments,
-    workflow_operation_receipt_tool_arguments,
     workflow_operation_receipt_skip_reason,
+    workflow_operation_receipt_tool_arguments,
     workflow_poll_skip_reason,
     workflow_poll_summary_result,
     workflow_poll_terminal_status,
@@ -1006,6 +1007,12 @@ class WindowSnapshotCommandSpec(CapabilityBackedCommandSpec):
 
     def configure_parser(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("window_id")
+        add_request_field_option(
+            parser,
+            UiWindowSnapshotRequest,
+            "output_dir_path",
+            "--output-dir-path",
+        )
         parser.add_argument(
             "--capture-scope",
             choices=tuple(scope.value for scope in WindowSnapshotCaptureScope),
@@ -1025,6 +1032,7 @@ class WindowSnapshotCommandSpec(CapabilityBackedCommandSpec):
     ) -> tuple[McpDevToolCall, ...]:
         request = UiWindowSnapshotRequest.from_fields(
             window_id=args.window_id,
+            output_dir_path=args.output_dir_path,
             capture_scope=args.capture_scope,
             create_if_missing=args.create_if_missing,
         )

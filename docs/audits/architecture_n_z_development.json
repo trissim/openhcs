@@ -1837,12 +1837,12 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "4c83d1633df4ca2c97c19b66d61aa7bb629f4e7778b476d38ea57046f8246b6a",
+        "sha256": "e1b6d299fe8cbacc21f05b0460899fcccbe6e57bb63086f852912052eecd2d00",
         "role": "Executes the packaged restart worker against a real parent exit and detached restart command from the installed environment."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "710179b234553177603e8e72a5030d67977a168ddca6fb6c57fb369bf07250db",
+        "sha256": "bd1e852c8c58ed373cfbfb8b352cba0faf6cd5526206c236d62f429f863417a0",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, and environment to the restart-worker verifier and reports its result."
       },
       {
@@ -1909,7 +1909,8 @@
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete transition reference against revision-checked catalogue transport and typed endpoint shutdown; 152 ZMQRuntime tests and an isolated non-default TCP endpoint probe confirmed exact transport preservation and process cleanup.",
-      "On 2026-08-25, re-read the complete transition reference after formatting the custom-function runtime authority; the formatting-only change leaves its atomic catalogue projection and the documented ownership boundary unchanged."
+      "On 2026-08-25, re-read the complete transition reference after formatting the custom-function runtime authority; the formatting-only change leaves its atomic catalogue projection and the documented ownership boundary unchanged.",
+      "On 2026-08-26, re-read the complete transition reference after the installed desktop verifier began retaining MCP window snapshots; its declaration-allocated endpoint, exact cleanup, and transport-ownership claims remain unchanged."
     ]
   },
   {
@@ -2513,7 +2514,7 @@
   },
   {
     "path": "docs/source/development/mcp_development.rst",
-    "source_sha256": "f30e4359e9767cd5f00fa61d648e3adb4871fcc9459781f50d0d8c1b4401a8b9",
+    "source_sha256": "53401edaae71b38d6d8cf69ef8caf7c8561018ae308ffdd29cb587a818415bcc",
     "audience": [
       "OpenHCS MCP developers"
     ],
@@ -2552,8 +2553,8 @@
       },
       {
         "path": "openhcs/mcp/dev_client_commands/ui.py",
-        "sha256": "687be22c8240023d423f1214980df1d7a4ba877f07ffc9b311bd6c681bdf0001",
-        "role": "Selected-workflow dispatch ordering: baseline, bridge receipt, criterion-governed domain-state polling, and compact result rendering."
+        "sha256": "4adcdfda188eb98ebf0ffa1f4d758e0ff40eef7da0e20e37bf50f83997a50ae7",
+        "role": "Owns declaration-derived UI development commands, including selected-workflow ordering and the typed output-directory projection for window snapshots."
       },
       {
         "path": "openhcs/mcp/dev_client_commands/viewer.py",
@@ -2639,7 +2640,8 @@
       "Reusing a live UI exposed that idempotent initialization can complete without changing the Plate Manager revision; the workflow criterion now owns that exception while compile and run retain the stale-row guard.",
       "Capability-local stdout guards left delayed imports and background native output able to corrupt the persistent JSON-RPC stream; process stdout is now reserved once by the stdio transport.",
       "The command examples omitted the bounded ROI-summary and atomic viewer-isolation probes needed to validate current viewer agent workflows.",
-      "The how-to did not state that the development client validates commands against the selected declaration-derived surface before starting or dispatching; the selected-profile workflow now fails early with compatible registered profiles."
+      "The how-to did not state that the development client validates commands against the selected declaration-derived surface before starting or dispatching; the selected-profile workflow now fails early with compatible registered profiles.",
+      "The UI window-snapshot command could not select the request DTO's declared output directory even though the underlying capability and viewer command supported it; the CLI now projects that field through the shared request-option authority."
     ],
     "disposition": "revise",
     "validation": [
@@ -2664,7 +2666,8 @@
       "On 2026-08-25, re-read the complete how-to and revised the fresh and persistent development workflow after declaration-derived selected-surface preflight was added; focused tests and fresh desktop/full probes passed.",
       "On 2026-08-26, re-read the complete how-to against the declaration-derived UI and viewer timeout policies; the explicit two-second example remains valid beneath the declared five-second maximum, and focused MCP plus live desktop probes passed.",
       "On 2026-08-26, re-read the complete how-to after duplicate UI and viewer command-profile subclasses were removed; both commands still derive the same five-second maximum from their connection contracts, so documented invocations and timeout behavior remain unchanged.",
-      "On 2026-08-26, re-read the complete how-to after the stdio bootstrap regression isolated its spawned process from pytest-cov instrumentation; current-checkout commands, timeout ownership, and restart guidance remain unchanged."
+      "On 2026-08-26, re-read the complete how-to after the stdio bootstrap regression isolated its spawned process from pytest-cov instrumentation; current-checkout commands, timeout ownership, and restart guidance remain unchanged.",
+      "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete page after the UI snapshot CLI gained its declaration-derived output directory; the focused smoke and command tests passed and a live MCP capture produced validated PNG evidence."
     ]
   },
   {
@@ -2707,7 +2710,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "6a8044a6e56d9568f1977e30a0bffa10d479ae1df460946edd5a21209798d4b9",
+    "source_sha256": "84e3456efbfcb2d8aa86b1f37ec257274c7687c920534618315044f0c1599408",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2756,7 +2759,7 @@
       },
       {
         "path": ".github/workflows/publish.yml",
-        "sha256": "b33306657a5ad6b18d09f9df91c8dc49fba24eab9a1105eda89bac1015c35430",
+        "sha256": "b2bd88b326e0797fe4647ab220cf779fa6b229315bc3d8fba322007fcf0e255f",
         "role": "Exact-tag installer, installed-GUI startup, PyPI, GitHub Release, recovery, and MCP Registry workflow consuming the central release requirements."
       },
       {
@@ -2771,13 +2774,13 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "b6cbbee8db564ca371612224d62f1bb76435b9a793f944725df57672a9f53a0a",
-        "role": "Cross-platform source-candidate and published-dependency readiness, installed-wheel live GUI/MCP operation, native installer, signing-helper parse, and staged-update validation matrix."
+        "sha256": "c2b3d8a185e08cf2b6998470a3614d08a2804f239126e73119a302fc3456533a",
+        "role": "Cross-platform source-candidate and published-dependency readiness, installed-wheel live GUI/MCP operation with retained native screenshots, native installer, signing-helper parse, and staged-update validation matrix."
       },
       {
         "path": ".github/workflows/published-release-canary.yml",
-        "sha256": "0b3c83f2eb183b3545f176d703936df590f4ffb6bca0628d6d9ae6c8f71b9d20",
-        "role": "Daily Linux, Windows, and macOS live GUI/MCP proof for the dependency set resolved by the latest published desktop package."
+        "sha256": "b5b377bf774fd8c19045e7708279d062b3e8da1738b809a8adb79c79a33c1cf0",
+        "role": "Daily Linux, Windows, and macOS live GUI/MCP proof with retained screenshots for the dependency set resolved by the latest published desktop package."
       },
       {
         "path": ".github/workflows/docs.yml",
@@ -2786,13 +2789,13 @@
       },
       {
         "path": "scripts/smoke_installed_gui.py",
-        "sha256": "348b529b29e7a03862cbdf14cad0d8f82976dda55586d5a875db2967ef3367fd",
-        "role": "Constructs the installed application on declaration-allocated execution and authenticated bridge endpoints, then uses the packaged desktop MCP to verify identity, discover live windows, invoke a declared action, and clean up exact owned resources outside the checkout."
+        "sha256": "76124d0c66da2668067986f76c2ba994476cb0de6ac65fbef6682f493780d079",
+        "role": "Constructs the installed application on declaration-allocated endpoints, drives it through packaged MCP, validates retained window snapshots, and cleans up exact owned resources outside the checkout."
       },
       {
         "path": "tests/unit/test_smoke_installed_gui.py",
-        "sha256": "11393e2b2b675f68b99a065f62ed341c6120aa43d3b50436912ccc301f0eccac",
-        "role": "Proves the installed GUI/MCP probe rejects source-checkout contamination and derives both endpoint allocations from the configured transport authority."
+        "sha256": "e632d114ee67d5f9220a506f39bc11cc4791f4cbb8653095173efc1cf28ecd1f",
+        "role": "Proves source-checkout rejection, declaration-owned endpoint allocation, snapshot CLI projection, and emitted PNG identity validation for the installed GUI/MCP probe."
       },
       {
         "path": ".github/dependabot.yml",
@@ -2826,8 +2829,8 @@
       },
       {
         "path": "tests/unit/test_ci_package_boundaries.py",
-        "sha256": "aa1bc7b3197408d839e1068d95bc2cc4ffdbc99964b95da0443bf97de3be2df7",
-        "role": "Proves publication consumes the central release requirements instead of a copied workflow package list."
+        "sha256": "942e6c3b24de93a349b2cbc5bb92ff9604460fd851269b12bc8ffeb1831239b6",
+        "role": "Proves publication consumes central release requirements and that candidate and published GUI matrices retain their typed screenshot evidence."
       }
     ],
     "findings": [
@@ -2848,7 +2851,8 @@
       "The installed-GUI probe reused the default execution endpoint, allowing an existing desktop server to influence an otherwise isolated package canary; it now allocates the endpoint through the selected transport declaration.",
       "Installed GUI and MCP package checks terminated before either operated the other; the source-wheel, publication, and scheduled canaries now keep the packaged GUI live while the packaged desktop MCP discovers it and invokes a declared UI action.",
       "The fixed desktop candidate was operated before publication only on Linux, while Windows and macOS evidence remained behind the unpublished-dependency gate; a complementary source-candidate matrix now proves Windows and both macOS architectures alongside the Linux wheel lane.",
-      "The native source-candidate matrix still depended on published first-party tags, so the real installer and staged-update jobs were skipped exactly while those dependency releases were being prepared; the native lane now builds its complete wheelhouse from metadata-discovered submodules while the separate PyPI lane remains fail-closed on publication readiness."
+      "The native source-candidate matrix still depended on published first-party tags, so the real installer and staged-update jobs were skipped exactly while those dependency releases were being prepared; the native lane now builds its complete wheelhouse from metadata-discovered submodules while the separate PyPI lane remains fail-closed on publication readiness.",
+      "Cross-platform GUI canaries proved readiness and MCP actions but discarded the rendered UI, leaving native theming regressions outside retained evidence; candidate and published-package jobs now upload typed, hash-verified window snapshots."
     ],
     "disposition": "revise",
     "validation": [
@@ -2881,7 +2885,8 @@
       "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete page after separating native source-candidate evidence from published-wheel readiness; a real metadata-discovered nine-wheel build-only wheelhouse and focused installer/workflow regressions passed while the public PyPI installation lane remained gated.",
       "On 2026-08-26, GitHub rejected runner.temp in job-level env before scheduling any work; the exact wheelhouse path now originates in the runner-owned build step and crosses later platform steps through one declared output, with a regression preventing the invalid context from returning.",
       "On 2026-08-26, re-read the release how-to after the Documentation workflow took independent ownership of context-aware workflow validation; actionlint 1.7.12 passed every current workflow from its checksum-verified Linux binary.",
-      "On 2026-08-26, GitHub rejected an expression embedded in the large Windows installer run block at its 21000-character hosted parser ceiling; candidate outputs now cross through step-level env, and the repository-wide ceiling regression passed."
+      "On 2026-08-26, GitHub rejected an expression embedded in the large Windows installer run block at its 21000-character hosted parser ceiling; candidate outputs now cross through step-level env, and the repository-wide ceiling regression passed.",
+      "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after native GUI evidence became retained; 54 focused contract tests and a live 0.7.27 GUI/MCP run validated two PNGs through their typed paths, sizes, dimensions, and SHA-256 values."
     ]
   },
   {
@@ -2940,7 +2945,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "b6cbbee8db564ca371612224d62f1bb76435b9a793f944725df57672a9f53a0a",
+        "sha256": "c2b3d8a185e08cf2b6998470a3614d08a2804f239126e73119a302fc3456533a",
         "role": "Runs explicitly selected live OMERO variants and preserves component and table-service diagnostics on failure."
       }
     ],
@@ -2969,7 +2974,8 @@
       "On 2026-08-25, re-read and revised the complete OMERO testing how-to after its source lane became independent of dependency publication readiness; current submodule wheels remain the behavior proof and the public installer lane remains the publication proof.",
       "On 2026-08-26, re-read and revised the how-to against PolyStore's managed-repository wait and OpenHCS's packaged-only Tables-0 recovery; the full PolyStore suite and focused manager tests cover both ownership boundaries.",
       "On 2026-08-26, re-read the complete page after the integration workflow added an independent desktop candidate matrix; the OMERO source lane, publication independence, diagnostics, and lifecycle claims remain unchanged.",
-      "On 2026-08-26, re-read the full how-to after the native installer matrix began building current-source wheels independently; clarified that OMERO source evidence remains separate from the PyPI installation lane without changing its test selection or lifecycle ownership."
+      "On 2026-08-26, re-read the full how-to after the native installer matrix began building current-source wheels independently; clarified that OMERO source evidence remains separate from the PyPI installation lane without changing its test selection or lifecycle ownership.",
+      "On 2026-08-26, re-read the complete OMERO testing how-to after the shared integration workflow began retaining desktop GUI screenshots; OMERO selection, readiness, diagnostics, and lifecycle ownership are unchanged."
     ]
   },
   {

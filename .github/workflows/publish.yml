@@ -338,7 +338,9 @@ jobs:
           pip install "${WHEEL}[${DESKTOP_EXTRAS}]"
           python "$GITHUB_WORKSPACE/scripts/sync_mcp_release_metadata.py" --check --capability-requirements --expected-version "${OPENHCS_RELEASE_VERSION#v}"
           python "$GITHUB_WORKSPACE/scripts/smoke_installed_mcp.py" --forbid-import-root "$GITHUB_WORKSPACE"
-          python "$GITHUB_WORKSPACE/scripts/smoke_installed_gui.py" --forbid-import-root "$GITHUB_WORKSPACE"
+          python "$GITHUB_WORKSPACE/scripts/smoke_installed_gui.py" \
+            --forbid-import-root "$GITHUB_WORKSPACE" \
+            --evidence-directory "$RUNNER_TEMP/openhcs-release-gui-evidence"
       
       - name: Publish to PyPI
         env:

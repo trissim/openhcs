@@ -92,6 +92,7 @@ Source the active checkout environment, then call the dev client directly:
    python -m openhcs.mcp.dev_client ui-smoke --allow-error-payloads
    python -m openhcs.mcp.dev_client selected-workflow init_plate
    python -m openhcs.mcp.dev_client widget-tree plate_manager
+   python -m openhcs.mcp.dev_client window-snapshot main_window --output-dir-path /tmp/openhcs-ui-evidence
    python -m openhcs.mcp.dev_client viewer-payloads 5565 --include-shape-payloads
    python -m openhcs.mcp.dev_client viewer-rois 5565 ROI_ROUTE --max-rois 100 --max-examples 10
    python -m openhcs.mcp.dev_client isolate-viewer 5565 IMAGE_ROUTE ROI_ROUTE --selected-route-key ROI_ROUTE --axis-index well=0
@@ -107,6 +108,11 @@ Each command is validated against the selected declaration-derived surface
 before a one-shot MCP child starts and before a persistent session dispatches
 the call. If the selected surface excludes the tool, the client exits with the
 registered profiles that include it.
+
+``window-snapshot`` renders the requested Qt window without sampling unrelated
+desktop pixels. ``--output-dir-path`` selects the evidence directory through
+the same typed request field used by the MCP capability; the response reports
+the PNG path, dimensions, byte size, and SHA-256.
 
 Persistent Current-Checkout Session
 -----------------------------------

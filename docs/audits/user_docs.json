@@ -852,12 +852,12 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "4c83d1633df4ca2c97c19b66d61aa7bb629f4e7778b476d38ea57046f8246b6a",
+        "sha256": "e1b6d299fe8cbacc21f05b0460899fcccbe6e57bb63086f852912052eecd2d00",
         "role": "Exercises the installed distribution, launchers, MCP/runtime path, viewers, and packaged restart worker outside the source checkout."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "710179b234553177603e8e72a5030d67977a168ddca6fb6c57fb369bf07250db",
+        "sha256": "bd1e852c8c58ed373cfbfb8b352cba0faf6cd5526206c236d62f429f863417a0",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, and environment to the restart-worker verifier and reports its result."
       },
       {
@@ -897,7 +897,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "b6cbbee8db564ca371612224d62f1bb76435b9a793f944725df57672a9f53a0a",
+        "sha256": "c2b3d8a185e08cf2b6998470a3614d08a2804f239126e73119a302fc3456533a",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -943,7 +943,8 @@
       "On 2026-08-25, re-read the complete installation how-to after source-candidate CI was separated from public dependency readiness; the user-facing installer, manual install, verification, and update instructions remain unchanged and accurate.",
       "On 2026-08-26, re-read the installation how-to after source unit and documentation jobs stopped fetching release tags; installer-facing readiness remains a separate strict gate, so the user procedure is unchanged.",
       "On 2026-08-26, re-read the complete installation how-to after the integration workflow added a publication-independent Windows and dual-architecture macOS desktop candidate matrix; installation, update, and native-installer claims remain unchanged.",
-      "On 2026-08-26, re-read the full installation how-to after native CI began constructing the complete current-source wheelhouse independently from published dependency readiness; the user-facing install, launch, verification, and update procedure remains unchanged."
+      "On 2026-08-26, re-read the full installation how-to after native CI began constructing the complete current-source wheelhouse independently from published dependency readiness; the user-facing install, launch, verification, and update procedure remains unchanged.",
+      "On 2026-08-26, re-read the complete installation how-to after installed desktop verification began retaining native MCP window snapshots; the supported install, launch, verification, and update instructions remain unchanged."
     ]
   },
   {
@@ -1506,12 +1507,12 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "4c83d1633df4ca2c97c19b66d61aa7bb629f4e7778b476d38ea57046f8246b6a",
+        "sha256": "e1b6d299fe8cbacc21f05b0460899fcccbe6e57bb63086f852912052eecd2d00",
         "role": "Executes the packaged restart worker against a real parent exit and detached restart command from the installed environment."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "710179b234553177603e8e72a5030d67977a168ddca6fb6c57fb369bf07250db",
+        "sha256": "bd1e852c8c58ed373cfbfb8b352cba0faf6cd5526206c236d62f429f863417a0",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, and environment to the restart-worker verifier and reports its result."
       },
       {
@@ -1562,7 +1563,8 @@
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; revised its startup wording and confirmed the remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete troubleshooting how-to against the persisted desktop endpoint snapshot and shared catalogue lifecycle; focused tests and a fresh stdio MCP probe confirmed non-default endpoint use and restart guidance."
+      "On 2026-08-25, re-read the complete troubleshooting how-to against the persisted desktop endpoint snapshot and shared catalogue lifecycle; focused tests and a fresh stdio MCP probe confirmed non-default endpoint use and restart guidance.",
+      "On 2026-08-26, re-read the complete troubleshooting how-to after the installed desktop smoke added retained native screenshots; endpoint, catalogue, viewer, and restart guidance remain current."
     ]
   },
   {
@@ -2035,7 +2037,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "f8ca6111a789ce90ad3e09032bf3c4cb949da7cef2efd679ce00d4ac3f55c343",
+    "source_sha256": "c75240a9904ade57f89a4b5648c191c61631130bc3a51c2d9ed396f5d8a85475",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -2055,8 +2057,8 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "b6cbbee8db564ca371612224d62f1bb76435b9a793f944725df57672a9f53a0a",
-        "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, pytest commands, and source-gate coverage artifacts used by CI."
+        "sha256": "c2b3d8a185e08cf2b6998470a3614d08a2804f239126e73119a302fc3456533a",
+        "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, retained native screenshot artifacts, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
         "path": ".github/workflows/docs.yml",
@@ -2080,8 +2082,8 @@
       },
       {
         "path": ".github/workflows/published-release-canary.yml",
-        "sha256": "0b3c83f2eb183b3545f176d703936df590f4ffb6bca0628d6d9ae6c8f71b9d20",
-        "role": "Runs the live installed-GUI/MCP operation probe against the latest published desktop dependency set on Linux, Windows, and macOS."
+        "sha256": "b5b377bf774fd8c19045e7708279d062b3e8da1738b809a8adb79c79a33c1cf0",
+        "role": "Runs the live installed-GUI/MCP probe against the latest published desktop dependency set and retains its screenshots on Linux, Windows, and macOS."
       },
       {
         "path": ".github/workflows/coverage-pages.yml",
@@ -2090,28 +2092,28 @@
       },
       {
         "path": "tests/unit/test_ci_package_boundaries.py",
-        "sha256": "aa1bc7b3197408d839e1068d95bc2cc4ffdbc99964b95da0443bf97de3be2df7",
-        "role": "Proves source-gate coverage artifacts fail closed, the combined report describes only instrumented suites, and live GUI/MCP canary ownership remains cross-platform."
+        "sha256": "942e6c3b24de93a349b2cbc5bb92ff9604460fd851269b12bc8ffeb1831239b6",
+        "role": "Proves source-gate coverage fails closed and that cross-platform candidate and published GUI canaries retain their typed screenshot evidence."
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "4c83d1633df4ca2c97c19b66d61aa7bb629f4e7778b476d38ea57046f8246b6a",
-        "role": "Runs installed GUI readiness, launch, MCP/runtime, viewer, and packaged restart-worker acceptance outside the source checkout."
+        "sha256": "e1b6d299fe8cbacc21f05b0460899fcccbe6e57bb63086f852912052eecd2d00",
+        "role": "Runs installed GUI readiness and screenshot evidence, launch, MCP/runtime, viewer, and packaged restart-worker acceptance outside the source checkout."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "710179b234553177603e8e72a5030d67977a168ddca6fb6c57fb369bf07250db",
-        "role": "Proves platform smoke orchestration passes the exact installed Python and isolated runtime to the GUI and restart-worker verifiers and reports their results."
+        "sha256": "bd1e852c8c58ed373cfbfb8b352cba0faf6cd5526206c236d62f429f863417a0",
+        "role": "Proves platform smoke orchestration passes the exact installed Python, isolated runtime, and evidence directory to the GUI and restart-worker verifiers."
       },
       {
         "path": "scripts/smoke_installed_gui.py",
-        "sha256": "348b529b29e7a03862cbdf14cad0d8f82976dda55586d5a875db2967ef3367fd",
-        "role": "Constructs the installed application on declaration-allocated execution and authenticated bridge endpoints, then uses the packaged desktop MCP to verify identity, discover live windows, invoke a declared action, and clean up exact owned resources outside the checkout."
+        "sha256": "76124d0c66da2668067986f76c2ba994476cb0de6ac65fbef6682f493780d079",
+        "role": "Constructs the installed application on declaration-allocated endpoints, drives it through packaged MCP, validates retained window snapshots, and cleans up exact owned resources outside the checkout."
       },
       {
         "path": "tests/unit/test_smoke_installed_gui.py",
-        "sha256": "11393e2b2b675f68b99a065f62ed341c6120aa43d3b50436912ccc301f0eccac",
-        "role": "Proves the installed GUI/MCP probe rejects source-checkout contamination and derives both endpoint allocations from the configured transport authority."
+        "sha256": "e632d114ee67d5f9220a506f39bc11cc4791f4cbb8653095173efc1cf28ecd1f",
+        "role": "Proves source-checkout rejection, declaration-owned endpoint allocation, snapshot CLI projection, and emitted PNG identity validation for the installed GUI/MCP probe."
       },
       {
         "path": "openhcs/pyqt_gui/config.py",
@@ -2159,7 +2161,8 @@
       "The installed-GUI probe reused the default execution endpoint, allowing an existing desktop server to influence an otherwise isolated package canary; it now allocates the endpoint through the selected transport declaration.",
       "Installed GUI and MCP package checks terminated before either operated the other; the source-wheel, publication, native-installer, and scheduled canaries now keep the packaged GUI live while the packaged desktop MCP discovers it and invokes a declared UI action.",
       "The fixed desktop candidate was operated before publication only on Linux, while Windows and macOS evidence remained behind the unpublished-dependency gate; a complementary source-candidate matrix now proves Windows and both macOS architectures alongside the Linux wheel lane.",
-      "The native installer source job still depended on public first-party release tags and therefore skipped the real Windows and macOS installer paths while dependency candidates were unpublished; it now builds the complete metadata-discovered source wheelhouse independently, while the PyPI installation lane remains publication-gated."
+      "The native installer source job still depended on public first-party release tags and therefore skipped the real Windows and macOS installer paths while dependency candidates were unpublished; it now builds the complete metadata-discovered source wheelhouse independently, while the PyPI installation lane remains publication-gated.",
+      "Cross-platform GUI canaries proved readiness and MCP actions but discarded the rendered UI, so native theming regressions had no retained evidence; candidate and published-package jobs now upload typed, hash-verified window snapshots."
     ],
     "disposition": "revise",
     "validation": [
@@ -2189,7 +2192,8 @@
       "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete guide after native source candidates became independent from published dependency readiness; a real metadata-discovered nine-wheel build-only wheelhouse and focused workflow and installer tests passed, while public-package evidence remained a separate strict lane.",
       "On 2026-08-26, GitHub rejected runner.temp in job-level env before scheduling any work; the build step now publishes its runner-local wheelhouse path for the Windows and macOS installer steps, and focused workflow regressions enforce that context boundary.",
       "On 2026-08-26, re-read the complete testing guide after the Documentation workflow took independent ownership of context-aware workflow validation; actionlint 1.7.12 passed every current workflow from its checksum-verified Linux binary.",
-      "On 2026-08-26, GitHub rejected an expression embedded in the large Windows installer run block at its 21000-character hosted parser ceiling; candidate outputs now cross through step-level env, and the repository-wide ceiling regression passed."
+      "On 2026-08-26, GitHub rejected an expression embedded in the large Windows installer run block at its 21000-character hosted parser ceiling; candidate outputs now cross through step-level env, and the repository-wide ceiling regression passed.",
+      "On 2026-08-26, applied the Diataxis testing how-to boundary and re-read the complete guide after native GUI evidence became retained; 54 focused contract tests and a live 0.7.27 GUI/MCP run validated two PNGs through their typed paths, sizes, dimensions, and SHA-256 values."
     ]
   },
   {

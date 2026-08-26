@@ -67,9 +67,12 @@ through the configured transport declaration, constructs the installed
 application, and waits for its painted-ready boundary. A packaged desktop MCP
 session then verifies health and version identity, discovers the live main and
 Plate Manager windows, and invokes the declared Plate Manager code action. The
-probe requires the resulting window to appear before closing the GUI, removing
-the bridge descriptor, and terminating only its allocated execution endpoint.
-An existing desktop server cannot influence this resolved-package test.
+probe requires the resulting window to appear, then captures the main window
+and opened editor through the production MCP snapshot capability. It verifies
+each PNG's path, dimensions, byte size, and SHA-256 before closing the GUI,
+removing the bridge descriptor, and terminating only its allocated execution
+endpoint. An existing desktop server cannot influence this resolved-package
+test.
 
 Client artifacts
 ----------------
@@ -124,7 +127,8 @@ not been released yet, so the publication gate cannot suppress feedback about
 the code that is actually on ``main``. The Linux wheel-candidate job runs the
 live GUI/MCP probe before its installed integration suite. A complementary
 desktop candidate matrix builds the same recursively recorded first-party
-wheels and runs that probe on Windows and both macOS architectures. It has no
+wheels and runs that probe on Windows and both macOS architectures. Each job
+retains its typed JSON result and native Qt screenshots for 14 days. It has no
 dependency on the PyPI readiness job, so every supported desktop release
 boundary proves the candidate before the first dependency is published.
 The native Windows and dual-architecture macOS installer matrix is independent
@@ -171,9 +175,9 @@ blocks below GitHub's hosted parser ceiling.
 
 The scheduled Published Release Canary installs the latest stable desktop
 package from PyPI on Linux, Windows, and macOS, then runs the same live GUI/MCP
-probe. It detects dependency drift that occurs after a release, while the
-release-candidate and publication gates prevent known drift from being
-published.
+probe and retains the corresponding screenshots. It detects dependency drift
+that occurs after a release, while the release-candidate and publication gates
+prevent known drift from being published.
 
 The native installer lanes resolve the prepared first-party candidates from
 their metadata-discovered local wheelhouse while injecting an unreachable

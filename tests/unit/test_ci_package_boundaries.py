@@ -197,6 +197,16 @@ def test_desktop_candidate_canary_precedes_dependency_publication() -> None:
     assert "python -m pip check" in steps
     assert 'python -I "$GITHUB_WORKSPACE/scripts/smoke_installed_gui.py"' in steps
     assert "--forbid-import-root" in steps
+    assert "--evidence-directory" in steps
+    evidence_step = next(
+        step
+        for step in job["steps"]
+        if step.get("name") == "Upload native GUI evidence"
+    )
+    assert evidence_step["if"] == "always()"
+    assert evidence_step["with"]["name"] == "desktop-candidate-gui-${{ matrix.os }}"
+    assert evidence_step["with"]["if-no-files-found"] == "warn"
+    assert evidence_step["with"]["retention-days"] == 14
 
 
 def test_published_release_canary_owns_post_release_dependency_drift() -> None:
@@ -240,6 +250,15 @@ def test_published_release_canary_owns_post_release_dependency_drift() -> None:
     )
     assert "scripts/smoke_installed_gui.py" in startup_step["run"]
     assert "--forbid-import-root" in startup_step["run"]
+    assert "--evidence-directory" in startup_step["run"]
+    evidence_step = next(
+        step
+        for step in job["steps"]
+        if step.get("name") == "Upload published GUI evidence"
+    )
+    assert evidence_step["if"] == "always()"
+    assert evidence_step["with"]["name"] == "published-gui-${{ matrix.os }}"
+    assert evidence_step["with"]["retention-days"] == 14
 
 
 def test_unit_wheel_gate_seeds_ignored_nested_build_output() -> None:

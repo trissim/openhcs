@@ -94,21 +94,28 @@ environment. It constructs the installed OpenHCS application as well, requires
 the main window to reach its painted-ready boundary, and drives the live UI
 through a packaged desktop MCP session. The probe discovers the main and Plate
 Manager windows, invokes the declared code action, verifies its new window, and
-then closes the GUI. Both execution and authenticated UI-bridge endpoints are
-allocated through the configured transport declaration; cleanup targets only
-those endpoints and removes the bridge descriptor.
+captures the main window and newly opened editor through the production MCP
+snapshot capability before closing the GUI. It verifies each PNG's path,
+dimensions, byte size, and SHA-256 against the typed capability response. Both
+execution and authenticated UI-bridge endpoints are allocated through the
+configured transport declaration; cleanup targets only those endpoints and
+removes the bridge descriptor.
 
 The Linux wheel job runs this operation before its installed integration suite.
 A complementary desktop candidate matrix runs it on Windows and both macOS
 architectures using wheels built from the recursively recorded first-party
-submodules. These jobs run independently of dependency publication, providing
-cross-platform evidence for an unreleased dependency graph before the PyPI
-lanes become eligible.
+submodules. Each job retains the JSON result and native Qt screenshots as a
+14-day ``desktop-candidate-gui-*`` artifact. These jobs run independently of
+dependency publication, providing cross-platform behavioral and visual
+evidence for an unreleased dependency graph before the PyPI lanes become
+eligible.
 
 The daily Published Release Canary installs the latest stable desktop package
 from PyPI on Linux, Windows, and macOS and repeats that live GUI/MCP probe. It is
 the post-release signal for a dependency update that leaves package resolution
-valid but breaks application startup or desktop-agent operation.
+valid but breaks application startup or desktop-agent operation. Its
+``published-gui-*`` artifacts retain the same JSON and screenshot evidence for
+14 days.
 
 The native installer jobs build one metadata-discovered wheelhouse from the
 recorded first-party submodules, then deliberately provide an unreachable pip

@@ -213,6 +213,8 @@ def test_gui_smoke_uses_installed_python_and_isolated_runtime(
         str(desktop_smoke.INSTALLED_GUI_SMOKE_PATH.resolve()),
         "--forbid-import-root",
         str(desktop_smoke.REPOSITORY_ROOT),
+        "--evidence-directory",
+        str((tmp_path / "gui-evidence").resolve()),
     ]
     assert observed["cwd"] == tmp_path
     assert observed["timeout_seconds"] == 60
