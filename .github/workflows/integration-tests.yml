@@ -1653,7 +1653,7 @@ jobs:
           python "$GITHUB_WORKSPACE/scripts/sync_mcp_release_metadata.py" --check --capability-requirements
           python "$GITHUB_WORKSPACE/scripts/smoke_installed_mcp.py" --forbid-import-root "$GITHUB_WORKSPACE"
 
-      - name: Test installed GUI startup outside checkout
+      - name: Test installed GUI and live MCP outside checkout
         shell: bash
         env:
           OPENHCS_CPU_ONLY: true
@@ -2076,11 +2076,17 @@ jobs:
           python -m venv test_wheel
           source test_wheel/bin/activate
           python -m pip install --upgrade pip build
+          desktop_extras=$(python "$GITHUB_WORKSPACE/scripts/sync_mcp_release_metadata.py" --print-desktop-extras)
           python -m scripts.install_ci_candidate \
             --dependency-source submodules \
             --wheel-directory "$RUNNER_TEMP/openhcs-candidate-wheels" \
-            --extras dev,dev-gui,gui,cellprofiler-compat \
+            --extras "dev,dev-gui,cellprofiler-compat,$desktop_extras" \
             --requirement pytest-split==0.11.0
+          XDG_CACHE_HOME="$RUNNER_TEMP/openhcs-live-mcp-cache" \
+          XDG_CONFIG_HOME="$RUNNER_TEMP/openhcs-live-mcp-config" \
+          XDG_DATA_HOME="$RUNNER_TEMP/openhcs-live-mcp-data" \
+            python -I "$GITHUB_WORKSPACE/scripts/smoke_installed_gui.py" \
+              --forbid-import-root "$GITHUB_WORKSPACE"
           python scripts/run_installed_tests.py --repo-root "$GITHUB_WORKSPACE" -- \
             tests/unit/pyqt_gui/test_progress_tree_aggregation.py -q
           for group in 1 2 3 4 5 6; do

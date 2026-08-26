@@ -327,7 +327,7 @@ def test_pypi_wheel_smoke_uses_the_canonical_pipeline_document_boundary():
     gui_step = next(
         step
         for step in steps
-        if step.get("name") == "Test installed GUI startup outside checkout"
+        if step.get("name") == "Test installed GUI and live MCP outside checkout"
     )
     gui_smoke = gui_step["run"]
     assert "scripts/smoke_installed_gui.py" in gui_smoke

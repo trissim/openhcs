@@ -67,24 +67,20 @@ def test_openhcs_version_has_one_source_authority() -> None:
 
 
 def test_package_import_does_not_claim_process_logging_authority() -> None:
-    probe_source = "\n".join(
-        (
-            "import json",
-            "import logging",
-            "file_handler_init = logging.FileHandler.__init__",
-            "root_logger = logging.getLogger()",
-            "root_level = root_logger.level",
-            "root_handlers = tuple(root_logger.handlers)",
-            "import openhcs",
-            "print(json.dumps({",
-            "    'file_handler_init_unchanged': "
-            "logging.FileHandler.__init__ is file_handler_init,",
-            "    'root_level_unchanged': root_logger.level == root_level,",
-            "    'root_handlers_unchanged': "
-            "tuple(root_logger.handlers) == root_handlers,",
-            "}))",
-        )
-    )
+    probe_source = """\
+import json
+import logging
+file_handler_init = logging.FileHandler.__init__
+root_logger = logging.getLogger()
+root_level = root_logger.level
+root_handlers = tuple(root_logger.handlers)
+import openhcs
+print(json.dumps({
+    'file_handler_init_unchanged': logging.FileHandler.__init__ is file_handler_init,
+    'root_level_unchanged': root_logger.level == root_level,
+    'root_handlers_unchanged': tuple(root_logger.handlers) == root_handlers,
+}))
+"""
     probe = subprocess.run(
         (
             sys.executable,
@@ -160,6 +156,11 @@ def test_installed_acceptance_separates_source_and_public_dependency_proofs() ->
     )
     assert "--dependency-source pypi" in pypi_steps
     assert "--dependency-source submodules" in source_steps
+    assert "scripts/smoke_installed_gui.py" in source_steps
+    assert (
+        'python -I "$GITHUB_WORKSPACE/scripts/smoke_installed_gui.py"' in source_steps
+    )
+    assert "--print-desktop-extras" in source_steps
     assert "scripts.install_ci_candidate" in workflow_text
     assert "scripts/run_installed_tests.py" in workflow_text
     assert "scripts/run_installed_tests.py --coverage" in workflow_text
@@ -204,7 +205,7 @@ def test_published_release_canary_owns_post_release_dependency_drift() -> None:
     startup_step = next(
         step
         for step in job["steps"]
-        if step.get("name") == "Reach the installed GUI ready boundary"
+        if step.get("name") == "Operate the installed GUI through packaged MCP"
     )
     assert "scripts/smoke_installed_gui.py" in startup_step["run"]
     assert "--forbid-import-root" in startup_step["run"]

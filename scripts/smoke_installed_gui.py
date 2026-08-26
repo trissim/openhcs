@@ -1,26 +1,46 @@
-"""Start and close an installed OpenHCS GUI outside the source checkout."""
+"""Operate an installed OpenHCS GUI through MCP outside the source checkout."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import sys
 import tempfile
-from collections.abc import Sequence
-from dataclasses import asdict, dataclass, replace
+import threading
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict, dataclass, fields, replace
 from importlib.metadata import distribution
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar, get_type_hints
 
 if TYPE_CHECKING:
+    from openhcs.mcp.dev_client import McpDevCommandExecution
     from openhcs.pyqt_gui.config import UIConfig
 
-JsonScalar = str | int | bool | None
+JsonValue = str | int | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
+AgentDtoT = TypeVar("AgentDtoT")
+
+
+@dataclass(frozen=True, slots=True)
+class InstalledLiveMcpSmokeResult:
+    """Typed evidence from the packaged MCP operating the live packaged GUI."""
+
+    action_status: str
+    bridge_count: int
+    bridge_port: int
+    bridge_reachable: bool
+    bridge_transport: str
+    health_status: str
+    mcp_server_source_path: str
+    mcp_server_version: str
+    window_count_after_action: int
+    window_count_before_action: int
 
 
 @dataclass(frozen=True, slots=True)
 class InstalledGuiSmokeResult:
-    """Validated installed-GUI lifecycle evidence."""
+    """Validated installed-GUI and packaged-MCP lifecycle evidence."""
 
     execution_port: int
     execution_transport: str
@@ -32,8 +52,9 @@ class InstalledGuiSmokeResult:
     startup_error: str | None
     timed_out: bool
     visible: bool
+    live_mcp: InstalledLiveMcpSmokeResult
 
-    def payload(self, *, working_directory: Path) -> dict[str, JsonScalar]:
+    def payload(self, *, working_directory: Path) -> dict[str, JsonValue]:
         """Project the typed result into the script's JSON boundary."""
 
         return {
@@ -50,6 +71,7 @@ class _StartupObservation:
     visible: bool = False
     startup_error: str | None = None
     timed_out: bool = False
+    live_mcp: InstalledLiveMcpSmokeResult | None = None
 
     def record_ready(self, *, visible: bool) -> None:
         self.ready = True
@@ -57,6 +79,9 @@ class _StartupObservation:
 
     def record_failure(self, error: BaseException) -> None:
         self.startup_error = f"{type(error).__name__}: {error}"
+
+    def record_live_mcp(self, result: InstalledLiveMcpSmokeResult) -> None:
+        self.live_mcp = result
 
     def record_timeout(self) -> None:
         self.timed_out = True
@@ -75,10 +100,12 @@ class _StartupObservation:
         """Validate the observed lifecycle and freeze its evidence."""
 
         if self.startup_error is not None:
-            raise AssertionError(f"Installed GUI startup failed: {self.startup_error}")
+            raise AssertionError(
+                f"Installed GUI/MCP smoke failed: {self.startup_error}"
+            )
         if self.timed_out:
             raise TimeoutError(
-                "Installed GUI did not reach its painted ready boundary within "
+                "Installed GUI/MCP smoke did not complete within "
                 f"{timeout_seconds:g} seconds."
             )
         if not self.ready or not self.visible:
@@ -86,6 +113,8 @@ class _StartupObservation:
                 "Installed GUI did not become visibly ready: "
                 f"ready={self.ready}, visible={self.visible}"
             )
+        if self.live_mcp is None:
+            raise AssertionError("Installed MCP did not operate the live GUI.")
         if exit_code != 0:
             raise AssertionError(f"Installed GUI exited with {exit_code}.")
         return InstalledGuiSmokeResult(
@@ -99,6 +128,7 @@ class _StartupObservation:
             startup_error=self.startup_error,
             timed_out=self.timed_out,
             visible=self.visible,
+            live_mcp=self.live_mcp,
         )
 
 
@@ -116,21 +146,331 @@ def assert_not_source_checkout_import(
         )
 
 
-def with_isolated_execution_endpoint(ui_config: UIConfig) -> UIConfig:
-    """Return the UI configuration with one declaration-allocated endpoint."""
+def with_isolated_runtime_topology(
+    ui_config: UIConfig,
+    *,
+    descriptor_path: Path,
+) -> UIConfig:
+    """Allocate execution and bridge endpoints through their transport owner."""
 
-    from zmqruntime import DataControlPortPairAuthority
+    from zmqruntime import DataControlPortPairAuthority, resolve_transport_mode
 
     transport_config = ui_config.zmq
-    port_pair = DataControlPortPairAuthority.acquire(
+    execution_pair = DataControlPortPairAuthority.acquire(
         transport_config,
         transport_mode=transport_config.transport_mode,
         host=transport_config.client_host,
     )
+    isolated_transport_config = replace(
+        transport_config,
+        default_port=execution_pair.data_port,
+    )
+
+    bridge_config = ui_config.agent_bridge
+    bridge_transport_config = replace(
+        isolated_transport_config,
+        default_port=bridge_config.require_port("Installed GUI bridge smoke"),
+    )
+    bridge_mode = resolve_transport_mode(bridge_config.transport_mode)
+    bridge_pair = DataControlPortPairAuthority.acquire(
+        bridge_transport_config,
+        transport_mode=bridge_mode,
+        excluded=(execution_pair.data_port, execution_pair.control_port),
+        host=bridge_config.host,
+    )
     return replace(
         ui_config,
-        zmq=replace(transport_config, default_port=port_pair.data_port),
+        zmq=isolated_transport_config,
+        agent_bridge=replace(
+            bridge_config,
+            enabled=True,
+            port=bridge_pair.data_port,
+            transport_mode=bridge_mode,
+            descriptor_file_path=descriptor_path,
+        ),
     )
+
+
+def _tool_payload(
+    execution: McpDevCommandExecution,
+    *,
+    tool_name: str,
+) -> dict[str, JsonValue]:
+    """Require one successful MCP result and return its JSON object payload."""
+
+    from openhcs.mcp.dev_client_rendering import McpDevPayloadProjection
+
+    if execution.returncode != 0:
+        diagnostics = execution.rendered_output
+        if execution.server_stderr_tail:
+            diagnostics += f"\nMCP stderr:\n{execution.server_stderr_tail}"
+        raise AssertionError(diagnostics)
+    payload = McpDevPayloadProjection.tool_payload(execution.payload, tool_name)
+    if payload is None:
+        raise AssertionError(f"MCP response omitted {tool_name!r} payload.")
+    return dict(payload)
+
+
+def _typed_tool_payload(
+    execution: McpDevCommandExecution,
+    *,
+    tool_name: str,
+    payload_type: type[AgentDtoT],
+) -> AgentDtoT:
+    """Hydrate one MCP result through the declared agent DTO contract."""
+
+    from openhcs.agent.services.ui_bridge_transport import AgentDtoJsonCodec
+
+    payload = _tool_payload(execution, tool_name=tool_name)
+    return AgentDtoJsonCodec.dataclass_from_json(payload_type, dict(payload))
+
+
+def _declared_catalog_items(
+    execution: McpDevCommandExecution,
+    *,
+    tool_name: str,
+    catalog_type: type,
+    item_type: type,
+) -> tuple[Mapping[str, JsonValue], ...]:
+    """Read a flattened MCP catalog through its declared tuple field."""
+
+    type_hints = get_type_hints(catalog_type)
+    item_fields = tuple(
+        catalog_field
+        for catalog_field in fields(catalog_type)
+        if type_hints.get(catalog_field.name) == tuple[item_type, ...]
+    )
+    if len(item_fields) != 1:
+        raise TypeError(
+            f"{catalog_type.__name__} must declare exactly one {item_type.__name__} "
+            "tuple field."
+        )
+    payload = _tool_payload(execution, tool_name=tool_name)
+    items = payload.get(item_fields[0].name)
+    if not isinstance(items, list) or not all(
+        isinstance(item, Mapping) for item in items
+    ):
+        raise AssertionError(
+            f"MCP {catalog_type.__name__} payload has invalid catalog items."
+        )
+    return tuple(item for item in items if isinstance(item, Mapping))
+
+
+def _declared_identity_values(
+    items: tuple[Mapping[str, JsonValue], ...],
+    *,
+    identity_type: type,
+) -> tuple[str, ...]:
+    """Read one-field flattened identities through their nominal declaration."""
+
+    identity_fields = fields(identity_type)
+    if len(identity_fields) != 1:
+        raise TypeError(
+            f"{identity_type.__name__} must declare exactly one identity field."
+        )
+    field_name = identity_fields[0].name
+    values = tuple(item.get(field_name) for item in items)
+    if not all(isinstance(value, str) for value in values):
+        raise AssertionError(
+            f"MCP {identity_type.__name__} payload has invalid identity values."
+        )
+    return tuple(value for value in values if isinstance(value, str))
+
+
+def run_installed_live_mcp_smoke(
+    *,
+    descriptor_path: Path,
+    forbidden_root: Path,
+    timeout_seconds: float,
+) -> InstalledLiveMcpSmokeResult:
+    """Operate one live packaged GUI through one packaged desktop MCP session."""
+
+    from openhcs.agent.capabilities import (
+        DesktopLocalCapabilitySurfaceProfile,
+        agent_capabilities,
+    )
+    from openhcs.agent.dto.mcp import McpServerHealthResult
+    from openhcs.agent.dto.ui_bridge import (
+        UiActionInvocationStatus,
+        UiActionInvokeResult,
+        UiBridgeCatalog,
+        UiBridgeStatus,
+        UiWindowCatalog,
+        UiWindowIdentity,
+        UiWindowSummary,
+    )
+    from openhcs.agent.ui_bridge_actions import PlateManagerAction
+    from openhcs.agent.ui_bridge_identities import (
+        MainWindowWidgetIdentity,
+        PlateManagerWidgetIdentity,
+    )
+    from openhcs.mcp.dev_client import McpDevClient
+    from openhcs.mcp.dev_client_commanding import CapabilityBackedCommandSpec
+    from openhcs.mcp.dev_client_commands.ui import (
+        InvokeActionCommandSpec,
+        UiSmokeCommandSpec,
+    )
+
+    timeout_text = f"{timeout_seconds:g}"
+    windows_command = CapabilityBackedCommandSpec.for_capability_name(
+        agent_capabilities.ui_list_windows.name
+    )
+    if windows_command is None:
+        raise AssertionError("The desktop MCP surface has no window-list command.")
+
+    with McpDevClient(
+        sys.executable,
+        surface_profile=DesktopLocalCapabilitySurfaceProfile(),
+        initialize_timeout_seconds=timeout_seconds,
+    ) as client:
+        smoke_execution = client.execute(
+            (UiSmokeCommandSpec.command, "--timeout-seconds", timeout_text),
+            timeout_seconds=timeout_seconds,
+        )
+        health = _typed_tool_payload(
+            smoke_execution,
+            tool_name=agent_capabilities.health_check.name,
+            payload_type=McpServerHealthResult,
+        )
+        bridge_status = _typed_tool_payload(
+            smoke_execution,
+            tool_name=agent_capabilities.ui_bridge_status.name,
+            payload_type=UiBridgeStatus,
+        )
+        bridge_catalog = _typed_tool_payload(
+            smoke_execution,
+            tool_name=agent_capabilities.ui_list_bridges.name,
+            payload_type=UiBridgeCatalog,
+        )
+        windows_before = _declared_catalog_items(
+            smoke_execution,
+            tool_name=agent_capabilities.ui_list_windows.name,
+            catalog_type=UiWindowCatalog,
+            item_type=UiWindowSummary,
+        )
+
+        installed_version = distribution("openhcs").version
+        if health.status != "ok" or not health.packaged_resources_ready:
+            raise AssertionError(f"Installed MCP health is incomplete: {health}")
+        if health.openhcs_version != installed_version:
+            raise AssertionError(
+                "Installed GUI and MCP versions diverged: "
+                f"gui={installed_version} mcp={health.openhcs_version}"
+            )
+        server_source_path = Path(health.server_source_path).resolve()
+        assert_not_source_checkout_import(
+            package_path=server_source_path,
+            forbidden_root=forbidden_root.resolve(),
+        )
+        if not bridge_status.reachable:
+            raise AssertionError(f"Installed UI bridge is unreachable: {bridge_status}")
+        if Path(bridge_status.descriptor_file_path or "").resolve() != descriptor_path:
+            raise AssertionError(
+                "Installed MCP selected a different UI bridge descriptor: "
+                f"{bridge_status.descriptor_file_path!r}"
+            )
+        if (
+            len(bridge_catalog.bridges) != 1
+            or Path(bridge_catalog.bridges[0].descriptor_file_path or "").resolve()
+            != descriptor_path
+        ):
+            raise AssertionError(
+                "Installed MCP did not discover exactly its declared live bridge: "
+                f"{bridge_catalog}"
+            )
+
+        required_window_ids = {
+            MainWindowWidgetIdentity.require_value(),
+            PlateManagerWidgetIdentity.require_value(),
+        }
+        observed_window_ids = set(
+            _declared_identity_values(
+                windows_before,
+                identity_type=UiWindowIdentity,
+            )
+        )
+        if not required_window_ids <= observed_window_ids:
+            raise AssertionError(
+                "Installed MCP did not discover the required live windows: "
+                f"missing={sorted(required_window_ids - observed_window_ids)}"
+            )
+
+        action_execution = client.execute(
+            (
+                InvokeActionCommandSpec.command,
+                PlateManagerWidgetIdentity.require_value(),
+                PlateManagerAction.CODE_PLATE.value,
+                "--request-token",
+                "installed-gui-mcp-smoke",
+                "--timeout-seconds",
+                timeout_text,
+            ),
+            timeout_seconds=timeout_seconds,
+        )
+        action_result = _typed_tool_payload(
+            action_execution,
+            tool_name=agent_capabilities.ui_invoke_action.name,
+            payload_type=UiActionInvokeResult,
+        )
+        if action_result.status != UiActionInvocationStatus.ACCEPTED.value:
+            raise AssertionError(
+                f"Installed UI action was not accepted: {action_result}"
+            )
+
+        windows_execution = client.execute(
+            (windows_command.command, "--timeout-seconds", timeout_text),
+            timeout_seconds=timeout_seconds,
+        )
+        windows_after = _declared_catalog_items(
+            windows_execution,
+            tool_name=agent_capabilities.ui_list_windows.name,
+            catalog_type=UiWindowCatalog,
+            item_type=UiWindowSummary,
+        )
+        if len(windows_after) <= len(windows_before):
+            raise AssertionError(
+                "The declared code action did not expose its new live window: "
+                f"before={len(windows_before)} after={len(windows_after)}"
+            )
+
+    return InstalledLiveMcpSmokeResult(
+        action_status=action_result.status,
+        bridge_count=len(bridge_catalog.bridges),
+        bridge_port=bridge_status.connection.require_port("Installed UI bridge smoke"),
+        bridge_reachable=bridge_status.reachable,
+        bridge_transport=(
+            bridge_status.connection.transport_endpoint().transport_mode.value
+        ),
+        health_status=health.status,
+        mcp_server_source_path=str(server_source_path),
+        mcp_server_version=health.openhcs_version,
+        window_count_after_action=len(windows_after),
+        window_count_before_action=len(windows_before),
+    )
+
+
+def shutdown_isolated_execution_endpoint(ui_config: UIConfig) -> None:
+    """Stop only the execution endpoint allocated for this smoke process."""
+
+    from zmqruntime import EndpointShutdownMode
+    from zmqruntime.shutdown import EndpointShutdownService
+    from zmqruntime.transport import TransportEndpoint, resolve_transport_mode
+
+    transport_config = ui_config.zmq
+    endpoint = TransportEndpoint(
+        host=transport_config.client_host,
+        port=transport_config.default_port,
+        transport_mode=resolve_transport_mode(transport_config.transport_mode),
+    )
+    outcome = EndpointShutdownService.for_endpoint(
+        transport_config,
+        endpoint,
+    ).shutdown_ports(
+        ports=[endpoint.port],
+        mode=EndpointShutdownMode.FORCE,
+    )
+    if not outcome.succeeded or endpoint.port not in outcome.terminated_ports:
+        raise AssertionError(outcome.failure_message)
 
 
 def run_installed_gui_smoke(
@@ -138,19 +478,19 @@ def run_installed_gui_smoke(
     forbidden_root: Path,
     timeout_seconds: float,
 ) -> InstalledGuiSmokeResult:
-    """Exercise construction, deferred startup, paint, and orderly shutdown."""
+    """Exercise installed GUI readiness, packaged MCP control, and shutdown."""
 
     if timeout_seconds <= 0:
         raise ValueError("GUI startup smoke timeout must be positive.")
     os.environ["OPENHCS_CPU_ONLY"] = "true"
 
-    from PyQt6.QtCore import QTimer
+    from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
     import openhcs
+    from openhcs.agent.ui_bridge_environment import UiBridgeDescriptorEnvironment
     from openhcs.core.config import GlobalPipelineConfig
     from openhcs.pyqt_gui.app import OpenHCSPyQtApp
     from openhcs.pyqt_gui.config import (
-        AgentUiBridgeConfig,
         PyQtGuiRuntimeContext,
         UIConfig,
     )
@@ -161,11 +501,13 @@ def run_installed_gui_smoke(
         forbidden_root=forbidden_root.resolve(),
     )
 
-    ui_config = with_isolated_execution_endpoint(
-        UIConfig(
-            check_for_updates_on_startup=False,
-            agent_bridge=replace(AgentUiBridgeConfig(), enabled=False),
-        )
+    descriptor_path = (Path.cwd() / "ui_bridge.json").resolve()
+    ui_config = with_isolated_runtime_topology(
+        UIConfig(check_for_updates_on_startup=False),
+        descriptor_path=descriptor_path,
+    )
+    os.environ[UiBridgeDescriptorEnvironment.descriptor_file_path_key] = str(
+        descriptor_path
     )
     runtime_context = PyQtGuiRuntimeContext(
         ui_config=ui_config,
@@ -176,6 +518,12 @@ def run_installed_gui_smoke(
         runtime_context=runtime_context,
     )
     observation = _StartupObservation()
+    worker_thread: threading.Thread | None = None
+
+    class McpSmokeCompletion(QObject):
+        completed = pyqtSignal(object)
+
+    completion = McpSmokeCompletion()
 
     def close_application() -> None:
         main_window = application.main_window
@@ -185,26 +533,71 @@ def run_installed_gui_smoke(
         main_window.close()
 
     def startup_ready() -> None:
+        nonlocal worker_thread
         main_window = application.main_window
         observation.record_ready(
             visible=bool(main_window is not None and main_window.isVisible())
         )
-        QTimer.singleShot(0, close_application)
+
+        def run_live_mcp() -> None:
+            try:
+                result: InstalledLiveMcpSmokeResult | Exception = (
+                    run_installed_live_mcp_smoke(
+                        descriptor_path=descriptor_path,
+                        forbidden_root=forbidden_root,
+                        timeout_seconds=max(5.0, timeout_seconds / 4),
+                    )
+                )
+            except (
+                Exception  # noqa: BLE001 - thread boundary reports failures
+            ) as error:
+                result = error
+            completion.completed.emit(result)
+
+        worker_thread = threading.Thread(
+            target=run_live_mcp,
+            name="installed-live-mcp-smoke",
+        )
+        worker_thread.start()
 
     def startup_failed(error: BaseException) -> None:
         observation.record_failure(error)
+        close_application()
+
+    def live_mcp_completed(result: object) -> None:
+        if isinstance(result, BaseException):
+            observation.record_failure(result)
+        elif isinstance(result, InstalledLiveMcpSmokeResult):
+            observation.record_live_mcp(result)
+        else:
+            observation.record_failure(
+                TypeError(f"Unexpected MCP smoke result: {type(result).__name__}")
+            )
+        close_application()
 
     def startup_timed_out() -> None:
-        if observation.ready:
+        if observation.live_mcp is not None or observation.startup_error is not None:
             return
         observation.record_timeout()
         close_application()
 
+    completion.completed.connect(live_mcp_completed)
     QTimer.singleShot(round(timeout_seconds * 1_000), startup_timed_out)
-    exit_code = application.run(
-        on_main_window_ready=startup_ready,
-        on_startup_failure=startup_failed,
-    )
+    try:
+        exit_code = application.run(
+            on_main_window_ready=startup_ready,
+            on_startup_failure=startup_failed,
+        )
+    finally:
+        if worker_thread is not None:
+            worker_thread.join(timeout=max(5.0, timeout_seconds / 4))
+            if worker_thread.is_alive():
+                observation.record_timeout()
+        shutdown_isolated_execution_endpoint(ui_config)
+    if descriptor_path.exists():
+        raise AssertionError(
+            f"Installed UI bridge descriptor survived shutdown: {descriptor_path}"
+        )
     return observation.result(
         execution_port=ui_config.zmq.default_port,
         execution_transport=ui_config.zmq.transport_mode.value,
@@ -227,8 +620,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--timeout-seconds",
         type=float,
-        default=30.0,
-        help="Maximum time to wait for the painted main-window ready boundary.",
+        default=60.0,
+        help="Maximum time for painted GUI readiness and live MCP operation.",
     )
     args = parser.parse_args(argv)
     original_working_directory = Path.cwd()

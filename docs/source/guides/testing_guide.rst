@@ -82,14 +82,17 @@ The installed-desktop smoke on Windows and both macOS architectures also runs
 the packaged restart worker against a real short-lived parent process and
 requires its detached restart command to execute from the installed
 environment. It constructs the installed OpenHCS application as well, requires
-the main window to reach its painted-ready boundary, and closes it cleanly. The
-GUI probe allocates its execution endpoint through the configured transport
-declaration instead of attaching to an existing desktop server.
+the main window to reach its painted-ready boundary, and drives the live UI
+through a packaged desktop MCP session. The probe discovers the main and Plate
+Manager windows, invokes the declared code action, verifies its new window, and
+then closes the GUI. Both execution and authenticated UI-bridge endpoints are
+allocated through the configured transport declaration; cleanup targets only
+those endpoints and removes the bridge descriptor.
 
 The daily Published Release Canary installs the latest stable desktop package
-from PyPI on Linux, Windows, and macOS and repeats that GUI startup probe. It is
+from PyPI on Linux, Windows, and macOS and repeats that live GUI/MCP probe. It is
 the post-release signal for a dependency update that leaves package resolution
-valid but breaks application startup.
+valid but breaks application startup or desktop-agent operation.
 
 The native installer jobs deliberately provide an unreachable pip
 configuration file and unreachable primary and extra index overrides. Windows

@@ -1,15 +1,15 @@
-"""Ownership checks for the installed GUI startup smoke test."""
+"""Ownership checks for the installed GUI and packaged MCP smoke test."""
 
 from pathlib import Path
 
 import pytest
 from zmqruntime import DataControlPortPair, DataControlPortPairAuthority, TransportMode
 
-from openhcs.pyqt_gui.config import UIConfig
+from openhcs.pyqt_gui.config import AgentUiBridgeConfig, UIConfig
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 from scripts.smoke_installed_gui import (
     assert_not_source_checkout_import,
-    with_isolated_execution_endpoint,
+    with_isolated_runtime_topology,
 )
 
 
@@ -33,21 +33,37 @@ def test_gui_smoke_allows_wheel_venv_inside_checkout(tmp_path: Path) -> None:
     )
 
 
-def test_gui_smoke_allocates_endpoint_through_transport_authority(monkeypatch) -> None:
+def test_gui_smoke_allocates_topology_through_transport_authority(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     original_transport = OpenHCSZMQConfig(
         default_port=8123,
         transport_mode=TransportMode.TCP,
     )
-    ui_config = UIConfig(zmq=original_transport)
-    observed: dict[str, object] = {}
-
-    def acquire(config, *, transport_mode, host):
-        observed.update(
-            config=config,
-            transport_mode=transport_mode,
-            host=host,
+    original_bridge = AgentUiBridgeConfig(
+        port=8223,
+        transport_mode=TransportMode.TCP,
+    )
+    ui_config = UIConfig(zmq=original_transport, agent_bridge=original_bridge)
+    observed: list[dict[str, object]] = []
+    allocated_pairs = iter(
+        (
+            DataControlPortPair(data_port=8124, control_port=9124),
+            DataControlPortPair(data_port=8224, control_port=9224),
         )
-        return DataControlPortPair(data_port=8124, control_port=9124)
+    )
+
+    def acquire(config, *, transport_mode, excluded=(), host):
+        observed.append(
+            {
+                "config": config,
+                "transport_mode": transport_mode,
+                "excluded": excluded,
+                "host": host,
+            }
+        )
+        return next(allocated_pairs)
 
     monkeypatch.setattr(
         DataControlPortPairAuthority,
@@ -55,15 +71,37 @@ def test_gui_smoke_allocates_endpoint_through_transport_authority(monkeypatch) -
         staticmethod(acquire),
     )
 
-    isolated = with_isolated_execution_endpoint(ui_config)
+    descriptor_path = tmp_path / "ui_bridge.json"
+    isolated = with_isolated_runtime_topology(
+        ui_config,
+        descriptor_path=descriptor_path,
+    )
 
     assert isolated.zmq == OpenHCSZMQConfig(
         default_port=8124,
         transport_mode=TransportMode.TCP,
     )
+    assert isolated.agent_bridge == AgentUiBridgeConfig(
+        port=8224,
+        transport_mode=TransportMode.TCP,
+        descriptor_file_path=descriptor_path,
+    )
     assert ui_config.zmq is original_transport
-    assert observed == {
-        "config": original_transport,
-        "transport_mode": TransportMode.TCP,
-        "host": original_transport.client_host,
-    }
+    assert ui_config.agent_bridge is original_bridge
+    assert observed == [
+        {
+            "config": original_transport,
+            "transport_mode": TransportMode.TCP,
+            "excluded": (),
+            "host": original_transport.client_host,
+        },
+        {
+            "config": OpenHCSZMQConfig(
+                default_port=8223,
+                transport_mode=TransportMode.TCP,
+            ),
+            "transport_mode": TransportMode.TCP,
+            "excluded": (8124, 9124),
+            "host": original_bridge.host,
+        },
+    ]

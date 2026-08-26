@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   installed-gui-startup:
-    name: installed-gui-startup (${{ matrix.os }})
+    name: installed-gui-live-mcp (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -64,7 +64,7 @@ jobs:
           python -m pip check
           python -c "from importlib.metadata import version; print('Installed OpenHCS ' + version('openhcs'))"
 
-      - name: Reach the installed GUI ready boundary
+      - name: Operate the installed GUI through packaged MCP
         shell: bash
         env:
           OPENHCS_CPU_ONLY: true

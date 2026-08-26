@@ -59,15 +59,17 @@ from outside the checkout. The MCP smoke test asserts that:
 * the combined client environment contains the PyQt UI dependency;
 * health succeeds over a real stdio session and reports the wheel's version;
 * the health resource projection reports no missing package resource;
-* every document in the packaged knowledge catalog can be read; and
+* every document in the packaged knowledge catalogue can be read; and
 * no knowledge path resolves back into the source checkout.
 
-The GUI smoke constructs the installed application, reaches its painted-ready
-boundary, verifies that the main window is visible, and closes it cleanly. It
-allocates an isolated execution endpoint through the configured transport
-declaration, so an existing desktop server cannot influence the result. This
-checks the resolved desktop dependency set rather than only importing modules
-from the source checkout.
+The GUI smoke allocates isolated execution and authenticated UI-bridge endpoints
+through the configured transport declaration, constructs the installed
+application, and waits for its painted-ready boundary. A packaged desktop MCP
+session then verifies health and version identity, discovers the live main and
+Plate Manager windows, and invokes the declared Plate Manager code action. The
+probe requires the resulting window to appear before closing the GUI, removing
+the bridge descriptor, and terminating only its allocated execution endpoint.
+An existing desktop server cannot influence this resolved-package test.
 
 Client artifacts
 ----------------
@@ -119,7 +121,8 @@ recorded submodules, build every metadata-discovered first-party wheel, verify
 that their declared version ranges can coexist, and test those installed
 wheels outside the checkout. These jobs run even when a changed dependency has
 not been released yet, so the publication gate cannot suppress feedback about
-the code that is actually on ``main``.
+the code that is actually on ``main``. The Linux wheel-candidate job runs the
+live GUI/MCP probe before its installed integration suite.
 
 Before publication begins, the tag workflow resolves one annotated tag to its
 exact commit and requires successful Integration Tests and Documentation push
@@ -152,10 +155,10 @@ so an unrelated follow-up commit cannot bypass a failed formatter or
 correctness check.
 
 The scheduled Published Release Canary installs the latest stable desktop
-package from PyPI on Linux, Windows, and macOS, then runs the same installed-GUI
-ready-boundary probe. It detects dependency drift that occurs after a release,
-while the release-candidate and publication gates prevent known drift from
-being published.
+package from PyPI on Linux, Windows, and macOS, then runs the same live GUI/MCP
+probe. It detects dependency drift that occurs after a release, while the
+release-candidate and publication gates prevent known drift from being
+published.
 
 The native installer lanes inject an unreachable workstation pip
 configuration and unreachable primary and extra index overrides. The Windows
