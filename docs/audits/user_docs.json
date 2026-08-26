@@ -2077,7 +2077,7 @@
       },
       {
         "path": "tests/unit/test_install_ci_candidate.py",
-        "sha256": "e6ab5825a1ca3187767babdc0d9130a355f9969ccbef0d73c000052bc3015986",
+        "sha256": "ef791cab0e4a54f902ee8178cdb7e55ebfcb7448cbdb49240ec5d3c5a00c0269",
         "role": "Proves source wheelhouse discovery, build ordering, root-wheel validation, and the build-only command boundary."
       },
       {
@@ -2193,7 +2193,8 @@
       "On 2026-08-26, GitHub rejected runner.temp in job-level env before scheduling any work; the build step now publishes its runner-local wheelhouse path for the Windows and macOS installer steps, and focused workflow regressions enforce that context boundary.",
       "On 2026-08-26, re-read the complete testing guide after the Documentation workflow took independent ownership of context-aware workflow validation; actionlint 1.7.12 passed every current workflow from its checksum-verified Linux binary.",
       "On 2026-08-26, GitHub rejected an expression embedded in the large Windows installer run block at its 21000-character hosted parser ceiling; candidate outputs now cross through step-level env, and the repository-wide ceiling regression passed.",
-      "On 2026-08-26, applied the Diataxis testing how-to boundary and re-read the complete guide after native GUI evidence became retained; 54 focused contract tests and a live 0.7.27 GUI/MCP run validated two PNGs through their typed paths, sizes, dimensions, and SHA-256 values."
+      "On 2026-08-26, applied the Diataxis testing how-to boundary and re-read the complete guide after native GUI evidence became retained; 54 focused contract tests and a live 0.7.27 GUI/MCP run validated two PNGs through their typed paths, sizes, dimensions, and SHA-256 values.",
+      "On 2026-08-26, re-read the complete testing how-to after source-candidate root-wheel identity began deriving from the package version authority; the documented build order and publication-independent evidence lanes remain accurate."
     ]
   },
   {
@@ -3191,7 +3192,7 @@
       },
       {
         "path": "packaging/mcpb/openhcs/manifest.json",
-        "sha256": "4c4167d8603e452a75fdc321c1b0804f25b1b493b66c84f06fbc1835ce05ee09",
+        "sha256": "ae596c0d863f265968117e9ffbd90425ab4b6fc2a714258fadad043b75177f0b",
         "role": "Declares the packaged MCP server command, arguments, compatibility, and client-visible metadata."
       },
       {
@@ -3201,7 +3202,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "8fbd6632f929186485697b1739a49cda9b55254c08c800e7daa2f446bcf9f5fe",
+        "sha256": "496a7d402f98ca43ed7a9783c2ae22f6013820d7e8201b99d53a7446668d3e11",
         "role": "Proves MCP server tool registration, request handling, and lifecycle behaviour."
       }
     ],
@@ -3225,7 +3226,8 @@
       "On 2026-08-25, re-read the complete client how-to after declaration-derived development-client surface preflight changed shared capability and test authorities; installed-server surface selection and user-client guidance remain accurate.",
       "On 2026-08-26, re-read the complete client how-to after UI and viewer MCP timeout regressions changed the shared server-test authority; installation, registration, path policy, and GUI attachment guidance remains accurate.",
       "On 2026-08-26, re-read the complete client how-to against the changed capability, registration, and regression-test authorities; registered platform leaves now own Claude Desktop paths, while supported clients, commands, configuration behavior, and reconnect guidance remain unchanged.",
-      "On 2026-08-26, re-read the complete client how-to after the stdio bootstrap regression isolated its spawned process from pytest-cov instrumentation; installation, registration, reconnect, and GUI attachment guidance remains unchanged."
+      "On 2026-08-26, re-read the complete client how-to after the stdio bootstrap regression isolated its spawned process from pytest-cov instrumentation; installation, registration, reconnect, and GUI attachment guidance remains unchanged.",
+      "On 2026-08-26, re-read the complete client how-to against the regenerated 0.8.0 MCPB manifest and the child-process temporary-root regression; installation, path policy, registration, and GUI attachment guidance remain accurate."
     ]
   },
   {

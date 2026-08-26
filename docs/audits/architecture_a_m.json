@@ -1639,7 +1639,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_distribution_runtime.py",
-        "sha256": "d871a643d298d28f7d94cd0265d29fde83a84fd5c48a6501ab72b3e5fcf64c42",
+        "sha256": "4f28f8eff46a5de20726bc80316f3fec276e51646b6dd133dbef7b39e6c00004",
         "role": "Proves cold local MCP composition does not import PyQt6."
       },
       {
@@ -1709,7 +1709,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "8fbd6632f929186485697b1739a49cda9b55254c08c800e7daa2f446bcf9f5fe",
+        "sha256": "496a7d402f98ca43ed7a9783c2ae22f6013820d7e8201b99d53a7446668d3e11",
         "role": "Proves MCP registration, declaration-derived development-client surface preflight, and rejection of undeclared native capture."
       }
     ],
@@ -1751,7 +1751,8 @@
       "On 2026-08-25, re-read the complete page after the saved endpoint became a schema-derived field projection; 25 focused config and headless MCP regressions passed, and a fresh stdio MCP process used TCP port 17994 to resolve, validate, and render an exact threshold_otsu step.",
       "On 2026-08-26, re-read the complete explanation after MCP UI and viewer timeout bounds began deriving from their connection declarations; 285 MCP regressions and an isolated live desktop/MCP action probe passed.",
       "On 2026-08-26, re-read the complete distribution explanation against the changed capability, server, timeout-policy, client-registration, and regression-test authorities; 342 focused tests passed, and NRA no longer reports the former transport, timeout-profile, or Claude platform redispatch.",
-      "On 2026-08-26, re-read the complete explanation after the stdio bootstrap regression isolated its spawned process from pytest-cov instrumentation; product transport, capability, and distribution semantics remain unchanged."
+      "On 2026-08-26, re-read the complete explanation after the stdio bootstrap regression isolated its spawned process from pytest-cov instrumentation; product transport, capability, and distribution semantics remain unchanged.",
+      "On 2026-08-26, re-read the complete distribution explanation after the platform authority began preserving declared temporary roots across the local MCP process boundary; focused regressions and a packaged macOS-style nonstandard TMPDIR GUI/MCP probe passed, and the documented transport and snapshot ownership remain accurate."
     ]
   },
   {

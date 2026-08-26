@@ -2563,7 +2563,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "8fbd6632f929186485697b1739a49cda9b55254c08c800e7daa2f446bcf9f5fe",
+        "sha256": "496a7d402f98ca43ed7a9783c2ae22f6013820d7e8201b99d53a7446668d3e11",
         "role": "Regression proof for selected-surface preflight, stale-row rejection, idempotent initialization, and every declared or malformed bridge-receipt continuation outcome."
       },
       {
@@ -2667,7 +2667,8 @@
       "On 2026-08-26, re-read the complete how-to against the declaration-derived UI and viewer timeout policies; the explicit two-second example remains valid beneath the declared five-second maximum, and focused MCP plus live desktop probes passed.",
       "On 2026-08-26, re-read the complete how-to after duplicate UI and viewer command-profile subclasses were removed; both commands still derive the same five-second maximum from their connection contracts, so documented invocations and timeout behavior remain unchanged.",
       "On 2026-08-26, re-read the complete how-to after the stdio bootstrap regression isolated its spawned process from pytest-cov instrumentation; current-checkout commands, timeout ownership, and restart guidance remain unchanged.",
-      "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete page after the UI snapshot CLI gained its declaration-derived output directory; the focused smoke and command tests passed and a live MCP capture produced validated PNG evidence."
+      "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete page after the UI snapshot CLI gained its declaration-derived output directory; the focused smoke and command tests passed and a live MCP capture produced validated PNG evidence.",
+      "On 2026-08-26, re-read the complete development how-to after child MCP processes began retaining the platform authority's declared temporary root; the current-checkout commands, path-policy guidance, and snapshot workflow remain accurate."
     ]
   },
   {
@@ -2719,7 +2720,7 @@
     "authority": [
       {
         "path": "openhcs/__init__.py",
-        "sha256": "e96fdc2832cf8bc2f245c5c837d4044df23a8988bfeb10ac747d201872114463",
+        "sha256": "1c57f2d490ca88a2e3cef984fb61c774cff4d8dd9861dacc44d49a614a76bc3a",
         "role": "Single OpenHCS package version authority."
       },
       {
@@ -2749,7 +2750,7 @@
       },
       {
         "path": "tests/unit/test_install_ci_candidate.py",
-        "sha256": "e6ab5825a1ca3187767babdc0d9130a355f9969ccbef0d73c000052bc3015986",
+        "sha256": "ef791cab0e4a54f902ee8178cdb7e55ebfcb7448cbdb49240ec5d3c5a00c0269",
         "role": "Proves source wheelhouse discovery, build ordering, root-wheel validation, and the build-only command boundary."
       },
       {
@@ -2886,7 +2887,8 @@
       "On 2026-08-26, GitHub rejected runner.temp in job-level env before scheduling any work; the exact wheelhouse path now originates in the runner-owned build step and crosses later platform steps through one declared output, with a regression preventing the invalid context from returning.",
       "On 2026-08-26, re-read the release how-to after the Documentation workflow took independent ownership of context-aware workflow validation; actionlint 1.7.12 passed every current workflow from its checksum-verified Linux binary.",
       "On 2026-08-26, GitHub rejected an expression embedded in the large Windows installer run block at its 21000-character hosted parser ceiling; candidate outputs now cross through step-level env, and the repository-wide ceiling regression passed.",
-      "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after native GUI evidence became retained; 54 focused contract tests and a live 0.7.27 GUI/MCP run validated two PNGs through their typed paths, sizes, dimensions, and SHA-256 values."
+      "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after native GUI evidence became retained; 54 focused contract tests and a live 0.7.27 GUI/MCP run validated two PNGs through their typed paths, sizes, dimensions, and SHA-256 values.",
+      "On 2026-08-26, re-read the complete release how-to against the 0.8.0 version authority and regenerated MCP metadata; the source-candidate test now derives the root wheel identity from that authority, and 73 focused release tests plus wheel metadata validation passed."
     ]
   },
   {

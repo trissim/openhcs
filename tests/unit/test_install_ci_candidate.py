@@ -6,6 +6,7 @@ import pytest
 from packaging.version import Version
 
 from scripts import install_ci_candidate as installer
+from scripts.sync_mcp_release_metadata import read_package_version
 from scripts.validate_local_release_floors import (
     CandidatePublication,
     ReleaseCandidate,
@@ -121,6 +122,7 @@ def test_source_candidate_wheelhouse_builds_metadata_discovered_projects(
     )
     wheel_directory = tmp_path / "wheelhouse"
     built_projects: list[Path] = []
+    root_wheel_name = f"openhcs-{read_package_version()}-py3-none-any.whl"
 
     monkeypatch.setattr(installer, "discover_local_projects", lambda: (candidate,))
     monkeypatch.setattr(installer, "validate_local_candidate_compatibility", lambda: ())
@@ -130,7 +132,7 @@ def test_source_candidate_wheelhouse_builds_metadata_discovered_projects(
         built_projects.append(project_root)
         destination.mkdir(parents=True, exist_ok=True)
         wheel_name = (
-            "openhcs-0.7.27-py3-none-any.whl"
+            root_wheel_name
             if project_root == installer.REPO_ROOT
             else "example_package-1.2.3-py3-none-any.whl"
         )
@@ -143,9 +145,7 @@ def test_source_candidate_wheelhouse_builds_metadata_discovered_projects(
     )
 
     assert wheelhouse.local_projects == (candidate,)
-    assert wheelhouse.root_wheel == (
-        wheel_directory / "openhcs-0.7.27-py3-none-any.whl"
-    )
+    assert wheelhouse.root_wheel == wheel_directory / root_wheel_name
     assert built_projects == [candidate.path.parent, installer.REPO_ROOT]
 
 
