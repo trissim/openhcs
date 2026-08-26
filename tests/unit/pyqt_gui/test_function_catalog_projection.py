@@ -12,17 +12,21 @@ from openhcs.agent.dto.functions import (
     FunctionCatalogEntry,
     FunctionDetail,
     FunctionDetailControlRequest,
+    FunctionReferenceControlRequest,
     FunctionSearchRequest,
     catalog_page,
 )
+from openhcs.agent.services.endpoint_function_catalog_service import (
+    EndpointFunctionUnavailableError,
+    FunctionCatalogEndpointRevision,
+    ZMQFunctionCatalogService,
+)
+from openhcs.core.callable_contract import CallableImportIdentity
+from openhcs.core.function_reference import ImportableFunctionReference
 from openhcs.processing.backends.lib_registry.registry_service import RegistryService
 from openhcs.processing.custom_functions.signals import CustomFunctionSignals
 from openhcs.pyqt_gui.dialogs import function_selector_dialog as selector_module
 from openhcs.pyqt_gui.dialogs.function_selector_dialog import FunctionSelectorDialog
-from openhcs.pyqt_gui.services.function_catalog_projection import (
-    EndpointFunctionUnavailableError,
-    ZMQFunctionCatalogProjectionService,
-)
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 
@@ -49,6 +53,7 @@ def _entry(
 def _page(*entries: FunctionCatalogEntry):
     return catalog_page(
         items=entries,
+        catalog_items=entries,
         total=len(entries),
         limit=len(entries),
         query=None,
@@ -62,6 +67,7 @@ class _EndpointClient:
         self.catalog_requests: list[FunctionCatalogControlRequest] = []
         self.search_requests: list[FunctionSearchRequest] = []
         self.detail_requests: list[FunctionDetailControlRequest] = []
+        self.reference_requests: list[FunctionReferenceControlRequest] = []
         self.disconnected = False
 
     def get_function_catalog(
@@ -92,6 +98,19 @@ class _EndpointClient:
             entry=entry,
             parameters=(),
             doc=entry.summary,
+        )
+
+    def get_function_reference(self, request: FunctionReferenceControlRequest):
+        self.reference_requests.append(request)
+        entry = next(
+            entry
+            for entry in self.catalogs[-1].items
+            if entry.function_id == request.function_id
+        )
+        module_name, _, function_name = entry.import_path.rpartition(".")
+        return ImportableFunctionReference(
+            import_identity=CallableImportIdentity(module_name, function_name),
+            composite_key=f"python:{module_name}:{function_name}",
         )
 
     def disconnect(self) -> None:
@@ -126,7 +145,7 @@ def test_projection_replaces_membership_on_revision_and_endpoint_change() -> Non
     second_entry = _entry("gpu:second", library="gpu", backend_tags=("gpu",))
     client_two = _EndpointClient(_page(second_entry))
     clients = {endpoint_one: client_one, endpoint_two: client_two}
-    service = ZMQFunctionCatalogProjectionService(
+    service = ZMQFunctionCatalogService(
         lambda: selected_endpoint[0],
         client_factory=clients.__getitem__,
     )
@@ -138,13 +157,16 @@ def test_projection_replaces_membership_on_revision_and_endpoint_change() -> Non
     custom_page = service.catalog()
     assert custom_page.revision != first_page.revision
     assert tuple(service.projection.entries_by_id) == (custom_entry.function_id,)
-    assert service.projection.namespace == (endpoint_one, custom_page.revision)
+    assert service.projection.namespace == FunctionCatalogEndpointRevision(
+        endpoint_one,
+        custom_page.revision,
+    )
     assert service.projection.namespace != first_namespace
 
     selected_endpoint[0] = endpoint_two
     service.catalog()
     assert client_one.disconnected
-    assert service.projection.namespace == (
+    assert service.projection.namespace == FunctionCatalogEndpointRevision(
         endpoint_two,
         client_two.catalogs[0].revision,
     )
@@ -155,7 +177,7 @@ def test_projection_sends_nominal_search_and_detail_requests_unchanged() -> None
     entry = _entry("cpu:measure")
     page = _page(entry)
     client = _EndpointClient(page)
-    service = ZMQFunctionCatalogProjectionService(
+    service = ZMQFunctionCatalogService(
         lambda: OPENHCS_ZMQ_CONFIG,
         client_factory=lambda _config: client,
     )
@@ -168,6 +190,7 @@ def test_projection_sends_nominal_search_and_detail_requests_unchanged() -> None
         compact_signatures=False,
     )
     detail = service.get(entry.function_id, max_doc_chars=321)
+    resolved = service.resolve(entry.function_id)
 
     assert client.catalog_requests == [
         FunctionCatalogControlRequest(compact_signatures=False)
@@ -190,6 +213,59 @@ def test_projection_sends_nominal_search_and_detail_requests_unchanged() -> None
     ]
     assert search_page is page
     assert detail.entry is entry
+    assert resolved is _local_function
+    assert client.reference_requests == [
+        FunctionReferenceControlRequest(
+            function_id=entry.function_id,
+            catalog_revision=page.revision,
+        )
+    ]
+
+
+def test_search_result_revision_authorizes_followup_detail_without_full_read() -> None:
+    entry = _entry("cpu:filtered")
+    other = _entry("cpu:other")
+    search_page = catalog_page(
+        items=(entry,),
+        catalog_items=(entry, other),
+        total=1,
+        limit=1,
+        query="filtered",
+        library=None,
+    )
+    client = _EndpointClient(search_page)
+    service = ZMQFunctionCatalogService(
+        lambda: OPENHCS_ZMQ_CONFIG,
+        client_factory=lambda _config: client,
+    )
+
+    page = service.search(query="filtered", limit=1)
+    detail = service.get(entry.function_id)
+
+    assert page is search_page
+    assert detail.entry is entry
+    assert client.catalog_requests == []
+    assert client.detail_requests[0].catalog_revision == search_page.revision
+
+
+def test_search_membership_change_replaces_complete_projection_with_revision() -> None:
+    first = _entry("cpu:first")
+    second = _entry("cpu:second")
+    client = _EndpointClient(_page(first), _page(second))
+    service = ZMQFunctionCatalogService(
+        lambda: OPENHCS_ZMQ_CONFIG,
+        client_factory=lambda _config: client,
+    )
+
+    service.catalog()
+    assert service.projection is not None
+
+    search_page = service.search(query="second")
+
+    assert service.projection is None
+    detail = service.get(second.function_id)
+    assert detail.entry is second
+    assert client.detail_requests[-1].catalog_revision == search_page.revision
 
 
 def test_projection_coalesces_nonblocking_catalog_preparation() -> None:
@@ -205,7 +281,7 @@ def test_projection_coalesces_nonblocking_catalog_preparation() -> None:
             return self.catalogs[0]
 
     client = _BlockingEndpointClient(_page(entry))
-    service = ZMQFunctionCatalogProjectionService(
+    service = ZMQFunctionCatalogService(
         lambda: OPENHCS_ZMQ_CONFIG,
         client_factory=lambda _config: client,
     )
@@ -240,7 +316,7 @@ def test_projection_close_cancels_and_joins_catalog_preparation() -> None:
             raise CancelledError("catalog preparation cancelled")
 
     client = _CancellableEndpointClient(_page(entry))
-    service = ZMQFunctionCatalogProjectionService(
+    service = ZMQFunctionCatalogService(
         lambda: OPENHCS_ZMQ_CONFIG,
         client_factory=lambda _config: client,
     )
@@ -262,7 +338,7 @@ def test_projection_close_cancels_and_joins_catalog_preparation() -> None:
 def test_prepared_projection_survives_same_endpoint_detail_client_creation() -> None:
     entry = _entry("cpu:prepared-detail")
     client = _EndpointClient(_page(entry))
-    service = ZMQFunctionCatalogProjectionService(
+    service = ZMQFunctionCatalogService(
         lambda: OPENHCS_ZMQ_CONFIG,
         client_factory=lambda _config: client,
     )
@@ -298,7 +374,7 @@ def test_selector_never_scans_local_registry_and_reports_remote_only_selection(
         backend_tags=("gpu", "custom"),
     )
     client = _EndpointClient(_page(remote_entry))
-    service = ZMQFunctionCatalogProjectionService(
+    service = ZMQFunctionCatalogService(
         lambda: OPENHCS_ZMQ_CONFIG,
         client_factory=lambda _config: client,
     )
@@ -339,7 +415,7 @@ def test_selector_construction_does_not_wait_for_endpoint_catalog(
 
     entry = _entry("cpu:later")
     client = _BlockingEndpointClient(_page(entry))
-    service = ZMQFunctionCatalogProjectionService(
+    service = ZMQFunctionCatalogService(
         lambda: OPENHCS_ZMQ_CONFIG,
         client_factory=lambda _config: client,
     )
@@ -369,13 +445,13 @@ def test_selector_construction_does_not_wait_for_endpoint_catalog(
 
 def test_projection_imports_only_the_selected_declared_path() -> None:
     entry = _entry("cpu:local")
-    service = ZMQFunctionCatalogProjectionService(
+    service = ZMQFunctionCatalogService(
         lambda: OPENHCS_ZMQ_CONFIG,
         client_factory=lambda _config: _EndpointClient(_page(entry)),
     )
     service.catalog()
 
-    assert service.import_selected_callable(entry.function_id) is _local_function
+    assert service.resolve(entry.function_id) is _local_function
 
     remote = _entry(
         "gpu:remote",
@@ -383,13 +459,13 @@ def test_projection_imports_only_the_selected_declared_path() -> None:
         library="gpu",
         backend_tags=("gpu",),
     )
-    remote_service = ZMQFunctionCatalogProjectionService(
+    remote_service = ZMQFunctionCatalogService(
         lambda: OPENHCS_ZMQ_CONFIG,
         client_factory=lambda _config: _EndpointClient(_page(remote)),
     )
     remote_service.catalog()
     try:
-        remote_service.import_selected_callable(remote.function_id)
+        remote_service.resolve(remote.function_id)
     except EndpointFunctionUnavailableError as exc:
         assert exc.entry is remote
     else:

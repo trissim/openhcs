@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from datetime import timedelta
+
 import pytest
 
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
@@ -9,6 +12,11 @@ from openhcs.core.config_document import (
     ConfigDocumentAuthority,
     ConfigDocumentField,
 )
+
+
+@dataclass(frozen=True)
+class _ProjectionRoot:
+    target: timedelta = field(default_factory=lambda: timedelta(seconds=1))
 
 
 def test_config_document_field_owns_exact_public_name() -> None:
@@ -58,4 +66,33 @@ def test_config_document_rejects_wrong_expected_type() -> None:
         ConfigDocumentAuthority.render(
             GlobalPipelineConfig(),
             expected_config_type=PipelineConfig,
+        )
+
+
+def test_config_document_projects_one_explicit_dataclass_field() -> None:
+    projected = ConfigDocumentAuthority.project_dataclass_field_from_source(
+        "from datetime import timedelta\nconfig = Root(target=timedelta(seconds=2))",
+        expected_config_type=_ProjectionRoot,
+        expected_field_type=timedelta,
+    )
+
+    assert projected == timedelta(seconds=2)
+
+
+def test_config_document_projection_uses_the_declared_field_default() -> None:
+    projected = ConfigDocumentAuthority.project_dataclass_field_from_source(
+        "config = Root()",
+        expected_config_type=_ProjectionRoot,
+        expected_field_type=timedelta,
+    )
+
+    assert projected == timedelta(seconds=1)
+
+
+def test_config_document_projection_rejects_the_wrong_field_type() -> None:
+    with pytest.raises(TypeError, match="target.*timedelta.*list"):
+        ConfigDocumentAuthority.project_dataclass_field_from_source(
+            'config = Root(target=["one"])',
+            expected_config_type=_ProjectionRoot,
+            expected_field_type=timedelta,
         )

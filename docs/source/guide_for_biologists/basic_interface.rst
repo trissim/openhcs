@@ -63,11 +63,13 @@ and omitted steps update the collection. Applying the document also advances
 the saved baseline for the reconciled pipeline, steps, and nested function
 parameters; the Pipeline Editor does not require a separate Save action.
 
-The function browser reads the callable catalogue from the execution endpoint.
-After the initialized main window appears, the desktop prepares that endpoint
-and begins loading its catalogue in the background. If loading is still in
-progress when the browser opens, the browser remains responsive and displays
-the request state until the shared catalogue is ready.
+The function browser and local MCP authoring tools read the same callable
+catalogue from the execution endpoint. After the initialized main window
+appears, the desktop prepares that endpoint and begins loading its catalogue in
+the background. If loading is still in progress when the browser opens, the
+browser remains responsive and displays the request state until the shared
+catalogue is ready. Selecting a function transfers only its exact callable
+reference to the authoring process; it does not rebuild the catalogue there.
 
 Image and metadata browsing
 ---------------------------

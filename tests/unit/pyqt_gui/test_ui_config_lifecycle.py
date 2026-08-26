@@ -22,6 +22,7 @@ from openhcs.pyqt_gui.config import (
     UIConfigCacheEnvironment,
     get_default_ui_config,
     load_cached_ui_config_sync,
+    load_cached_ui_execution_endpoint_sync,
     save_ui_config_sync,
 )
 from openhcs.pyqt_gui.services.main_window_workflows import (
@@ -33,6 +34,7 @@ from openhcs.pyqt_gui.widgets.shared.services.batch_workflow_components import (
 from openhcs.pyqt_gui.widgets.shared.services.progress_workflow_service import (
     ProgressWorkflowService,
 )
+from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
 
 def test_ui_config_cache_round_trip_applies_environment_at_load(
@@ -74,6 +76,48 @@ def test_ui_config_cache_round_trip_applies_environment_at_load(
     assert restored.agent_bridge.host == "environment-host"
     assert restored.agent_bridge.port == 7997
     assert restored.agent_bridge.enabled is False
+
+
+def test_execution_endpoint_projects_from_ui_cache_without_constructing_ui_config(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    endpoint = OpenHCSZMQConfig(default_port=18888)
+    spec = ConfigCacheSpec(
+        config_type=UIConfig,
+        cache_file=tmp_path / "ui-config.config",
+    )
+    monkeypatch.setattr(config_module, "ui_config_cache_spec", lambda: spec)
+    assert save_ui_config_sync(replace(get_default_ui_config(), zmq=endpoint)) is True
+
+    def reject_ui_config_construction(*_args, **_kwargs):
+        raise AssertionError("endpoint projection constructed UIConfig")
+
+    monkeypatch.setattr(UIConfig, "__init__", reject_ui_config_construction)
+
+    assert load_cached_ui_execution_endpoint_sync() == endpoint
+
+
+def test_execution_endpoint_projection_uses_ui_config_field_default(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    spec = ConfigCacheSpec(
+        config_type=UIConfig,
+        cache_file=tmp_path / "ui-config.config",
+    )
+    spec.cache_file.write_text(
+        "from openhcs.pyqt_gui.config import UIConfig\nconfig = UIConfig()\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_module, "ui_config_cache_spec", lambda: spec)
+
+    def reject_ui_config_construction(*_args, **_kwargs):
+        raise AssertionError("endpoint projection constructed UIConfig")
+
+    monkeypatch.setattr(UIConfig, "__init__", reject_ui_config_construction)
+
+    assert load_cached_ui_execution_endpoint_sync() == OpenHCSZMQConfig()
 
 
 def test_ui_config_cache_environment_selects_one_absolute_persistence_file(

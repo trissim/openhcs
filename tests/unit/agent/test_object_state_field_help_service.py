@@ -6,6 +6,7 @@ from openhcs.agent.dto.functions import (
     FunctionArtifactSpec,
     FunctionCatalogEntry,
     FunctionDetail,
+    FunctionParameterSource,
     FunctionParameterSpec,
     FunctionRuntimeContractSummary,
 )
@@ -118,15 +119,11 @@ def test_object_state_field_help_describes_structured_callable_values():
                 schema_version=SCHEMA_VERSION,
                 entry=FunctionCatalogEntry(
                     function_id=(
-                        "openhcs:analysis_cell_counting_cpu_"
-                        "count_cells_single_channel"
+                        "openhcs:analysis_cell_counting_cpu_count_cells_single_channel"
                     ),
                     import_path=import_path,
                     name="count_cells_single_channel",
-                    module=(
-                        "openhcs.processing.backends.analysis."
-                        "cell_counting_cpu"
-                    ),
+                    module=("openhcs.processing.backends.analysis.cell_counting_cpu"),
                     library="openhcs",
                     signature=(
                         "count_cells_single_channel("
@@ -140,7 +137,7 @@ def test_object_state_field_help_describes_structured_callable_values():
                         annotation="ndarray",
                         default_repr=None,
                         required=False,
-                        supplied_by="runtime_primary_input",
+                        supplied_by=FunctionParameterSource.PRIMARY_INPUT,
                     ),
                     FunctionParameterSpec(
                         name="min_cell_area",
@@ -317,8 +314,7 @@ def test_object_state_field_help_describes_runtime_supplied_function_parameter()
                     module=runtime_artifact_parameter_example.__module__,
                     library="test",
                     signature=(
-                        "runtime_artifact_parameter_example("
-                        "overlap_ratio, ...)"
+                        "runtime_artifact_parameter_example(overlap_ratio, ...)"
                     ),
                     summary="Compute tile positions.",
                 ),
@@ -328,14 +324,14 @@ def test_object_state_field_help_describes_runtime_supplied_function_parameter()
                         annotation="ndarray",
                         default_repr=None,
                         required=False,
-                        supplied_by="runtime_primary_input",
+                        supplied_by=FunctionParameterSource.PRIMARY_INPUT,
                     ),
                     FunctionParameterSpec(
                         name="grid_dimensions",
                         annotation="tuple[int, int]",
                         default_repr=None,
                         required=False,
-                        supplied_by="runtime_artifact_input",
+                        supplied_by=FunctionParameterSource.ARTIFACT_INPUT,
                     ),
                     FunctionParameterSpec(
                         name="overlap_ratio",
@@ -381,9 +377,7 @@ def test_object_state_field_help_describes_runtime_supplied_function_parameter()
                             UiObjectStateFieldSummary(
                                 schema_version=SCHEMA_VERSION,
                                 address=UiSemanticAddress(
-                                    object_state_scope_id=(
-                                        "plate::step::function_0"
-                                    ),
+                                    object_state_scope_id=("plate::step::function_0"),
                                     field_path="grid_dimensions",
                                 ),
                                 field_name="grid_dimensions",

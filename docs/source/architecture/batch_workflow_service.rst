@@ -82,10 +82,12 @@ parallel connection status. After the initialized desktop first paints, the
 batch workflow uses the configured persistent endpoint policy to attach to a
 compatible ready server or start one when none is available. Once that endpoint
 is ready, the desktop prewarms the endpoint-owned callable catalogue in the same
-background operation. Opening the Function Selector reuses that projection or
-continues the same asynchronous request, so endpoint preparation and catalogue
-discovery do not block the Qt thread. Endpoint discovery remains owned by the
-server browser.
+background operation. The Function Selector and local MCP authoring context use
+the same endpoint service; selecting a callable transports its exact reference
+instead of reconstructing the complete catalogue in either consumer. Opening
+the Function Selector reuses the prepared projection or continues the same
+asynchronous request, so endpoint preparation and catalogue discovery do not
+block the Qt thread. Endpoint discovery remains owned by the server browser.
 
 See :doc:`plate_manager_services`, :doc:`progress_runtime_projection_system`,
 and :doc:`zmq_server_browser_system`.

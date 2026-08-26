@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import ast
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, fields
-import inspect
 from pathlib import Path
 
 from objectstate import ObjectState
@@ -26,7 +26,6 @@ from openhcs.processing.backends.analysis.cell_counting_cpu import (
 from openhcs.processing.custom_functions import manager as custom_function_manager
 from openhcs.pyqt_gui.config import AgentUiBridgeConfig, UIConfig
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
-
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 REJECTED_HELP_FRAGMENTS = (
@@ -114,12 +113,13 @@ def test_public_ui_and_zmq_config_fields_project_declaration_help() -> None:
         state = ObjectState(config_type(), scope_id=config_type.__name__)
         assert state.parameter_descriptions == descriptions
 
-    assert "UI bridge" in dataclass_parameter_descriptions(
-        AgentUiBridgeConfig
-    )["enabled"]
-    assert "First data port" in dataclass_parameter_descriptions(
-        OpenHCSZMQConfig
-    )["default_port"]
+    assert (
+        "UI bridge" in dataclass_parameter_descriptions(AgentUiBridgeConfig)["enabled"]
+    )
+    assert (
+        "First data port"
+        in dataclass_parameter_descriptions(OpenHCSZMQConfig)["default_port"]
+    )
 
 
 def test_custom_registered_callable_uses_shared_authored_parameter_help(
@@ -130,7 +130,9 @@ def test_custom_registered_callable_uses_shared_authored_parameter_help(
     monkeypatch.setattr(
         custom_function_manager.CustomFunctionRuntimeRegistry,
         "publish",
-        classmethod(lambda cls, metadata: registrations.append(metadata.func)),
+        classmethod(
+            lambda cls, metadata, lifetime: registrations.append(metadata.func)
+        ),
     )
     manager = custom_function_manager.CustomFunctionManager()
     manager.storage_dir = tmp_path
@@ -287,9 +289,7 @@ def test_preprocessing_guidance_projects_from_callable_owners(monkeypatch) -> No
         detail = service.get(function_id, compact_signature=False)
         shared_help = docstring_info_for_target(metadata.func)
         shared_text = "\n".join(
-            part
-            for part in (shared_help.summary, shared_help.description)
-            if part
+            part for part in (shared_help.summary, shared_help.description) if part
         )
         normalized_detail_doc = " ".join(detail.doc.split())
         normalized_shared_text = " ".join(shared_text.split())
@@ -350,7 +350,9 @@ def test_canonical_cellprofiler_catalog_preserves_final_callable_help() -> None:
     }
 
     for name in ("method", "crop_mode", "additional_alignment_modes"):
-        assert projected[name].description == bindings[name].parameter_help_description()
+        assert (
+            projected[name].description == bindings[name].parameter_help_description()
+        )
 
     assert projected["enabled"].description == (
         "Run this callable or configuration when enabled; skip it when disabled."
@@ -403,8 +405,7 @@ def test_untangle_worm_help_targets_follow_module_declaration_authority() -> Non
         for node in ast.walk(tree)
         if isinstance(node, (ast.Tuple, ast.List))
         and sum(
-            isinstance(element, ast.Name)
-            and element.id.startswith("untangle_worms")
+            isinstance(element, ast.Name) and element.id.startswith("untangle_worms")
             for element in node.elts
         )
         > 1
@@ -510,8 +511,7 @@ def test_repository_callable_help_projects_from_owning_declarations() -> None:
         declaration_mismatches = tuple(
             (name, description, projected.get(name))
             for name, description in authored.items()
-            if name in projected
-            and not (projected[name] or "").startswith(description)
+            if name in projected and not (projected[name] or "").startswith(description)
         )
         if declaration_mismatches:
             mismatches[function_id] = declaration_mismatches
@@ -550,8 +550,9 @@ def test_help_projection_has_no_semantic_mirror_or_name_dispatch() -> None:
                     continue
                 for name in _assignment_names(node):
                     normalized_name = name.casefold()
-                    if name in FORBIDDEN_HELP_MIRROR_SYMBOLS or normalized_name.endswith(
-                        ("descriptions", "description_map")
+                    if (
+                        name in FORBIDDEN_HELP_MIRROR_SYMBOLS
+                        or normalized_name.endswith(("descriptions", "description_map"))
                     ):
                         module_description_maps.append(
                             f"{relative_path}:{node.lineno}:{name}"

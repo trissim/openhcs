@@ -15,14 +15,13 @@ from openhcs.agent.capabilities import (
     CapabilityTransport,
     get_capability_registry,
 )
-from openhcs.mcp.context import OpenHCSAgentContext
+from openhcs.mcp.context import OpenHCSAgentContext, create_hosted_agent_context
 from openhcs.mcp.http_auth import (
     IntrospectionTokenVerifier,
     McpHttpConfigurationError,
     McpHttpResourceServerSettings,
 )
 from openhcs.mcp.server import McpInvocationOutcome, build_server
-
 
 _AUDIT_LOGGER = logging.getLogger("openhcs.mcp.audit")
 
@@ -192,7 +191,7 @@ def build_http_server(
     resolved_settings = settings or McpHttpResourceServerSettings.from_environment()
     hosted_capability_registry()
     server = build_server(
-        context,
+        context if context is not None else create_hosted_agent_context(),
         fastmcp_factory=create_http_fastmcp_factory(
             resolved_settings,
             fastmcp_type=fastmcp_type,

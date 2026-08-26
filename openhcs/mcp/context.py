@@ -12,17 +12,19 @@ if TYPE_CHECKING:
     )
     from openhcs.agent.services.config_service import ConfigService
     from openhcs.agent.services.execution_session_service import ExecutionSessionService
-    from openhcs.agent.services.function_catalog_service import FunctionCatalogService
+    from openhcs.agent.services.function_catalog_service import (
+        FunctionCatalogServiceABC,
+    )
     from openhcs.agent.services.knowledge_base_service import KnowledgeBaseService
     from openhcs.agent.services.llm_context_service import AgentAuthoringContextService
     from openhcs.agent.services.object_state_field_help_service import (
         ObjectStateFieldHelpService,
     )
-    from openhcs.agent.services.plate_inspection_service import PlateInspectionService
-    from openhcs.agent.services.plate_streaming_service import PlateStreamingService
     from openhcs.agent.services.pipeline_authoring_service import (
         PipelineAuthoringService,
     )
+    from openhcs.agent.services.plate_inspection_service import PlateInspectionService
+    from openhcs.agent.services.plate_streaming_service import PlateStreamingService
     from openhcs.agent.services.runtime_server_service import RuntimeServerService
     from openhcs.agent.services.selected_plate_service import SelectedPlateService
     from openhcs.agent.services.synthetic_plate_service import (
@@ -62,7 +64,7 @@ class OpenHCSAgentContext:
         authoring_context_service: "AgentAuthoringContextService | None" = None,
         config_service: "ConfigService | None" = None,
         execution_service: "ExecutionSessionService | None" = None,
-        function_catalog: "FunctionCatalogService | None" = None,
+        function_catalog: "FunctionCatalogServiceABC | None" = None,
         knowledge_base_service: "KnowledgeBaseService | None" = None,
         object_state_field_help_service: "ObjectStateFieldHelpService | None" = None,
         pipeline_service: "PipelineAuthoringService | None" = None,
@@ -92,7 +94,7 @@ class OpenHCSAgentContext:
         self._viewer_window_service = viewer_window_service
 
     @property
-    def function_catalog(self) -> "FunctionCatalogService":
+    def function_catalog(self) -> "FunctionCatalogServiceABC":
         if self._function_catalog is None:
             from openhcs.agent.services.function_catalog_service import (
                 FunctionCatalogService,
@@ -264,4 +266,18 @@ class OpenHCSAgentContext:
 
 
 def create_agent_context() -> OpenHCSAgentContext:
+    from openhcs.agent.services.endpoint_function_catalog_service import (
+        ZMQFunctionCatalogService,
+    )
+    from openhcs.pyqt_gui.config import load_cached_ui_execution_endpoint_sync
+
+    endpoint_config = load_cached_ui_execution_endpoint_sync()
+    return OpenHCSAgentContext(
+        function_catalog=ZMQFunctionCatalogService(lambda: endpoint_config)
+    )
+
+
+def create_hosted_agent_context() -> OpenHCSAgentContext:
+    """Create the self-contained catalog authority used by hosted MCP."""
+
     return OpenHCSAgentContext()

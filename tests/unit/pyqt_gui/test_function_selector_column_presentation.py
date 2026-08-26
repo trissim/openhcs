@@ -41,6 +41,7 @@ class _FunctionCatalog:
         assert compact_signatures
         return catalog_page(
             items=self.entries,
+            catalog_items=self.entries,
             total=len(self.entries),
             limit=len(self.entries),
             query=None,
@@ -55,7 +56,7 @@ class _FunctionCatalog:
     def invalidate(self) -> None:
         pass
 
-    def import_selected_callable(self, function_id: str):
+    def resolve(self, function_id: str):
         return _core_fn if function_id == "core_fn" else _plugin_fn
 
 

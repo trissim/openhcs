@@ -42,9 +42,11 @@ Ownership map
   Pipeline declaration reconciliation and saved-baseline commits for the exact
   active editor, step, and nested-function state graph.
 
-``openhcs/pyqt_gui/services/function_catalog_projection.py``
+``openhcs/agent/services/endpoint_function_catalog_service.py``
   Shared asynchronous projection of the execution endpoint's callable
-  catalogue. The endpoint remains the authority for callable availability.
+  catalogue for desktop and local MCP authoring. The endpoint remains the
+  authority for callable availability and transports only the exact selected
+  callable reference back to a consumer.
 
 Supporting presentation owners include
 ``execution_server_status_presenter.py``, ``progress_batch_reset.py``, and
@@ -75,7 +77,8 @@ Invariants
   whose plate IDs differ from the scope that was read.
 - After the initialized desktop first paints, background startup uses the batch
   workflow's persistent endpoint policy and then prewarms the endpoint-owned
-  callable catalogue without blocking Qt.
+  callable catalogue without blocking Qt. Desktop and local MCP consumers share
+  that service instead of constructing process-local catalogues.
 - Cleanup removes listeners and timers owned by the workflow facade and retires
   both admitted clients and in-progress connection attempts through the same
   client owner.

@@ -1,36 +1,18 @@
-"""
-Qt signals for custom function system.
-
-Provides global signal instance to notify UI components when custom functions
-change (registered, deleted, reloaded). This enables automatic UI refresh
-across multiple open dialogs.
-
-Design:
-    - Single global signal instance (custom_function_signals)
-    - Emit functions_changed signal after any modification
-    - UI components connect to signal for automatic refresh
-"""
+"""Qt projection of process-local custom-function domain changes."""
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from openhcs.processing.custom_functions.events import custom_function_changed
+
 
 class CustomFunctionSignals(QObject):
-    """
-    Qt signals for custom function state changes.
+    """Project domain changes through Qt's thread-aware signal delivery."""
 
-    Signals:
-        functions_changed: Emitted when custom functions are added, deleted, or reloaded
-                          No arguments - receivers should query manager for current state
-    """
-
-    # Signal emitted when custom function registry changes
     functions_changed = pyqtSignal()
 
-    def __init__(self):
-        """Initialize signal object."""
+    def __init__(self) -> None:
         super().__init__()
+        custom_function_changed.subscribe(self.functions_changed.emit)
 
 
-# Global singleton instance for custom function signals
-# All components should connect to this instance
 custom_function_signals = CustomFunctionSignals()

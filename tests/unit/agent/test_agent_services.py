@@ -33,6 +33,7 @@ from openhcs.agent.dto.execution import (
     PipelineSourceArtifactPlanInspectionRequest,
     PipelineSourceOrchestratorSessionRequest,
 )
+from openhcs.agent.dto.functions import FunctionParameterSource
 from openhcs.agent.dto.pipeline import CreatePipelineRequest
 from openhcs.agent.dto.viewer import (
     ViewerWindowLayerIsolationRequest,
@@ -1220,8 +1221,8 @@ def test_function_catalog_search_and_describe_use_registry_ids(monkeypatch):
     assert detail.entry.signature == "sample_processing_function(sigma=1.0)"
     assert [parameter.name for parameter in detail.parameters] == ["image", "sigma"]
     assert [parameter.supplied_by for parameter in detail.parameters] == [
-        "runtime_primary_input",
-        "agent",
+        FunctionParameterSource.PRIMARY_INPUT,
+        FunctionParameterSource.AGENT,
     ]
     assert detail.parameters[0].required is False
     assert detail.parameters[1].required is False
@@ -1282,7 +1283,9 @@ def test_function_catalog_projects_runtime_context_from_callable_contract(
         ).runtime_context_parameter
         == "context"
     )
-    assert parameters["context"].supplied_by == "runtime_parameter"
+    assert (
+        parameters["context"].supplied_by is FunctionParameterSource.RUNTIME_PARAMETER
+    )
     assert parameters["context"].required is False
     assert parameters["context"].description == (
         "Supplied by OpenHCS runtime execution infrastructure; "

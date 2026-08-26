@@ -1104,8 +1104,7 @@ def _validate_placeholder_behavior(context: WorkflowContext) -> WorkflowContext:
 
     if invalid_fields:
         raise AssertionError(
-            "Resolved fields rendered '(none)' placeholders: "
-            f"{tuple(invalid_fields)}"
+            f"Resolved fields rendered '(none)' placeholders: {tuple(invalid_fields)}"
         )
     return context
 
@@ -1248,7 +1247,6 @@ def _validate_full_lazy_state(context: WorkflowContext) -> WorkflowContext:
 
 
 class TestPyQtGUIWorkflowFoundation:
-
     @pytest.fixture(scope="class", autouse=True)
     def application_lifecycle(self):
         """Own one real OpenHCS application for the complete workflow matrix."""
@@ -1296,8 +1294,9 @@ class TestPyQtGUIWorkflowFoundation:
         finally:
             app.cleanup()
             QApplication.processEvents()
-            shutdown = EndpointShutdownService.for_config(
-                test_zmq_config
+            shutdown = EndpointShutdownService.for_endpoint(
+                test_zmq_config,
+                test_zmq_config.client_endpoint(endpoint_pair.data_port),
             ).shutdown_ports(
                 ports=[endpoint_pair.data_port],
                 mode=EndpointShutdownMode.FORCE,

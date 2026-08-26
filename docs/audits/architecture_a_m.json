@@ -217,7 +217,7 @@
   },
   {
     "path": "docs/source/architecture/batch_workflow_service.rst",
-    "source_sha256": "9051ce949def7776ea93aae6a21536efee71fb04b52f82617e303db6aeedf689",
+    "source_sha256": "8a393faab42b66a067b262d5f4972268426df365fbf4e52ef4b75c18d96bf259",
     "audience": [
       "OpenHCS desktop and execution-service maintainers"
     ],
@@ -246,7 +246,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "0daf856ef79f96398c68b33b2e8315ae814c61c6007618d6fb34d0386314e419",
+        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
         "role": "Coordinates post-paint endpoint preparation, projects the browser-owned endpoint snapshot into both status-bar surfaces, and routes endpoint termination to the client lifecycle owner."
       },
       {
@@ -256,13 +256,13 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_main_zmq_window_routing.py",
-        "sha256": "86dd4da7bd8fa3ca090ede6f4d3ff0eb82f8795cbfbee17fa46f4b0d1eda4915",
+        "sha256": "b4883b8ed1df0977c8048e988549104e425784efc2a304184bc09d4d38d6c5cc",
         "role": "Proves startup callbacks only commit observations, one snapshot drives status text and the indicator, and endpoint termination descends to the client lifecycle owner."
       },
       {
-        "path": "openhcs/pyqt_gui/services/function_catalog_projection.py",
-        "sha256": "0cbfe29559c75ca01200b0d9ba275fc47c5fa4be048c0402b2c79a9506660adb",
-        "role": "Owns the shared asynchronous endpoint catalogue projection and generation-safe cache."
+        "path": "openhcs/agent/services/endpoint_function_catalog_service.py",
+        "sha256": "62389b06a31ad89044dae301d1f93601ccdd9122e79758113b49a3747d26fd90",
+        "role": "Owns the shared asynchronous endpoint catalogue, exact revision state, and selected-reference projection for desktop and local MCP consumers."
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/services/zmq_client_service.py",
@@ -291,7 +291,8 @@
       "On 2026-08-22, rechecked the complete explanation after formatter-only changes to its status-routing regression; the snapshot-owned lifecycle claims remain unchanged.",
       "On 2026-08-23, re-read the complete explanation after catalogue preparation gained owned cancellation and joined shutdown; 53 focused catalogue, help, and plate-inspection regressions passed.",
       "On 2026-08-24, re-read the complete explanation against ZMQRuntime 0.2.17 and the OpenHCS client teardown path; 149 generic tests, 58 focused OpenHCS regressions, and a fresh real-GUI close during endpoint startup passed without a retained process or false failure.",
-      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; revised its startup wording and confirmed the remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; revised its startup wording and confirmed the remaining claims against current source and tests.",
+      "On 2026-08-25, re-read the complete explanation against the shared endpoint catalogue service and its single revision/projection state; focused unit tests and a live Function Selector probe confirmed non-blocking preparation and exact selected-reference resolution."
     ]
   },
   {
@@ -818,7 +819,7 @@
     "authority": [
       {
         "path": "openhcs/processing/custom_functions/manager.py",
-        "sha256": "16b21ea374df79f560156855239c79b32e8ea2078384340edf39f7ce888e1e74",
+        "sha256": "aa5aa5a7032cd38c170d29d800175022883f04df7ce2d3f2fb4f6decad43f97d",
         "role": "Owns persisted custom-function lifecycle and projects validated declarations through the custom runtime registry."
       },
       {
@@ -961,7 +962,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "0daf856ef79f96398c68b33b2e8315ae814c61c6007618d6fb34d0386314e419",
+        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
         "role": "Routes the desktop analysis action through ExperimentalAnalysisEngine rather than the deprecated wrapper."
       },
       {
@@ -1554,7 +1555,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/reactor_providers.py",
-        "sha256": "cf2d0225d5da96d7e4210703cd8a6b5dc0941ee80ce0cea2af0abec9ec729ffb",
+        "sha256": "e937c310e6dd7f06bf8e2cfc227ce442310f6d249fc0abed4ed0e588b4121fe8",
         "role": "Registers the OpenHCS domain formatter with the generic preview service."
       }
     ],
@@ -1571,7 +1572,7 @@
   },
   {
     "path": "docs/source/architecture/mcp_distribution.rst",
-    "source_sha256": "1842623aedd0aa86b8c5686e92a85a9fe14fbabbea85eac1dcb3bb63ec7f95ab",
+    "source_sha256": "15644f93a243fa84b657092f8fa42f432111d7ca5a18f63775b05525d7e3467e",
     "audience": [
       "OpenHCS MCP maintainers",
       "packaging and hosted-deployment integrators"
@@ -1605,6 +1606,31 @@
         "role": "Binds the selected declaration registry into the local stdio MCP server."
       },
       {
+        "path": "openhcs/mcp/context.py",
+        "sha256": "31302d876170c4ad8612ef8e1dda1d10e49b9736334b50115e8b084df2f7e0b1",
+        "role": "Composes local stdio authoring with the persisted desktop execution endpoint while keeping hosted HTTP self-contained."
+      },
+      {
+        "path": "openhcs/pyqt_gui/config.py",
+        "sha256": "5f201d4ccf03df33100eb2dd04e27da43f96de94c928cd4e5e160ecf3821c75d",
+        "role": "Declares UIConfig and projects its unique execution endpoint without constructing unrelated UI configuration."
+      },
+      {
+        "path": "openhcs/core/config_document.py",
+        "sha256": "37f66fd971806e059da6194c003e20a7ad08f69066eec4af7ebb11b4b70a08db",
+        "role": "Derives one typed nested field from the canonical configuration Python document and its dataclass schema."
+      },
+      {
+        "path": "tests/unit/agent/test_mcp_distribution_runtime.py",
+        "sha256": "d871a643d298d28f7d94cd0265d29fde83a84fd5c48a6501ab72b3e5fcf64c42",
+        "role": "Proves cold local MCP composition does not import PyQt6."
+      },
+      {
+        "path": "tests/unit/test_config_document.py",
+        "sha256": "c6b291080398669b8449cb6ddaa78350f6c5b09f4f0cc57ebe92ac5f32460915",
+        "role": "Proves explicit, defaulted, and invalid typed field projections from canonical configuration source."
+      },
+      {
         "path": "openhcs/mcp/stdio.py",
         "sha256": "adc002730f0552d5a5a76c3b04de1d764e194632cf86c1754b659479a53b6257",
         "role": "Owns process-wide protocol stdout reservation and routes ordinary Python and native output to stderr."
@@ -1616,7 +1642,7 @@
       },
       {
         "path": "openhcs/mcp/http.py",
-        "sha256": "1bd5f7d0903e8f3686b0a3bf99e564a2855be602be1f5b22249c4a042da876af",
+        "sha256": "56430a939d65607847486d417c693c91523bf5571cb969389c37ff917f4793c4",
         "role": "Builds the stateless hosted Streamable HTTP server and rejects mutating hosted declarations."
       },
       {
@@ -1679,7 +1705,8 @@
       "Service-local stdout guards could not protect the persistent stdio protocol from delayed imports or background native writes; the transport now owns the process channel for its full lifetime.",
       "The window projection previously allowed focus to imply successful target navigation; it now reports navigation only from the registered nominal driver and returns a typed error for an unsupported target.",
       "Dynamic Qt target lookup bypassed pyqt-reactive's live-window projection after discovery, so a deleted C++ window could escape through its stale Python wrapper; target resolution now uses the generic lifecycle boundary.",
-      "The development client allowed a command excluded by its selected profile to reach the MCP server and degrade into a low-level unknown-tool response; preflight and compatible profile names now derive from the capability declarations."
+      "The development client allowed a command excluded by its selected profile to reach the MCP server and degrade into a low-level unknown-tool response; preflight and compatible profile names now derive from the capability declarations.",
+      "Constructing the complete UIConfig in a local MCP process pulled Qt-only shortcut validation across the headless boundary; MCP now projects the unique execution endpoint field from the canonical saved document and dataclass schema."
     ],
     "disposition": "revise",
     "validation": [
@@ -1698,7 +1725,9 @@
       "On 2026-08-25, re-read the complete distribution explanation after bounded viewer projection and one-operation isolation changed the MCP server and shared server regressions; capability registration, transport, packaging, and release projection claims remain unchanged.",
       "On 2026-08-25, re-read the complete page against the UI window projection and nominal navigation owner; focused tests and a fresh desktop MCP probe proved that focus, accepted target navigation, and unsupported targets are reported separately.",
       "On 2026-08-25, a combined UI bridge run exposed a deleted QDockWidget wrapper during dynamic target lookup; the new regression deletes the C++ object after discovery and proves OpenHCS reuses pyqt-reactive's live-window projection instead of calling QWidget APIs on stale wrappers.",
-      "On 2026-08-25, re-read the complete explanation and revised its local-surface section after the development client gained declaration-derived preflight; focused capability and MCP tests plus fresh desktop/full probes proved the selected-profile boundary."
+      "On 2026-08-25, re-read the complete explanation and revised its local-surface section after the development client gained declaration-derived preflight; focused capability and MCP tests plus fresh desktop/full probes proved the selected-profile boundary.",
+      "On 2026-08-25, re-read the complete distribution explanation against the local saved-endpoint composition root and the hosted self-contained boundary; a fresh stdio MCP client used a non-default TCP endpoint to author and render a valid step.",
+      "On 2026-08-25, re-read the complete page after the saved endpoint became a schema-derived field projection; 25 focused config and headless MCP regressions passed, and a fresh stdio MCP process used TCP port 17994 to resolve, validate, and render an exact threshold_otsu step."
     ]
   },
   {

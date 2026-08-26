@@ -29,11 +29,11 @@ from pyqt_reactive.widgets.shared.function_table_browser import (
 )
 
 from openhcs.agent.dto.functions import FunctionCatalogEntry, FunctionCatalogPage
-from openhcs.processing.custom_functions.signals import custom_function_signals
-from openhcs.pyqt_gui.services.function_catalog_projection import (
+from openhcs.agent.services.endpoint_function_catalog_service import (
     EndpointFunctionUnavailableError,
-    ZMQFunctionCatalogProjectionService,
+    ZMQFunctionCatalogService,
 )
+from openhcs.processing.custom_functions.signals import custom_function_signals
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +146,7 @@ class FunctionSelectorDialog(QDialog):
 
     def __init__(
         self,
-        catalog_service: ZMQFunctionCatalogProjectionService,
+        catalog_service: ZMQFunctionCatalogService,
         current_function: Callable | None = None,
         parent=None,
     ):
@@ -464,7 +464,7 @@ class FunctionSelectorDialog(QDialog):
         if self.selected_function_id is None:
             return
         try:
-            self.selected_function = self.catalog_service.import_selected_callable(
+            self.selected_function = self.catalog_service.resolve(
                 self.selected_function_id
             )
         except EndpointFunctionUnavailableError as exc:
@@ -480,7 +480,7 @@ class FunctionSelectorDialog(QDialog):
 
     @staticmethod
     def select_function(
-        catalog_service: ZMQFunctionCatalogProjectionService,
+        catalog_service: ZMQFunctionCatalogService,
         current_function: Callable | None = None,
         parent=None,
     ) -> Callable | None:

@@ -51,12 +51,16 @@ from openhcs.runtime.zmq_execution_signature import (
 
 if TYPE_CHECKING:
     from openhcs.agent.dto.functions import (
+        CustomFunctionRegistrationRequest,
+        CustomFunctionRegistrationResult,
         FunctionCatalogControlRequest,
         FunctionCatalogPage,
         FunctionDetail,
         FunctionDetailControlRequest,
+        FunctionReferenceControlRequest,
         FunctionSearchRequest,
     )
+    from openhcs.core.function_reference import FunctionReference
 
 logger = logging.getLogger(__name__)
 
@@ -654,14 +658,14 @@ class ZMQExecutionClient(
         """Search this endpoint through the authoritative catalog ranking policy."""
 
         from openhcs.agent.dto.functions import (
+            FunctionCatalogControlPayload,
             FunctionCatalogControlResponse,
-            FunctionSearchControlPayload,
         )
 
         if not self.is_connected() and not self.connect():
             raise RuntimeError("Failed to connect to execution server")
         response = self._send_function_catalog_control_request(
-            FunctionSearchControlPayload(request=request).to_dict()
+            FunctionCatalogControlPayload.from_request(request).to_dict()
         )
         return FunctionCatalogControlResponse.from_control_response(response).catalog
 
@@ -672,16 +676,56 @@ class ZMQExecutionClient(
         """Read one callable detail from an exact endpoint catalog revision."""
 
         from openhcs.agent.dto.functions import (
-            FunctionDetailControlPayload,
+            FunctionCatalogControlPayload,
             FunctionDetailControlResponse,
         )
 
         if not self.is_connected() and not self.connect():
             raise RuntimeError("Failed to connect to execution server")
         response = self._send_function_catalog_control_request(
-            FunctionDetailControlPayload.from_request(request).to_dict()
+            FunctionCatalogControlPayload.from_request(request).to_dict()
         )
         return FunctionDetailControlResponse.from_control_response(response).detail
+
+    def get_function_reference(
+        self,
+        request: FunctionReferenceControlRequest,
+    ) -> FunctionReference:
+        """Read one exact compiler reference from this execution endpoint."""
+
+        from openhcs.agent.dto.functions import (
+            FunctionCatalogControlPayload,
+            FunctionReferenceControlResponse,
+        )
+
+        if not self.is_connected() and not self.connect():
+            raise RuntimeError("Failed to connect to execution server")
+        response = self._send_function_catalog_control_request(
+            FunctionCatalogControlPayload.from_request(request).to_dict()
+        )
+        return FunctionReferenceControlResponse.from_control_response(
+            response
+        ).reference
+
+    def register_custom_function(
+        self,
+        request: CustomFunctionRegistrationRequest,
+    ) -> CustomFunctionRegistrationResult:
+        """Register custom source through this execution endpoint's catalog."""
+
+        from openhcs.agent.dto.functions import (
+            CustomFunctionRegistrationControlResponse,
+            FunctionCatalogControlPayload,
+        )
+
+        if not self.is_connected() and not self.connect():
+            raise RuntimeError("Failed to connect to execution server")
+        response = self._send_function_catalog_control_request(
+            FunctionCatalogControlPayload.from_request(request).to_dict()
+        )
+        return CustomFunctionRegistrationControlResponse.from_control_response(
+            response
+        ).result
 
     def _send_function_catalog_control_request(
         self,

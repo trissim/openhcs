@@ -40,6 +40,9 @@ from pyqt_reactive.widgets.editors.simple_code_editor import QScintillaCodeEdito
 from pyqt_reactive.widgets.system_monitor import SystemMonitorWidget
 from zmqruntime import EndpointConnectionCancelledError
 
+from openhcs.agent.services.endpoint_function_catalog_service import (
+    ZMQFunctionCatalogService,
+)
 from openhcs.agent.ui_bridge_identities import (
     MainWindowWidgetIdentity,
     UiLiveOverviewStateSurfaceIdentityDeclaration,
@@ -59,9 +62,6 @@ from openhcs.pyqt_gui.services.desktop_update import (
 )
 from openhcs.pyqt_gui.services.embedded_code_documents import (
     EmbeddedCodeDocumentRegistrationABC,
-)
-from openhcs.pyqt_gui.services.function_catalog_projection import (
-    ZMQFunctionCatalogProjectionService,
 )
 from openhcs.pyqt_gui.services.main_window_workflows import (
     MainWindowDockLayoutStore,
@@ -110,11 +110,11 @@ class MainWindowUiServices(PyQtServiceAdapter):
         main_window: QWidget,
         *,
         widget_gui_config,
-        function_catalog_projection: ZMQFunctionCatalogProjectionService,
+        function_catalog_service: ZMQFunctionCatalogService,
     ) -> None:
         super().__init__(main_window)
         self.widget_gui_config = widget_gui_config
-        self.function_catalog_projection = function_catalog_projection
+        self.function_catalog_service = function_catalog_service
 
     def create_window(self, spec) -> QDialog:
         return spec.window_class(self.main_window, self)
@@ -179,7 +179,7 @@ class OpenHCSMainWindow(QMainWindow):
         self,
         *,
         runtime_context: PyQtGuiRuntimeContext,
-        function_catalog_projection: ZMQFunctionCatalogProjectionService,
+        function_catalog_service: ZMQFunctionCatalogService,
     ):
         """
         Initialize the main OpenHCS window.
@@ -189,7 +189,7 @@ class OpenHCSMainWindow(QMainWindow):
 
         # Core configuration
         self.runtime_context = runtime_context
-        self.function_catalog_projection = function_catalog_projection
+        self.function_catalog_service = function_catalog_service
 
         # Create shared components
         self.storage_registry = storage_registry
@@ -199,7 +199,7 @@ class OpenHCSMainWindow(QMainWindow):
         main_window_services = MainWindowUiServices(
             self,
             widget_gui_config=runtime_context.ui_config,
-            function_catalog_projection=function_catalog_projection,
+            function_catalog_service=function_catalog_service,
         )
         self.window_services = main_window_services
         self.widget_services = main_window_services
@@ -351,7 +351,7 @@ class OpenHCSMainWindow(QMainWindow):
         except EndpointConnectionCancelledError:
             logger.debug("Execution-service preparation cancelled during teardown")
             return
-        await asyncio.wrap_future(self.function_catalog_projection.prepare())
+        await asyncio.wrap_future(self.function_catalog_service.prepare())
 
     def _start_ui_bridge_if_enabled(self) -> None:
         try:

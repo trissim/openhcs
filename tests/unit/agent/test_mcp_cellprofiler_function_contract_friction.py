@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from openhcs.agent.dto.functions import FunctionParameterSource
 from openhcs.agent.services.function_catalog_service import FunctionCatalogService
 from openhcs.processing.backends.cellprofiler.feature_enhancement import (
     enhance_or_suppress_features,
@@ -122,8 +123,7 @@ def test_cellprofiler_detail_distinguishes_static_and_compiled_artifacts(monkeyp
     module = runtime_contract.cellprofiler_module
     assert module.exact_artifact_contract_requires_compilation is True
     assert {
-        (binding.direction, binding.kind)
-        for binding in module.artifact_bindings
+        (binding.direction, binding.kind) for binding in module.artifact_bindings
     } >= {
         ("input", "image"),
         ("output", "object_labels"),
@@ -149,7 +149,9 @@ def test_function_detail_classifies_normalized_artifact_fed_parameter(monkeypatc
     parameters = {parameter.name: parameter for parameter in detail.parameters}
 
     assert "seed_labels" not in detail.entry.signature
-    assert parameters["seed_labels"].supplied_by == "runtime_artifact_input"
+    assert (
+        parameters["seed_labels"].supplied_by is FunctionParameterSource.ARTIFACT_INPUT
+    )
     assert parameters["seed_labels"].required is False
     assert "do not pass this as a function kwarg" in (
         parameters["seed_labels"].description or ""

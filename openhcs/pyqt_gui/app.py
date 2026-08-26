@@ -5,23 +5,22 @@ Main application class that initializes the PyQt6 application and
 manages global configuration and services.
 """
 
-import sys
 import logging
+import sys
 from enum import Enum
-from typing import Callable, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Optional
 
-from PyQt6 import QtCore
-from PyQt6.QtWidgets import QApplication, QMessageBox
-from PyQt6.QtCore import qInstallMessageHandler
-
-from openhcs.core.config import GlobalPipelineConfig
-from openhcs import __version__ as OPENHCS_VERSION
-from openhcs.pyqt_gui.branding import openhcs_application_icon
+from objectstate import spawn_thread_with_context
 from polystore.base import storage_registry
 from polystore.filemanager import FileManager
-from objectstate import spawn_thread_with_context
-
+from PyQt6 import QtCore
+from PyQt6.QtCore import qInstallMessageHandler
+from PyQt6.QtWidgets import QApplication, QMessageBox
 from pyqt_reactive.utils.scroll_filter import install_shift_wheel_scrolling
+
+from openhcs import __version__ as OPENHCS_VERSION
+from openhcs.core.config import GlobalPipelineConfig
+from openhcs.pyqt_gui.branding import openhcs_application_icon
 from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, UIConfig
 
 if TYPE_CHECKING:
@@ -143,11 +142,11 @@ class OpenHCSPyQtApp(QApplication):
         self.setOrganizationDomain("openhcs.org")
 
         self.runtime_context = runtime_context
-        from openhcs.pyqt_gui.services.function_catalog_projection import (
-            ZMQFunctionCatalogProjectionService,
+        from openhcs.agent.services.endpoint_function_catalog_service import (
+            ZMQFunctionCatalogService,
         )
 
-        self.function_catalog_projection = ZMQFunctionCatalogProjectionService(
+        self.function_catalog_service = ZMQFunctionCatalogService(
             lambda: self.runtime_context.ui_config.zmq,
         )
 
@@ -197,6 +196,7 @@ class OpenHCSPyQtApp(QApplication):
             ObjectState,
             ObjectStateRegistry,
         )
+
         from openhcs.core.config import GlobalPipelineConfig
 
         # Set for editing (UI placeholders) - this uses threading.local() storage
@@ -239,7 +239,7 @@ class OpenHCSPyQtApp(QApplication):
 
         register_reactor_providers(
             lambda: self.runtime_context.ui_config,
-            function_catalog_projection=self.function_catalog_projection,
+            function_catalog_service=self.function_catalog_service,
         )
 
         self.setWindowIcon(openhcs_application_icon())
@@ -259,7 +259,7 @@ class OpenHCSPyQtApp(QApplication):
 
             self.main_window = OpenHCSMainWindow(
                 runtime_context=self.runtime_context,
-                function_catalog_projection=self.function_catalog_projection,
+                function_catalog_service=self.function_catalog_service,
             )
 
             # Connect application-level signals
@@ -409,7 +409,7 @@ class OpenHCSPyQtApp(QApplication):
                 self.main_window.deleteLater()
                 self.main_window = None
 
-            self.function_catalog_projection.close()
+            self.function_catalog_service.close()
 
             # Process events again to handle deleteLater
             self.processEvents()

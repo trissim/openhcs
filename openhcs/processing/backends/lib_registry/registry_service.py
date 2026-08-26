@@ -346,12 +346,10 @@ class RegistryService:
         declared = reference.require_current_declaration(declared)
 
         registry = registry_type()
-        expected_composite_key = registry.composite_key_for_declared_callable(declared)
-        if reference.composite_key != expected_composite_key:
-            raise RuntimeError(
-                f"Function reference {reference.composite_key!r} contradicts "
-                f"declaration-owned identity {expected_composite_key!r}."
-            )
+        registry.require_declared_callable_composite_key(
+            declared,
+            reference.composite_key,
+        )
         contract = reference.metadata.processing_contract
         if not isinstance(contract, ProcessingContract):
             contract = ProcessingContract.from_declared_name(

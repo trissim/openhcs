@@ -92,7 +92,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
+        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
         "role": "Declares the nominal processing-contract members defined by the glossary."
       }
     ],
@@ -201,7 +201,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
+        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -340,7 +340,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
+        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -466,7 +466,7 @@
   },
   {
     "path": "docs/source/concepts/function_library.rst",
-    "source_sha256": "590159310f188990a8c070439a2e01689cef92e4cebe158ca15d1395b9c8e4c0",
+    "source_sha256": "905633cd590906e90a97ec81a9167921b5154ad9d5de0f34638e934587eeac05",
     "audience": [
       "imaging scientists",
       "callable authors"
@@ -476,12 +476,12 @@
     "authority": [
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
+        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "faf8d1fd8c6dc3f4e2cbffd42f19938a0f7af053435cdef4474418a95e5a44eb",
+        "sha256": "17370a6251b994795a78d88ff87d41603141d13d0ea6294e4ab3fb40ad937c86",
         "role": "Owns backend discovery, availability filtering, and the canonical process catalogue projection."
       },
       {
@@ -491,7 +491,7 @@
       },
       {
         "path": "openhcs/agent/services/function_catalog_service.py",
-        "sha256": "3b67afbe1606127d801a2d79235f15f8271288efab111056c60a4991d69e8d55",
+        "sha256": "22d4b645e1073d344a2387d59e04306ee34232682df12a40aa2abab6f24481b3",
         "role": "Projects callable contracts from the unified function registry for agent discovery and selection."
       },
       {
@@ -536,7 +536,8 @@
       "On 2026-08-22, re-read the complete explanation against CallableContract and its enum-value regression; the focused OpenHCS documentation-drift suite passed 238 tests.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-24, re-read the complete explanation after stdout containment moved out of function-catalog discovery and into the MCP transport; callable ownership and discovery guidance remain unchanged.",
-      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
+      "On 2026-08-25, re-read the complete explanation against endpoint-owned search, detail, and selected-reference transport; focused catalogue tests plus live desktop and MCP probes confirmed the documented discovery boundary."
     ]
   },
   {
@@ -650,7 +651,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
+        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -943,7 +944,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/basic_interface.rst",
-    "source_sha256": "15e632119b5220a61a8ad4d47222c31e68cb05152128de26a3f4e67d813ad43c",
+    "source_sha256": "1709c306032f25f65795862eecf77a8f9643e07074acd11392e3057339b33fb4",
     "audience": [
       "desktop users",
       "MCP-assisted operators"
@@ -953,12 +954,12 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "0daf856ef79f96398c68b33b2e8315ae814c61c6007618d6fb34d0386314e419",
+        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_config_lifecycle.py",
-        "sha256": "3f2272b6f3b3075ebd1070f647e3002c42c2ebcb8dee7eda1ba83421b193aea1",
+        "sha256": "1dde926026efc7ee6b1ac5ed8e44f974385e3c91c614e8b86bef7ec1b4d38bd0",
         "role": "Prevents the removed Textual package authority and local UI mirrors from returning."
       },
       {
@@ -997,9 +998,9 @@
         "role": "Applies Pipeline Editor documents and commits the reconciled editor state graph."
       },
       {
-        "path": "openhcs/pyqt_gui/services/function_catalog_projection.py",
-        "sha256": "0cbfe29559c75ca01200b0d9ba275fc47c5fa4be048c0402b2c79a9506660adb",
-        "role": "Owns asynchronous preparation and reuse of the endpoint callable catalogue."
+        "path": "openhcs/agent/services/endpoint_function_catalog_service.py",
+        "sha256": "62389b06a31ad89044dae301d1f93601ccdd9122e79758113b49a3747d26fd90",
+        "role": "Owns asynchronous preparation and reuse of the endpoint callable catalogue across desktop and local MCP authoring."
       },
       {
         "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
@@ -1017,7 +1018,7 @@
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/guide_for_biologists/basic_interface.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/pyqt_gui/main.py; tests/unit/pyqt_gui/test_ui_config_lifecycle.py; openhcs/pyqt_gui/widgets/plate_manager.py; openhcs/pyqt_gui/widgets/pipeline_editor.py; openhcs/agent/services/ui_bridge_service.py; tests/unit/pyqt_gui/test_ui_agent_bridge.py; openhcs/core/pipeline_document.py; tests/unit/pyqt_gui/test_pipeline_code_document_transactionality.py; openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py; openhcs/pyqt_gui/services/function_catalog_projection.py; tests/unit/pyqt_gui/test_pipeline_editor_widget.py.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/pyqt_gui/main.py; tests/unit/pyqt_gui/test_ui_config_lifecycle.py; openhcs/pyqt_gui/widgets/plate_manager.py; openhcs/pyqt_gui/widgets/pipeline_editor.py; openhcs/agent/services/ui_bridge_service.py; tests/unit/pyqt_gui/test_ui_agent_bridge.py; openhcs/core/pipeline_document.py; tests/unit/pyqt_gui/test_pipeline_code_document_transactionality.py; openhcs/pyqt_gui/widgets/shared/services/pipeline_editor_workflows.py; openhcs/agent/services/endpoint_function_catalog_service.py; tests/unit/pyqt_gui/test_pipeline_editor_widget.py.",
       "On 2026-08-22, removed the stale retained-Textual wording after the deprecated implementation and its local UI mirrors were deleted.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -1027,7 +1028,8 @@
       "On 2026-08-24, removed the duplicate embedded LLM editor path; MCP remains the supported agent-assisted desktop surface, while code mode continues to edit the same declaration-backed documents.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete reference against the current UI bridge and config-window navigation owners; focused tests and a fresh desktop MCP probe proved that field requests select their declared tab and unsupported targets are not reported as navigated.",
-      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; revised its startup wording and confirmed the remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; revised its startup wording and confirmed the remaining claims against current source and tests.",
+      "On 2026-08-25, re-read the complete interface reference against the shared endpoint catalogue service; a live dark-themed Function Selector remained responsive during loading and resolved the exact selected callable."
     ]
   },
   {
@@ -1170,7 +1172,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
+        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -1265,7 +1267,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "0daf856ef79f96398c68b33b2e8315ae814c61c6007618d6fb34d0386314e419",
+        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -1358,7 +1360,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "faf8d1fd8c6dc3f4e2cbffd42f19938a0f7af053435cdef4474418a95e5a44eb",
+        "sha256": "17370a6251b994795a78d88ff87d41603141d13d0ea6294e4ab3fb40ad937c86",
         "role": "Owns backend discovery, availability filtering, and the canonical process catalogue projection."
       },
       {
@@ -1404,7 +1406,7 @@
       },
       {
         "path": "tests/pyqt_gui/integration/test_end_to_end_workflow_foundation.py",
-        "sha256": "d09323da6e96c35bfd28e7d35c4e92e094166bbd11917d391057f3a511c3ac34",
+        "sha256": "db2f98b9878565df935d78aaf8d8365cdac5fe160cd4fcee2d6246502dc355d5",
         "role": "Proves synthetic plate import and the desktop configuration lifecycle, including form readiness, inheritance, persistence, reset, and teardown."
       }
     ],
@@ -1423,7 +1425,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/troubleshooting_FAQ.rst",
-    "source_sha256": "161b78b0543d67246db991e9307ff7261edf7c72f04fe163cfb6c2e67edca459",
+    "source_sha256": "6814ebfe2d2e25879b3f25a7c169cda83d503ad6e90435337abd13a341934c33",
     "audience": [
       "desktop operators diagnosing a failed workflow"
     ],
@@ -1452,7 +1454,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "075c3f7ff3b0e205e7a8ee4d698ba5ea66f19b8f406497121d053d97ab5a7f18",
+        "sha256": "5c061744351012cb6689e980596ca29b26572220b0432ec496bff921d81258d4",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       },
       {
@@ -1462,7 +1464,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "0daf856ef79f96398c68b33b2e8315ae814c61c6007618d6fb34d0386314e419",
+        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
         "role": "Wires the endpoint compatibility observation to the owning version-restart workflow."
       },
       {
@@ -1506,13 +1508,13 @@
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, and environment to the restart-worker verifier and reports its result."
       },
       {
-        "path": "openhcs/pyqt_gui/services/function_catalog_projection.py",
-        "sha256": "0cbfe29559c75ca01200b0d9ba275fc47c5fa4be048c0402b2c79a9506660adb",
-        "role": "Owns asynchronous execution-endpoint catalogue loading, failure projection, and cache reuse."
+        "path": "openhcs/agent/services/endpoint_function_catalog_service.py",
+        "sha256": "62389b06a31ad89044dae301d1f93601ccdd9122e79758113b49a3747d26fd90",
+        "role": "Owns asynchronous execution-endpoint catalogue loading, failure projection, revision state, and reuse."
       },
       {
         "path": "tests/unit/pyqt_gui/test_function_catalog_projection.py",
-        "sha256": "3137441b8c6a18bdfc923316d3af805a89d09512564ac98fa40252927ed95133",
+        "sha256": "328ca03c41d8e3310c9b6d9e3ec422a2d60939d0cb19e14f5393a3222d5db87d",
         "role": "Proves one shared non-blocking catalogue request, endpoint invalidation, and safe background-client lifecycle."
       },
       {
@@ -1541,7 +1543,7 @@
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/guide_for_biologists/troubleshooting_FAQ.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/pyqt_gui/widgets/plate_manager.py; openhcs/core/pipeline/compiler.py; openhcs/utils/environment.py; openhcs/runtime/viewer_protocol.py; openhcs/runtime/zmq_execution_client.py; openhcs/runtime/zmq_application.py; openhcs/pyqt_gui/main.py; openhcs/pyqt_gui/services/desktop_restart.py; tests/unit/pyqt_gui/test_desktop_restart.py; openhcs/pyqt_gui/services/function_catalog_projection.py; tests/unit/pyqt_gui/test_function_catalog_projection.py.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/pyqt_gui/widgets/plate_manager.py; openhcs/core/pipeline/compiler.py; openhcs/utils/environment.py; openhcs/runtime/viewer_protocol.py; openhcs/runtime/zmq_execution_client.py; openhcs/runtime/zmq_application.py; openhcs/pyqt_gui/main.py; openhcs/pyqt_gui/services/desktop_restart.py; tests/unit/pyqt_gui/test_desktop_restart.py; openhcs/agent/services/endpoint_function_catalog_service.py; tests/unit/pyqt_gui/test_function_catalog_projection.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
@@ -1552,7 +1554,8 @@
       "On 2026-08-23, re-read the troubleshooting how-to after moving real detached restart acceptance out of the pre-install source contract and retaining it in the installed verifier; the user-facing mismatch and recovery guidance remains accurate.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; revised its startup wording and confirmed the remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; revised its startup wording and confirmed the remaining claims against current source and tests.",
+      "On 2026-08-25, re-read the complete troubleshooting how-to against the persisted desktop endpoint snapshot and shared catalogue lifecycle; focused tests and a fresh stdio MCP probe confirmed non-default endpoint use and restart guidance."
     ]
   },
   {
@@ -2083,7 +2086,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/config.py",
-        "sha256": "035d6842b40ad229932936716cea4c2b0275f44b63014b24798f6450108f15d9",
+        "sha256": "5f201d4ccf03df33100eb2dd04e27da43f96de94c928cd4e5e160ecf3821c75d",
         "role": "Declares UI configuration, including logging, theming, viewer, and execution-server settings."
       },
       {
@@ -2245,7 +2248,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "0daf856ef79f96398c68b33b2e8315ae814c61c6007618d6fb34d0386314e419",
+        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2336,7 +2339,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/config.py",
-        "sha256": "035d6842b40ad229932936716cea4c2b0275f44b63014b24798f6450108f15d9",
+        "sha256": "5f201d4ccf03df33100eb2dd04e27da43f96de94c928cd4e5e160ecf3821c75d",
         "role": "Declares UI configuration, including logging, theming, viewer, and execution-server settings."
       },
       {
@@ -2356,7 +2359,7 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_user_facing_help_surfaces.py",
-        "sha256": "35515fbd6f42646766318d1e4162d326834b09d1d715c93f05e928c2a83af632",
+        "sha256": "540d0fc2d796ff80543a7ef245d2450c1ecf988994e244c13472f9756cd904e1",
         "role": "Proves user-facing field help is sourced from declaration metadata rather than copied UI text."
       }
     ],
@@ -2393,7 +2396,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
+        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -2582,7 +2585,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "0daf856ef79f96398c68b33b2e8315ae814c61c6007618d6fb34d0386314e419",
+        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2740,7 +2743,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "faf8d1fd8c6dc3f4e2cbffd42f19938a0f7af053435cdef4474418a95e5a44eb",
+        "sha256": "17370a6251b994795a78d88ff87d41603141d13d0ea6294e4ab3fb40ad937c86",
         "role": "Owns backend discovery, availability filtering, and the canonical process catalogue projection."
       },
       {
@@ -2771,7 +2774,7 @@
   },
   {
     "path": "docs/source/user_guide/custom_function_management.rst",
-    "source_sha256": "b2540df69cb8c29e075d94163082abed64a64a3f49557d050622ae29991cd745",
+    "source_sha256": "f505cc781b03109930c227eb06cb31ece3c4c18e491a1a2356d11dcb573c669b",
     "audience": [
       "desktop callable authors"
     ],
@@ -2780,8 +2783,18 @@
     "authority": [
       {
         "path": "openhcs/processing/custom_functions/manager.py",
-        "sha256": "16b21ea374df79f560156855239c79b32e8ea2078384340edf39f7ce888e1e74",
+        "sha256": "aa5aa5a7032cd38c170d29d800175022883f04df7ce2d3f2fb4f6decad43f97d",
         "role": "Owns persisted custom-function source and coordinates validated lifecycle transactions with the runtime projection owner."
+      },
+      {
+        "path": "openhcs/processing/custom_functions/events.py",
+        "sha256": "f12364b5a9747f7238290e6e705fc00fc96993a5b83e6d44e90474424263e959",
+        "role": "Publishes process-local custom-function changes without importing a GUI runtime."
+      },
+      {
+        "path": "openhcs/processing/custom_functions/signals.py",
+        "sha256": "6862f7d4b9ca50366f7b4d51d9c77a257dbff59273a7229c189869e9678d7f9b",
+        "role": "Adapts the headless domain event into Qt signal delivery for desktop consumers."
       },
       {
         "path": "openhcs/pyqt_gui/dialogs/custom_function_manager_dialog.py",
@@ -2790,48 +2803,51 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "0daf856ef79f96398c68b33b2e8315ae814c61c6007618d6fb34d0386314e419",
+        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
         "path": "tests/unit/test_function_catalog_zmq.py",
-        "sha256": "5379daf7ee962b25629be68fda27c24638f72e809d18bc45c9dca291c942c8d5",
+        "sha256": "a2cf7c23c799c8a52db884c7ecfdbfd36f22c2ed328eb49516bddafc75cec5a2",
         "role": "Proves persisted custom functions propagate through registry discovery and the execution-server catalogue."
       },
       {
-        "path": "openhcs/pyqt_gui/services/function_catalog_projection.py",
-        "sha256": "0cbfe29559c75ca01200b0d9ba275fc47c5fa4be048c0402b2c79a9506660adb",
-        "role": "Owns asynchronous invalidation and refresh of the shared endpoint catalogue projection."
+        "path": "openhcs/agent/services/endpoint_function_catalog_service.py",
+        "sha256": "62389b06a31ad89044dae301d1f93601ccdd9122e79758113b49a3747d26fd90",
+        "role": "Owns endpoint registration, asynchronous invalidation, and refresh of the shared catalogue projection."
       },
       {
         "path": "openhcs/pyqt_gui/dialogs/function_selector_dialog.py",
-        "sha256": "7773fb6d137080e9ad6445c710f458fee13c49243de489844e43034872a61014",
+        "sha256": "c88ff6a258f96ee17c98bec675bc1051821258fa328c72a7ad667647122a89f5",
         "role": "Projects catalogue loading and failure state without blocking the Qt thread."
       },
       {
         "path": "openhcs/processing/custom_functions/runtime_registry.py",
-        "sha256": "1a9fa8405823af2c688aa1999358114b173f850d009571ae61b230ee6c713723",
+        "sha256": "6315d2134a8f2e13561cc9d755872f9a25512496c77971fc5219586edc67213b",
         "role": "Atomically publishes process-local custom callable metadata and public module exports from validated source declarations."
       },
       {
         "path": "tests/unit/test_custom_function_lifecycle.py",
-        "sha256": "91ed4449fcc1ceef5666671d0754f70ccf9b42ad00462c1ffb6480efb430c1fa",
+        "sha256": "7e75b565ad7f4a899f7dc81fb03f04691e709b2bb85efe3b3e28090639409230",
         "role": "Proves transactional create, load, replace, delete, collision, and source-revision behaviour."
       }
     ],
     "findings": [
       "The task guide did not explain that custom-function changes invalidate and asynchronously refresh the endpoint-owned catalogue projection.",
-      "The guide assigned both persistence and runtime publication to CustomFunctionManager instead of distinguishing persisted source from the atomic process projection."
+      "The guide assigned both persistence and runtime publication to CustomFunctionManager instead of distinguishing persisted source from the atomic process projection.",
+      "The custom-function manager imported a global Qt signal as part of its headless lifecycle; change publication is now a domain event with a separate desktop Qt adapter."
     ],
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/user_guide/custom_function_management.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/processing/custom_functions/manager.py; openhcs/pyqt_gui/dialogs/custom_function_manager_dialog.py; openhcs/pyqt_gui/main.py; tests/unit/test_function_catalog_zmq.py; openhcs/pyqt_gui/services/function_catalog_projection.py; openhcs/pyqt_gui/dialogs/function_selector_dialog.py; openhcs/processing/custom_functions/runtime_registry.py; tests/unit/test_custom_function_lifecycle.py.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/processing/custom_functions/manager.py; openhcs/pyqt_gui/dialogs/custom_function_manager_dialog.py; openhcs/pyqt_gui/main.py; tests/unit/test_function_catalog_zmq.py; openhcs/agent/services/endpoint_function_catalog_service.py; openhcs/pyqt_gui/dialogs/function_selector_dialog.py; openhcs/processing/custom_functions/runtime_registry.py; tests/unit/test_custom_function_lifecycle.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-23, re-read the complete how-to after invalidation and close began cancelling and joining the exact catalogue worker; custom-function refresh remains one asynchronous endpoint projection.",
-      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate."
+      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate.",
+      "On 2026-08-25, re-read the complete custom-function how-to against endpoint-owned registration and the single lifetime-bearing runtime declaration map; focused lifecycle and ZMQ tests confirmed persisted reconciliation retains ephemeral declarations.",
+      "On 2026-08-25, re-read the complete how-to after custom-function change notification was split into a headless domain event and desktop Qt adapter; cold MCP import and affected custom-function, catalogue, and help regressions passed."
     ]
   },
   {
@@ -2850,17 +2866,17 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "0aee1f4c9c6fd8f3322eb7a5cfc27abe1a309ea29ae4b0ea81afa70540ff58a4",
+        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
         "path": "openhcs/processing/custom_functions/manager.py",
-        "sha256": "16b21ea374df79f560156855239c79b32e8ea2078384340edf39f7ce888e1e74",
+        "sha256": "aa5aa5a7032cd38c170d29d800175022883f04df7ce2d3f2fb4f6decad43f97d",
         "role": "Owns persisted custom-function source and coordinates validated lifecycle transactions with the runtime projection owner."
       },
       {
         "path": "tests/unit/test_function_catalog_zmq.py",
-        "sha256": "5379daf7ee962b25629be68fda27c24638f72e809d18bc45c9dca291c942c8d5",
+        "sha256": "a2cf7c23c799c8a52db884c7ecfdbfd36f22c2ed328eb49516bddafc75cec5a2",
         "role": "Proves persisted custom functions propagate through registry discovery and the execution-server catalogue."
       },
       {
@@ -2870,12 +2886,12 @@
       },
       {
         "path": "openhcs/processing/custom_functions/runtime_registry.py",
-        "sha256": "1a9fa8405823af2c688aa1999358114b173f850d009571ae61b230ee6c713723",
+        "sha256": "6315d2134a8f2e13561cc9d755872f9a25512496c77971fc5219586edc67213b",
         "role": "Projects a validated custom declaration into the process-local callable catalogue."
       },
       {
         "path": "tests/unit/test_custom_function_lifecycle.py",
-        "sha256": "91ed4449fcc1ceef5666671d0754f70ccf9b42ad00462c1ffb6480efb430c1fa",
+        "sha256": "7e75b565ad7f4a899f7dc81fb03f04691e709b2bb85efe3b3e28090639409230",
         "role": "Proves validated custom declarations publish atomically without mirrored catalogue state."
       }
     ],
@@ -2951,7 +2967,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "0daf856ef79f96398c68b33b2e8315ae814c61c6007618d6fb34d0386314e419",
+        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -3004,12 +3020,12 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "0daf856ef79f96398c68b33b2e8315ae814c61c6007618d6fb34d0386314e419",
+        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
         "path": "tests/unit/pyqt_gui/test_ui_config_lifecycle.py",
-        "sha256": "3f2272b6f3b3075ebd1070f647e3002c42c2ebcb8dee7eda1ba83421b193aea1",
+        "sha256": "1dde926026efc7ee6b1ac5ed8e44f974385e3c91c614e8b86bef7ec1b4d38bd0",
         "role": "Prevents the removed Textual package authority and local UI mirrors from returning."
       },
       {
@@ -3059,17 +3075,17 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/reactor_providers.py",
-        "sha256": "cf2d0225d5da96d7e4210703cd8a6b5dc0941ee80ce0cea2af0abec9ec729ffb",
+        "sha256": "e937c310e6dd7f06bf8e2cfc227ce442310f6d249fc0abed4ed0e588b4121fe8",
         "role": "Registers the log, process, status, and execution reactors consumed by desktop widgets."
       },
       {
         "path": "openhcs/pyqt_gui/config.py",
-        "sha256": "035d6842b40ad229932936716cea4c2b0275f44b63014b24798f6450108f15d9",
+        "sha256": "5f201d4ccf03df33100eb2dd04e27da43f96de94c928cd4e5e160ecf3821c75d",
         "role": "Declares UI configuration, including logging, theming, viewer, and execution-server settings."
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "075c3f7ff3b0e205e7a8ee4d698ba5ea66f19b8f406497121d053d97ab5a7f18",
+        "sha256": "5c061744351012cb6689e980596ca29b26572220b0432ec496bff921d81258d4",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       }
     ],

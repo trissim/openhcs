@@ -9,7 +9,6 @@ Core Components:
     - ValidationError: Exception raised for invalid custom function code
     - get_default_template: Returns default numpy template for custom functions
     - get_analysis_template: Returns template for analysis functions with @artifact_outputs
-    - CustomFunctionSignals: Qt signals for UI updates when custom functions change
 
 Example (Processing):
     >>> from openhcs.processing.custom_functions import CustomFunctionManager
@@ -32,18 +31,14 @@ import threading
 
 from openhcs.processing.custom_functions.manager import CustomFunctionManager
 from openhcs.processing.custom_functions.templates import (
-    get_default_template,
-    get_template_for_memory_type,
-    get_analysis_template,
-    get_multi_output_template,
     AVAILABLE_MEMORY_TYPES,
     AVAILABLE_TEMPLATE_CATEGORIES,
+    get_analysis_template,
+    get_default_template,
+    get_multi_output_template,
+    get_template_for_memory_type,
 )
 from openhcs.processing.custom_functions.validation import ValidationError
-from openhcs.processing.custom_functions.signals import (
-    CustomFunctionSignals,
-    custom_function_signals,
-)
 
 _CUSTOM_FUNCTION_LOAD_STATE = threading.local()
 
@@ -56,8 +51,6 @@ __all__ = [
     "get_multi_output_template",
     "AVAILABLE_MEMORY_TYPES",
     "AVAILABLE_TEMPLATE_CATEGORIES",
-    "CustomFunctionSignals",
-    "custom_function_signals",
 ]
 
 

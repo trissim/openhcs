@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import threading
 import inspect
-from concurrent.futures import Future
+import threading
 from collections.abc import Callable, Mapping
+from concurrent.futures import Future
 from contextlib import contextmanager
+from dataclasses import dataclass
+from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 from openhcs.constants import MemoryType
@@ -22,6 +24,25 @@ if TYPE_CHECKING:
     )
 
 
+class CustomFunctionLifetime(Enum):
+    """Lifetime owned by one process-local custom-function declaration."""
+
+    PERSISTED = auto()
+    EPHEMERAL = auto()
+
+    @classmethod
+    def from_persist(cls, persist: bool) -> CustomFunctionLifetime:
+        return cls.PERSISTED if persist else cls.EPHEMERAL
+
+
+@dataclass(frozen=True, slots=True)
+class CustomFunctionRuntimeDeclaration:
+    """One projected custom function together with its source lifetime."""
+
+    metadata: FunctionMetadata
+    lifetime: CustomFunctionLifetime
+
+
 class CustomFunctionRuntimeRegistry:
     """Atomic process projection of custom-function declarations.
 
@@ -31,7 +52,7 @@ class CustomFunctionRuntimeRegistry:
     or the complete replacement, never a partially updated view.
     """
 
-    _metadata_by_name: dict[str, FunctionMetadata] = {}
+    _declarations_by_name: dict[str, CustomFunctionRuntimeDeclaration] = {}
     _published_exports: dict[str, Callable] = {}
     _preparation_outcomes: dict[tuple[str, str], Future[FunctionMetadata]] = {}
     _preparation_threads: dict[tuple[str, str], int] = {}
@@ -51,7 +72,10 @@ class CustomFunctionRuntimeRegistry:
         """Return a stable snapshot of the custom metadata view."""
 
         with cls._lock:
-            return dict(cls._metadata_by_name)
+            return {
+                name: declaration.metadata
+                for name, declaration in cls._declarations_by_name.items()
+            }
 
     @classmethod
     def metadata_for_callable(cls, func: Callable) -> FunctionMetadata | None:
@@ -59,7 +83,8 @@ class CustomFunctionRuntimeRegistry:
 
         declared = inspect.unwrap(func)
         with cls._lock:
-            for metadata in cls._metadata_by_name.values():
+            for declaration in cls._declarations_by_name.values():
+                metadata = declaration.metadata
                 if inspect.unwrap(metadata.func) is declared:
                     return metadata
         return None
@@ -106,18 +131,24 @@ class CustomFunctionRuntimeRegistry:
         return outcome.result()
 
     @classmethod
-    def publish(cls, metadata: FunctionMetadata) -> None:
-        """Publish one prepared declaration and invalidate exact-source proof."""
+    def publish(
+        cls,
+        metadata: FunctionMetadata,
+        lifetime: CustomFunctionLifetime,
+    ) -> None:
+        """Publish one prepared declaration with its exact source lifetime."""
 
         with cls._lock:
-            cls._publish_locked(metadata)
-            cls._source_revision = None
+            cls._publish_locked(metadata, lifetime)
+            if lifetime is CustomFunctionLifetime.PERSISTED:
+                cls._source_revision = None
 
     @classmethod
     def ensure_can_publish(cls, metadata: FunctionMetadata) -> None:
         """Fail unless ``metadata`` may claim its public package export."""
 
         with cls._lock:
+            cls._ensure_declaration_available_locked(metadata.original_name)
             cls._ensure_export_available_locked(metadata.original_name)
 
     @classmethod
@@ -129,6 +160,10 @@ class CustomFunctionRuntimeRegistry:
         """Fail unless a replacement can retain or claim its package export."""
 
         with cls._lock:
+            cls._ensure_declaration_available_locked(
+                metadata.original_name,
+                replacing_name=old_name,
+            )
             cls._ensure_export_available_locked(
                 metadata.original_name,
                 replacing_name=old_name,
@@ -156,11 +191,11 @@ class CustomFunctionRuntimeRegistry:
                 new_name,
                 replacing_name=old_name,
             )
-            cls._metadata_by_name.pop(old_name, None)
+            cls._declarations_by_name.pop(old_name, None)
             if old_name != new_name:
                 cls._remove_preparation_outcomes_locked(old_name)
                 cls._remove_module_exports_locked((old_name,))
-            cls._publish_locked(metadata)
+            cls._publish_locked(metadata, CustomFunctionLifetime.PERSISTED)
             cls._source_revision = None
 
     @classmethod
@@ -169,18 +204,50 @@ class CustomFunctionRuntimeRegistry:
         metadata_by_name: Mapping[str, FunctionMetadata],
         revision: CustomFunctionSourceRevision,
     ) -> None:
-        """Publish an exact prepared source set as one atomic projection."""
+        """Replace persisted declarations while retaining ephemeral owners."""
 
         with cls._lock:
             for function_name in metadata_by_name:
                 cls._ensure_export_available_locked(function_name)
-            previous_names = tuple(cls._metadata_by_name)
-            for function_name in set(previous_names) - metadata_by_name.keys():
+            ephemeral_declarations = {
+                name: declaration
+                for name, declaration in cls._declarations_by_name.items()
+                if declaration.lifetime is CustomFunctionLifetime.EPHEMERAL
+            }
+            for function_name, metadata in metadata_by_name.items():
+                ephemeral = ephemeral_declarations.get(function_name)
+                if ephemeral is None:
+                    continue
+                if cls._declaration_revision(
+                    ephemeral.metadata
+                ) != cls._declaration_revision(metadata):
+                    raise ValueError(
+                        f"Persisted custom function {function_name!r} conflicts with "
+                        "an ephemeral declaration in this process."
+                    )
+                ephemeral_declarations.pop(function_name)
+
+            previous_names = tuple(cls._declarations_by_name)
+            persisted_names = {
+                name
+                for name, declaration in cls._declarations_by_name.items()
+                if declaration.lifetime is CustomFunctionLifetime.PERSISTED
+            }
+            for function_name in persisted_names - metadata_by_name.keys():
                 cls._remove_preparation_outcomes_locked(function_name)
             cls._remove_module_exports_locked(previous_names)
-            cls._metadata_by_name = dict(metadata_by_name)
-            for metadata in cls._metadata_by_name.values():
-                cls._publish_module_export_locked(metadata)
+            cls._declarations_by_name = {
+                **ephemeral_declarations,
+                **{
+                    name: CustomFunctionRuntimeDeclaration(
+                        metadata=metadata,
+                        lifetime=CustomFunctionLifetime.PERSISTED,
+                    )
+                    for name, metadata in metadata_by_name.items()
+                },
+            }
+            for declaration in cls._declarations_by_name.values():
+                cls._publish_module_export_locked(declaration.metadata)
             cls._source_revision = revision
 
     @classmethod
@@ -188,18 +255,22 @@ class CustomFunctionRuntimeRegistry:
         """Remove one runtime projection and its public module export."""
 
         with cls._lock:
-            cls._metadata_by_name.pop(function_name, None)
+            declaration = cls._declarations_by_name.pop(function_name, None)
             cls._remove_preparation_outcomes_locked(function_name)
             cls._remove_module_exports_locked((function_name,))
-            cls._source_revision = None
+            if (
+                declaration is not None
+                and declaration.lifetime is CustomFunctionLifetime.PERSISTED
+            ):
+                cls._source_revision = None
 
     @classmethod
     def clear(cls) -> None:
         """Clear every derived runtime projection and source revision."""
 
         with cls._lock:
-            function_names = tuple(cls._metadata_by_name)
-            cls._metadata_by_name.clear()
+            function_names = tuple(cls._declarations_by_name)
+            cls._declarations_by_name.clear()
             cls._preparation_outcomes.clear()
             cls._preparation_threads.clear()
             cls._source_revision = None
@@ -213,10 +284,36 @@ class CustomFunctionRuntimeRegistry:
             return cls._source_revision
 
     @classmethod
-    def _publish_locked(cls, metadata: FunctionMetadata) -> None:
+    def _publish_locked(
+        cls,
+        metadata: FunctionMetadata,
+        lifetime: CustomFunctionLifetime,
+    ) -> None:
+        cls._ensure_declaration_available_locked(metadata.original_name)
         cls._ensure_export_available_locked(metadata.original_name)
-        cls._metadata_by_name[metadata.original_name] = metadata
+        cls._declarations_by_name[metadata.original_name] = (
+            CustomFunctionRuntimeDeclaration(
+                metadata=metadata,
+                lifetime=lifetime,
+            )
+        )
         cls._publish_module_export_locked(metadata)
+
+    @classmethod
+    def _ensure_declaration_available_locked(
+        cls,
+        function_name: str,
+        *,
+        replacing_name: str | None = None,
+    ) -> None:
+        existing = cls._declarations_by_name.get(function_name)
+        if existing is None or function_name == replacing_name:
+            return
+        raise ValueError(f"Custom function {function_name!r} already exists.")
+
+    @staticmethod
+    def _declaration_revision(metadata: FunctionMetadata) -> str | None:
+        return vars(metadata.func).get(FunctionContractAttribute.declaration_revision)
 
     @classmethod
     def _remove_preparation_outcomes_locked(cls, function_name: str) -> None:
@@ -246,8 +343,8 @@ class CustomFunctionRuntimeRegistry:
         if published is not None and current is published:
             return
         if replacing_name == function_name:
-            replacing = cls._metadata_by_name.get(replacing_name)
-            if replacing is not None and current is replacing.func:
+            replacing = cls._declarations_by_name.get(replacing_name)
+            if replacing is not None and current is replacing.metadata.func:
                 return
         raise ValueError(
             f"Custom function {function_name!r} conflicts with existing public "
@@ -309,14 +406,14 @@ def project_custom_function(
 
     registry = OpenHCSRegistry()
     if declaration_revision is not None:
-        vars(func)[
-            FunctionContractAttribute.declaration_revision
-        ] = declaration_revision
+        vars(func)[FunctionContractAttribute.declaration_revision] = (
+            declaration_revision
+        )
     wrapped = registry.apply_contract_wrapper(func, processing_contract)
     if declaration_revision is not None:
-        vars(wrapped)[
-            FunctionContractAttribute.declaration_revision
-        ] = declaration_revision
+        vars(wrapped)[FunctionContractAttribute.declaration_revision] = (
+            declaration_revision
+        )
     metadata = FunctionMetadata(
         name=func.__name__,
         func=wrapped,
@@ -328,8 +425,6 @@ def project_custom_function(
         original_name=func.__name__,
         memory_type=callable_contract.input_memory_type,
     )
-    wrapped.__function_metadata__ = metadata
-    wrapped.registry = registry.library_name
     return metadata
 
 
@@ -337,5 +432,8 @@ def register_custom_function(func: Callable) -> Callable:
     """Project and publish one validated custom declaration."""
 
     metadata = project_custom_function(func)
-    CustomFunctionRuntimeRegistry.publish(metadata)
+    CustomFunctionRuntimeRegistry.publish(
+        metadata,
+        CustomFunctionLifetime.EPHEMERAL,
+    )
     return metadata.func

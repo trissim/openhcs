@@ -49,7 +49,10 @@ class ExecutionControlService:
             host=host,
             context=context,
             port=port,
-            endpoint_shutdown_service=EndpointShutdownService.for_config(config),
+            endpoint_shutdown_service=EndpointShutdownService.for_endpoint(
+                config,
+                config.client_endpoint(port),
+            ),
         )
 
     def check_all_completed(self) -> None:

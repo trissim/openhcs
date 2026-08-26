@@ -40,12 +40,12 @@ from openhcs.agent.dto.knowledge import (
     KnowledgeBaseSearchRequest,
     KnowledgeBaseSearchResult,
 )
+from openhcs.agent.services.endpoint_function_catalog_service import (
+    ZMQFunctionCatalogService,
+)
 from openhcs.agent.services.knowledge_base_service import (
     MAX_DOCUMENT_CHARS,
     KnowledgeBaseService,
-)
-from openhcs.pyqt_gui.services.function_catalog_projection import (
-    ZMQFunctionCatalogProjectionService,
 )
 
 KNOWLEDGE_ITEM_ROLE = Qt.ItemDataRole.UserRole
@@ -100,7 +100,7 @@ class HelpWindow(QDialog):
         service_adapter=None,
         *,
         knowledge_service: KnowledgeBaseService | None = None,
-        function_catalog_service: ZMQFunctionCatalogProjectionService | None = None,
+        function_catalog_service: ZMQFunctionCatalogService | None = None,
         color_scheme: ColorScheme | None = None,
         parent=None,
     ) -> None:
@@ -112,10 +112,10 @@ class HelpWindow(QDialog):
         if function_catalog_service is not None:
             self.function_catalog_service = function_catalog_service
         elif service_adapter is not None:
-            self.function_catalog_service = service_adapter.function_catalog_projection
+            self.function_catalog_service = service_adapter.function_catalog_service
         else:
             raise RuntimeError(
-                "HelpWindow requires an endpoint function-catalog projection."
+                "HelpWindow requires an endpoint function-catalog service."
             )
         self.color_scheme = color_scheme or self._resolved_color_scheme()
         self.catalog: KnowledgeBaseCatalog | None = None

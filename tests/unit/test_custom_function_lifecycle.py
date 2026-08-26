@@ -12,8 +12,8 @@ from arraybridge import MemoryType
 
 import openhcs.processing.custom_functions as custom_functions
 import openhcs.processing.custom_functions.manager as manager_module
-from openhcs.processing.backends.lib_registry.registry_service import RegistryService
 from openhcs.core.function_reference import FunctionReferenceTransportAuthority
+from openhcs.processing.backends.lib_registry.registry_service import RegistryService
 from openhcs.processing.custom_functions.manager import CustomFunctionManager
 from openhcs.processing.custom_functions.runtime_registry import (
     CustomFunctionRuntimeRegistry,
@@ -31,7 +31,7 @@ def isolated_custom_runtime(monkeypatch, tmp_path):
     storage_dir = tmp_path / "custom_functions"
     storage_dir.mkdir()
     monkeypatch.setattr(manager_module, "get_data_file_path", lambda _name: storage_dir)
-    monkeypatch.setattr(CustomFunctionRuntimeRegistry, "_metadata_by_name", {})
+    monkeypatch.setattr(CustomFunctionRuntimeRegistry, "_declarations_by_name", {})
     monkeypatch.setattr(CustomFunctionRuntimeRegistry, "_published_exports", {})
     monkeypatch.setattr(CustomFunctionRuntimeRegistry, "_preparation_outcomes", {})
     monkeypatch.setattr(CustomFunctionRuntimeRegistry, "_preparation_threads", {})
@@ -361,6 +361,24 @@ def test_cold_registration_never_prepares_global_catalog(
     )
 
     assert registered is vars(custom_functions)["cold_probe"]
+
+
+def test_persisted_source_reconciliation_retains_ephemeral_declarations(
+    isolated_custom_runtime,
+) -> None:
+    manager = CustomFunctionManager()
+    [ephemeral] = manager.register_from_code(
+        _source("ephemeral_probe"),
+        persist=False,
+    )
+    manager.register_from_code(_source("persisted_probe"), persist=True)
+
+    assert manager.load_all_custom_functions() == 1
+
+    metadata = CustomFunctionRuntimeRegistry.metadata_by_name()
+    assert metadata["ephemeral_probe"].func is ephemeral
+    assert "persisted_probe" in metadata
+    assert vars(custom_functions)["ephemeral_probe"] is ephemeral
 
 
 def test_custom_function_framework_surfaces_derive_from_memory_type_owner(

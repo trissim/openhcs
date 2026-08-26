@@ -68,4 +68,15 @@ publishes no partial catalogue, and clearing the service removes every derived
 lookup view. The transport service therefore consumes one declaration-derived
 catalogue instead of synchronizing a second function registry.
 
+Catalogue control messages preserve the endpoint's complete membership revision
+across full and filtered pages. Detail reads and callable-reference reads require
+that revision, and a reference contains the registry-owned canonical key and
+processing contract. Desktop and local MCP consumers can therefore resolve one
+selected callable without importing every catalogue member or reclassifying its
+semantics locally.
+
+Batch shutdown is likewise bound to the exact typed endpoint, including its host
+and transport. Cleanup cannot reinterpret a non-default TCP endpoint through a
+local transport default.
+
 See :doc:`external_foundations`.

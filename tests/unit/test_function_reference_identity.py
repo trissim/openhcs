@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import pytest
 
-from openhcs.core.callable_contract import CallableImportIdentity
+from openhcs.core.callable_contract import (
+    CallableContract,
+    CallableImportIdentity,
+    CallableMetadata,
+)
 from openhcs.core.function_reference import (
     FunctionReferenceTransportAuthority,
     RegistryFunctionReference,
 )
 from openhcs.processing.backends import cellprofiler as cellprofiler_backend
 from openhcs.processing.backends.lib_registry.registry_service import RegistryService
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
 def test_registry_reference_derives_owner_from_canonical_key() -> None:
@@ -61,3 +66,27 @@ def test_cold_resolution_rejects_forged_composite_key(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="contradicts declaration-owned identity"):
         reference.resolve()
+
+
+def test_cold_external_resolution_retains_registry_classified_contract(
+    monkeypatch,
+) -> None:
+    reference = RegistryFunctionReference(
+        import_identity=CallableImportIdentity(
+            module_name="skimage.filters.thresholding",
+            function_name="threshold_otsu",
+        ),
+        composite_key="skimage:filters.threshold_otsu",
+        metadata=CallableMetadata(
+            processing_contract=ProcessingContract.FLEXIBLE,
+        ),
+    )
+    monkeypatch.setattr(RegistryService, "_metadata_cache", None)
+    monkeypatch.setattr(RegistryService, "_resolved_reference_callables", {})
+
+    resolved = reference.resolve()
+
+    assert (
+        CallableContract.from_callable(resolved).processing_contract
+        is ProcessingContract.FLEXIBLE
+    )

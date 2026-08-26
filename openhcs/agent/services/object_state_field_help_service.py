@@ -6,6 +6,7 @@ import importlib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import ModuleType
+
 from pyqt_reactive.services.parameter_help_service import (
     NO_PARAMETER_DESCRIPTION,
     docstring_info_for_target,
@@ -14,20 +15,27 @@ from pyqt_reactive.services.parameter_help_service import (
 )
 from python_introspect import UnifiedParameterAnalyzer, enum_input_values
 
-from openhcs.agent.dto.common import AgentError, AgentWarning, JsonValue, SCHEMA_VERSION
-from openhcs.agent.dto.functions import FunctionArtifactSpec, FunctionDetail
+from openhcs.agent.dto.common import SCHEMA_VERSION, AgentError, AgentWarning, JsonValue
+from openhcs.agent.dto.functions import (
+    FunctionArtifactSpec,
+    FunctionDetail,
+    FunctionParameterSource,
+)
 from openhcs.agent.dto.ui_bridge import (
     UiBridgeConnectionSpec,
     UiObjectStateFieldHelpQuery,
     UiObjectStateFieldHelpRequest,
     UiObjectStateFieldHelpResult,
-    UiObjectStateFieldSummary,
     UiObjectStateFieldListOptions,
+    UiObjectStateFieldSummary,
     UiObjectStateScopeListRequest,
     UiObjectStateScopeSummary,
     UiObjectStateScopeVisibility,
 )
-from openhcs.agent.services.function_catalog_service import FunctionCatalogService
+from openhcs.agent.services.function_catalog_service import (
+    FunctionCatalogService,
+    FunctionCatalogServiceABC,
+)
 from openhcs.agent.services.ui_bridge_service import UiBridgeService
 
 
@@ -44,7 +52,7 @@ class ObjectStateFieldHelpService:
     """Describe ObjectState fields through path types and Python introspection."""
 
     ui_bridge_service: UiBridgeService
-    function_catalog_service: FunctionCatalogService | None = None
+    function_catalog_service: FunctionCatalogServiceABC | None = None
     inference_policy: ObjectStateFieldHelpInferencePolicy = (
         ObjectStateFieldHelpInferencePolicy()
     )
@@ -369,14 +377,15 @@ class ObjectStateFieldHelpService:
             ),
             None,
         )
-        if parameter is None or parameter.supplied_by == "agent":
+        if parameter is None or parameter.supplied_by is FunctionParameterSource.AGENT:
             return None
 
         pieces = [
             (
                 "Function parameter contract: "
                 f"{parameter.name} is supplied by OpenHCS "
-                f"({parameter.supplied_by}); do not pass it as a FunctionStep kwarg."
+                f"({parameter.supplied_by.value}); do not pass it as a "
+                "FunctionStep kwarg."
             )
         ]
         if parameter.annotation:
@@ -604,7 +613,7 @@ def _active_kwarg_context_lines(
     parameter_by_name = {
         parameter.name: parameter
         for parameter in detail.parameters
-        if parameter.supplied_by == "agent"
+        if parameter.supplied_by is FunctionParameterSource.AGENT
     }
     lines = ["  active kwargs:"]
     for name in active_kwarg_names:
@@ -627,9 +636,9 @@ def _active_kwarg_context_lines(
 
 def _runtime_parameter_context_lines(detail: FunctionDetail) -> list[str]:
     return [
-        f"{parameter.name} ({parameter.supplied_by})"
+        f"{parameter.name} ({parameter.supplied_by.value})"
         for parameter in detail.parameters
-        if parameter.supplied_by != "agent"
+        if parameter.supplied_by is not FunctionParameterSource.AGENT
     ]
 
 

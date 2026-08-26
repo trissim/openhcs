@@ -27,7 +27,9 @@ from arraybridge import MemoryType
 
 from openhcs.core.callable_contract import CallableContract, CallableMetadata
 from openhcs.core.xdg_paths import get_data_file_path
+from openhcs.processing.custom_functions.events import custom_function_changed
 from openhcs.processing.custom_functions.runtime_registry import (
+    CustomFunctionLifetime,
     CustomFunctionRuntimeRegistry,
     project_custom_function,
 )
@@ -36,7 +38,6 @@ from openhcs.processing.custom_functions.validation import (
     validate_code,
     validate_function,
 )
-from openhcs.processing.custom_functions.signals import custom_function_signals
 
 if TYPE_CHECKING:
     from openhcs.processing.backends.lib_registry.unified_registry import (
@@ -139,7 +140,9 @@ class CustomFunctionManager:
             RuntimeError: If function registration fails
         """
         metadata = self._prepare_source(code)
+        lifetime = CustomFunctionLifetime.from_persist(persist)
         with CustomFunctionRuntimeRegistry.lifecycle():
+            CustomFunctionRuntimeRegistry.ensure_can_publish(metadata)
             if persist:
                 source_path = self.source_path_for_function(metadata.func)
                 if source_path.exists():
@@ -147,9 +150,8 @@ class CustomFunctionManager:
                         f"Custom function '{metadata.original_name}' already exists; "
                         "use update_custom_function() to replace it."
                     )
-                CustomFunctionRuntimeRegistry.ensure_can_publish(metadata)
                 self._save_function_code(metadata.original_name, code)
-            CustomFunctionRuntimeRegistry.publish(metadata)
+            CustomFunctionRuntimeRegistry.publish(metadata, lifetime)
 
         registered_functions = [metadata.func]
         contract = CallableContract.from_callable(metadata.func)
@@ -164,7 +166,7 @@ class CustomFunctionManager:
             self._clear_caches()
 
         if emit_signal:
-            custom_function_signals.functions_changed.emit()
+            custom_function_changed.emit()
 
         return registered_functions
 
@@ -219,8 +221,7 @@ class CustomFunctionManager:
                 )
             if metadata.original_name in prepared:
                 raise ValidationError(
-                    f"Duplicate persisted custom function "
-                    f"'{metadata.original_name}'."
+                    f"Duplicate persisted custom function '{metadata.original_name}'."
                 )
             prepared[metadata.original_name] = metadata
 
@@ -230,7 +231,7 @@ class CustomFunctionManager:
 
         self._clear_caches()
         if prepared:
-            custom_function_signals.functions_changed.emit()
+            custom_function_changed.emit()
         logger.info("Loaded %d persisted custom function(s)", len(prepared))
         return len(prepared)
 
@@ -279,13 +280,16 @@ class CustomFunctionManager:
                 and CustomFunctionRuntimeRegistry.owns_published_export(func_name)
             ):
                 return 1
-            CustomFunctionRuntimeRegistry.publish(metadata)
+            CustomFunctionRuntimeRegistry.publish(
+                metadata,
+                CustomFunctionLifetime.PERSISTED,
+            )
 
         functions = [metadata.func]
         if clear_caches:
             self._clear_caches()
         if emit_signal:
-            custom_function_signals.functions_changed.emit()
+            custom_function_changed.emit()
         logger.info(
             "Loaded %d custom function(s) from %s",
             len(functions),
@@ -319,7 +323,7 @@ class CustomFunctionManager:
         self._clear_caches()
 
         # Emit signal
-        custom_function_signals.functions_changed.emit()
+        custom_function_changed.emit()
 
         return True
 
@@ -432,7 +436,7 @@ class CustomFunctionManager:
             temp_path.unlink(missing_ok=True)
 
         self._clear_caches()
-        custom_function_signals.functions_changed.emit()
+        custom_function_changed.emit()
         return new_name
 
     def _create_execution_namespace(self) -> dict[str, Any]:

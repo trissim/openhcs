@@ -5,6 +5,8 @@ import inspect
 import textwrap
 from pathlib import Path
 
+from objectstate.lazy_factory import ensure_global_config_context
+from objectstate.object_state import ObjectStateRegistry
 from PyQt6.QtWidgets import QApplication
 from pyqt_reactive.services.help_document import HelpDocumentFormat
 from pyqt_reactive.services.window_manager import WindowManager
@@ -28,8 +30,6 @@ from openhcs.agent.services.knowledge_base_service import (
     KnowledgeBaseDocumentSpec,
     KnowledgeBaseService,
 )
-from objectstate.lazy_factory import ensure_global_config_context
-from objectstate.object_state import ObjectStateRegistry
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.pyqt_gui.config import get_default_ui_config
 from openhcs.pyqt_gui.services.main_window_workflows import build_main_window_specs
@@ -162,6 +162,7 @@ class _FunctionCatalogService:
         items = (self.entry,) if matches and library in (None, "openhcs") else ()
         return catalog_page(
             items=items[:limit],
+            catalog_items=(self.entry,),
             total=len(items),
             limit=limit,
             query=query,
@@ -173,6 +174,7 @@ class _FunctionCatalogService:
         self.catalog_calls += 1
         return catalog_page(
             items=(self.entry,),
+            catalog_items=(self.entry,),
             total=1,
             limit=1,
             query=None,

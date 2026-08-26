@@ -37,13 +37,16 @@ from openhcs.agent.services.architecture_projection_service import (
     CellProfilerTranslationArchitectureTopic,
 )
 from openhcs.agent.services.config_service import ConfigService
-from openhcs.agent.services.function_catalog_service import FunctionCatalogService
+from openhcs.agent.services.function_catalog_service import (
+    FunctionCatalogService,
+    FunctionCatalogServiceABC,
+)
 from openhcs.agent.services.knowledge_base_service import KnowledgeBaseService
 from openhcs.agent.ui_bridge_actions import PlateManagerAction
 from openhcs.agent.ui_bridge_identities import (
+    PipelineDebugSessionStateSurfaceIdentityDeclaration,
     PlateManagerOrchestratorCodeDocumentIdentity,
     PlateManagerStateSurfaceIdentityDeclaration,
-    PipelineDebugSessionStateSurfaceIdentityDeclaration,
     UiLiveOverviewStateSurfaceIdentityDeclaration,
 )
 from openhcs.ui.shared.plate_manager_code_document import (
@@ -482,7 +485,9 @@ class DebuggingWorkflowSection(
     @classmethod
     def render(cls, service: "AgentAuthoringContextService") -> str:
         del service
-        debug_surface_id = PipelineDebugSessionStateSurfaceIdentityDeclaration.require_value()
+        debug_surface_id = (
+            PipelineDebugSessionStateSurfaceIdentityDeclaration.require_value()
+        )
         results_action_id = PlateManagerAction.VIEW_RESULTS.value
         return f"""=== DEBUGGING WORKFLOW ===
 - Diagnose the first failing boundary. A declaration/config problem, compiled-plan problem, paused runtime-value problem, persisted-output problem, and viewer-presentation problem require different evidence; do not reconstruct one from another's filenames or logs.
@@ -559,7 +564,7 @@ class AgentAuthoringContextService:
 
     def __init__(
         self,
-        function_catalog: FunctionCatalogService | None = None,
+        function_catalog: FunctionCatalogServiceABC | None = None,
         config_service: ConfigService | None = None,
         knowledge_base: KnowledgeBaseService | None = None,
         *,
@@ -573,7 +578,7 @@ class AgentAuthoringContextService:
         self._max_config_fields = max_config_fields
 
     @property
-    def function_catalog(self) -> FunctionCatalogService:
+    def function_catalog(self) -> FunctionCatalogServiceABC:
         return self._function_catalog
 
     @property

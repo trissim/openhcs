@@ -3,18 +3,25 @@ Managing custom functions
 
 Choose **Tools > Custom Functions > Manage Functions** to inspect, edit, reload,
 or remove persisted custom functions. Changes refresh the function catalog used
-by the Pipeline Editor. Refresh invalidates the shared endpoint projection and
-requests the updated catalogue asynchronously, so the Function Selector remains
-responsive while the execution server exposes the new declaration.
+by the Pipeline Editor and local MCP authoring tools. Refresh invalidates the
+shared endpoint projection and requests the updated catalogue asynchronously,
+so the Function Selector remains responsive while the execution server exposes
+the new declaration.
 
 ``CustomFunctionManager`` owns persisted source and coordinates create, load,
 replace, and delete transactions. It stores source under the platform-specific
 OpenHCS data directory, validates code before execution, requires a supported
 memory decorator, and rejects name collisions. The process-local
 ``CustomFunctionRuntimeRegistry`` atomically publishes the derived callable
-metadata and public module exports, so readers see either the previous complete
-catalogue or the validated replacement. Do not edit runtime projections,
-registry caches, or generated catalogue data directly.
+metadata, source lifetime, and public module exports, so readers see either the
+previous complete catalogue or the validated replacement. Reloading persisted
+source retains ephemeral declarations registered by the current process. Do
+not edit runtime projections, registry caches, or generated catalogue data
+directly.
+
+Custom-function changes are published as a headless domain event. The desktop
+loads a Qt signal adapter for that event, while local MCP and execution-server
+processes use the same manager without importing Qt.
 
 Programmatic registration is available for tooling:
 

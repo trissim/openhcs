@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Desktop and local MCP function discovery now share the execution endpoint's
+  callable catalogue and transfer only a selected function's exact compiler
+  reference into the authoring process. Local MCP startup snapshots the saved
+  desktop endpoint configuration, including non-default transports and ports.
 - First-party package requirements now declare both the exact released floor
   used by OpenHCS and the next breaking-series ceiling. Release validation
   derives those constraints from package metadata and exercises the installed
@@ -23,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Local MCP function discovery now projects only the unique execution-endpoint
+  field from the canonical saved UI configuration, so headless startup does not
+  construct shortcut settings or import Qt. Custom-function change publication
+  likewise remains headless until the desktop loads its Qt adapter.
+- Batch endpoint shutdown now preserves the declared host and transport, so a
+  non-default TCP endpoint is not silently replaced by the local default
+  transport during cleanup.
+- Persisted custom-function reconciliation now retains ephemeral declarations
+  registered by the current authoring process.
 - Fresh and updated desktop installations now launch with the current nominal
   PyQt provider contracts. The installed-GUI gate reaches the painted main
   window instead of treating dependency resolution alone as proof of startup

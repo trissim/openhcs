@@ -11,18 +11,18 @@ from typing import TypeAlias
 from objectstate import get_base_type_for_lazy
 
 from openhcs.agent.dto.common import (
+    SCHEMA_VERSION,
     AgentError,
     AgentWarning,
     JsonObject,
     JsonValue,
     RenderedSource,
-    SCHEMA_VERSION,
 )
 from openhcs.agent.dto.config import ConfigPatch
 from openhcs.agent.dto.pipeline import (
     CreatePipelineRequest,
-    FunctionStepAddRequest,
     FunctionSpecRef,
+    FunctionStepAddRequest,
     FunctionStepSpec,
     PipelineRef,
     PipelineSpec,
@@ -34,8 +34,9 @@ from openhcs.agent.services.config_service import (
     coerce_dataclass_patch_values,
 )
 from openhcs.agent.services.function_catalog_service import (
-    FunctionCatalogService,
     PARAMETER_DOCUMENTATION_POLICY,
+    FunctionCatalogService,
+    FunctionCatalogServiceABC,
 )
 from openhcs.core.config import PipelineConfig
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
@@ -45,7 +46,6 @@ from openhcs.core.pipeline_document import (
 )
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.steps.function_step import FunctionStep
-
 
 StepConfig: TypeAlias = object
 PIPELINE_EMPTY_WARNING = AgentWarning(
@@ -143,7 +143,7 @@ class PipelineAuthoringService:
 
     def __init__(
         self,
-        function_catalog: FunctionCatalogService | None = None,
+        function_catalog: FunctionCatalogServiceABC | None = None,
         config_service: ConfigService | None = None,
     ) -> None:
         self._function_catalog = function_catalog or FunctionCatalogService()

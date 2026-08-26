@@ -33,10 +33,10 @@ from pyqt_reactive.protocols import (
 )
 
 import openhcs.serialization.pycodify_formatters  # noqa: F401
-from openhcs.pyqt_gui.config import UIConfig
-from openhcs.pyqt_gui.services.function_catalog_projection import (
-    ZMQFunctionCatalogProjectionService,
+from openhcs.agent.services.endpoint_function_catalog_service import (
+    ZMQFunctionCatalogService,
 )
+from openhcs.pyqt_gui.config import UIConfig
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
 if TYPE_CHECKING:
@@ -273,7 +273,7 @@ class OpenHCSFunctionSelectionProvider(FunctionSelectionProviderABC):
 
     def __init__(
         self,
-        function_catalog: ZMQFunctionCatalogProjectionService,
+        function_catalog: ZMQFunctionCatalogService,
     ) -> None:
         self.function_catalog = function_catalog
 
@@ -293,7 +293,7 @@ class OpenHCSFunctionSelectionProvider(FunctionSelectionProviderABC):
 def register_reactor_providers(
     ui_config_provider: Callable[[], UIConfig],
     *,
-    function_catalog_projection: ZMQFunctionCatalogProjectionService,
+    function_catalog_service: ZMQFunctionCatalogService,
 ) -> None:
     """Register all OpenHCS providers with pyqt-reactive."""
     # FormGenConfig with OpenHCS paths
@@ -319,7 +319,7 @@ def register_reactor_providers(
     )
     register_component_selection_provider(OpenHCSComponentSelectionProvider())
     register_function_selection_provider(
-        OpenHCSFunctionSelectionProvider(function_catalog_projection)
+        OpenHCSFunctionSelectionProvider(function_catalog_service)
     )
     # Window handlers are registered in main.py after widgets are created
 

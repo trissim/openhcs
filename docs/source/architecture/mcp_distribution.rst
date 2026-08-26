@@ -43,6 +43,18 @@ The local MCP server runs over stdio and is owned by the client process. It
 does not import or host the PyQt UI. GUI, viewer, and local runtime capabilities
 remain local-only and attach through their authenticated process bridges.
 
+Local function discovery attaches to the configured execution endpoint and
+uses the same endpoint-owned catalogue as the desktop Function Selector. Search
+and detail remain server projections; resolving a selected function transports
+only that exact compiler reference to the MCP process. The local stdio process
+does not import every processing library to rebuild a second catalogue. At MCP
+process startup, the composition root snapshots the persisted desktop ZMQ
+configuration so a non-default host, port, or transport remains the same
+endpoint identity for both authoring surfaces. That snapshot is projected from
+the unique ``OpenHCSZMQConfig`` field in the canonical ``UIConfig`` Python
+document. The projection derives the field from the dataclass schema and does
+not construct unrelated UI configuration or import Qt.
+
 The stdio transport reserves process stdout before constructing the server.
 JSON-RPC uses a dedicated duplicate of the original stdout descriptor, while
 ordinary Python output and native writes to descriptor 1 are routed to stderr
@@ -157,6 +169,11 @@ hosted registry must contain only read-only tools; server construction fails if
 a future hosted declaration is mutating. UI, local execution, viewer control,
 and local filesystem capabilities therefore remain absent unless their owning
 declarations are deliberately reclassified.
+
+The hosted read-only lane constructs its own local catalogue service because it
+does not depend on a user's execution endpoint. This is a separate deployment
+boundary from local desktop authoring, not a fallback selected inside the local
+service.
 
 ``McpHttpResourceServerSettings`` owns the deployment policy. It permits either
 a public read-only surface or OAuth introspection with a required tenant subject

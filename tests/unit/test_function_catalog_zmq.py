@@ -12,26 +12,95 @@ from zmqruntime.execution import ExecutionServer
 from zmqruntime.startup import EndpointStartupPhase, EndpointStartupStatus
 
 from openhcs.agent.dto.functions import (
+    CustomFunctionRegistrationControlResponse,
+    CustomFunctionRegistrationRequest,
+    CustomFunctionRegistrationResult,
     FunctionCatalogControlPayload,
     FunctionCatalogControlRequest,
+    FunctionCatalogControlRequestABC,
     FunctionCatalogControlResponse,
     FunctionCatalogEntry,
     FunctionCatalogPreparationControlResponse,
     FunctionDetail,
-    FunctionDetailControlPayload,
     FunctionDetailControlRequest,
     FunctionDetailControlResponse,
-    FunctionSearchControlPayload,
+    FunctionParameterSource,
+    FunctionParameterSpec,
+    FunctionReferenceControlRequest,
+    FunctionReferenceControlResponse,
     FunctionSearchRequest,
     catalog_page,
 )
 from openhcs.agent.services.function_catalog_service import FunctionCatalogService
+from openhcs.core.callable_contract import CallableImportIdentity
+from openhcs.core.function_reference import ImportableFunctionReference
 from openhcs.runtime.zmq_control import (
     ZMQControlMessageRouter,
     ZMQControlRequestContext,
 )
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 from openhcs.runtime.zmq_execution_server import ZMQExecutionServer
+
+
+def test_function_parameter_source_owns_runtime_presentation() -> None:
+    assert FunctionParameterSource.AGENT.runtime_description is None
+    assert "FunctionStep input image payload" in (
+        FunctionParameterSource.PRIMARY_INPUT.runtime_description or ""
+    )
+
+
+def test_function_parameter_spec_requires_nominal_source() -> None:
+    with pytest.raises(TypeError, match="FunctionParameterSource"):
+        FunctionParameterSpec(
+            name="image",
+            annotation="ndarray",
+            default_repr=None,
+            required=False,
+            supplied_by="runtime_primary_input",  # type: ignore[arg-type]
+        )
+
+
+def test_function_catalog_control_request_requires_declared_message_type() -> None:
+    with pytest.raises(TypeError, match="message_type"):
+
+        class MissingMessageType(FunctionCatalogControlRequestABC):
+            pass
+
+
+def test_local_mcp_context_uses_persisted_desktop_execution_endpoint(
+    monkeypatch,
+) -> None:
+    from zmqruntime.config import TransportMode
+
+    from openhcs.agent.services.endpoint_function_catalog_service import (
+        ZMQFunctionCatalogService,
+    )
+    from openhcs.mcp.context import create_agent_context
+    from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
+
+    endpoint_config = replace(
+        OPENHCS_ZMQ_CONFIG,
+        default_port=18888,
+        transport_mode=TransportMode.TCP,
+    )
+    monkeypatch.setattr(
+        "openhcs.pyqt_gui.config.load_cached_ui_execution_endpoint_sync",
+        lambda: endpoint_config,
+    )
+
+    context = create_agent_context()
+
+    assert isinstance(context.function_catalog, ZMQFunctionCatalogService)
+    assert context.function_catalog._config_provider() == endpoint_config
+    context.function_catalog.close()
+
+
+def test_hosted_mcp_context_keeps_self_contained_catalog() -> None:
+    from openhcs.mcp.context import create_hosted_agent_context
+
+    context = create_hosted_agent_context()
+
+    assert isinstance(context.function_catalog, FunctionCatalogService)
 
 
 def test_gui_application_setup_does_not_initialize_execution_catalog() -> None:
@@ -66,6 +135,7 @@ def _catalog(entry: FunctionCatalogEntry | None = None):
     items = (_entry() if entry is None else entry,)
     return catalog_page(
         items=items,
+        catalog_items=items,
         total=len(items),
         limit=len(items),
         query=None,
@@ -126,11 +196,37 @@ def test_catalog_revision_is_derived_from_entry_owned_membership_identity() -> N
     assert membership_change.revision != catalog.revision
 
 
+def test_filtered_catalog_page_retains_complete_endpoint_revision() -> None:
+    first = _entry(function_id="cpu:first")
+    second = _entry(function_id="cpu:second")
+    complete_items = (first, second)
+    complete = catalog_page(
+        items=complete_items,
+        catalog_items=complete_items,
+        total=2,
+        limit=2,
+        query=None,
+        library=None,
+    )
+    filtered = catalog_page(
+        items=(first,),
+        catalog_items=complete_items,
+        total=1,
+        limit=1,
+        query="first",
+        library=None,
+    )
+
+    assert filtered.revision == complete.revision
+
+
 def test_function_catalog_control_payload_roundtrip() -> None:
     request = FunctionCatalogControlRequest(compact_signatures=False)
     payload = FunctionCatalogControlPayload.from_request(request)
 
-    assert FunctionCatalogControlPayload.from_dict(payload.to_dict()).request is request
+    assert (
+        FunctionCatalogControlRequest.from_control_payload(payload.to_dict()) is request
+    )
 
 
 def test_function_detail_control_payload_roundtrip() -> None:
@@ -140,9 +236,11 @@ def test_function_detail_control_payload_roundtrip() -> None:
         max_doc_chars=123,
         compact_signature=False,
     )
-    payload = FunctionDetailControlPayload.from_request(request)
+    payload = FunctionCatalogControlPayload.from_request(request)
 
-    assert FunctionDetailControlPayload.from_dict(payload.to_dict()).request is request
+    assert (
+        FunctionDetailControlRequest.from_control_payload(payload.to_dict()) is request
+    )
 
 
 def test_function_search_control_payload_reuses_typed_request() -> None:
@@ -152,9 +250,35 @@ def test_function_search_control_payload_reuses_typed_request() -> None:
         limit=17,
         compact_signatures=False,
     )
-    payload = FunctionSearchControlPayload(request=request)
+    payload = FunctionCatalogControlPayload.from_request(request)
 
-    assert FunctionSearchControlPayload.from_dict(payload.to_dict()).request is request
+    assert FunctionSearchRequest.from_control_payload(payload.to_dict()) is request
+
+
+def test_function_reference_control_payload_roundtrip() -> None:
+    request = FunctionReferenceControlRequest(
+        function_id="cpu:sample",
+        catalog_revision="revision",
+    )
+    payload = FunctionCatalogControlPayload.from_request(request)
+
+    assert (
+        FunctionReferenceControlRequest.from_control_payload(payload.to_dict())
+        is request
+    )
+
+
+def test_custom_function_registration_control_payload_roundtrip() -> None:
+    request = CustomFunctionRegistrationRequest(
+        source_code="@numpy\ndef sample(image):\n    return image\n",
+        persist=False,
+    )
+    payload = FunctionCatalogControlPayload.from_request(request)
+
+    assert (
+        CustomFunctionRegistrationRequest.from_control_payload(payload.to_dict())
+        is request
+    )
 
 
 def test_zmq_router_reports_catalog_preparation_without_blocking() -> None:
@@ -257,7 +381,7 @@ def test_zmq_router_projects_catalog_and_revision_checked_detail(monkeypatch) ->
     ).catalog
 
     detail_response = ZMQControlMessageRouter.handle(
-        FunctionDetailControlPayload.from_request(
+        FunctionCatalogControlPayload.from_request(
             FunctionDetailControlRequest(
                 function_id=detail.entry.function_id,
                 catalog_revision=projected_catalog.revision,
@@ -281,7 +405,7 @@ def test_zmq_router_rejects_detail_from_stale_catalog_revision(monkeypatch) -> N
     )
 
     response = ZMQControlMessageRouter.handle(
-        FunctionDetailControlPayload.from_request(
+        FunctionCatalogControlPayload.from_request(
             FunctionDetailControlRequest(
                 function_id="cpu:sample",
                 catalog_revision="stale",
@@ -292,6 +416,73 @@ def test_zmq_router_rejects_detail_from_stale_catalog_revision(monkeypatch) -> N
 
     assert response["status"] == "error"
     assert "changed after it was read" in response["error"]
+
+
+def test_zmq_router_transports_revision_checked_function_reference(
+    monkeypatch,
+) -> None:
+    reference = ImportableFunctionReference(
+        import_identity=CallableImportIdentity(__name__, "_entry"),
+        composite_key=f"python:{__name__}:_entry",
+    )
+    observed_revisions: list[str] = []
+    monkeypatch.setattr(
+        FunctionCatalogService,
+        "require_revision",
+        lambda self, revision: observed_revisions.append(revision),
+    )
+    monkeypatch.setattr(
+        FunctionCatalogService,
+        "reference",
+        lambda self, function_id: reference,
+    )
+
+    response = ZMQControlMessageRouter.handle(
+        FunctionCatalogControlPayload.from_request(
+            FunctionReferenceControlRequest(
+                function_id="cpu:sample",
+                catalog_revision="revision",
+            )
+        ).to_dict(),
+        _context(),
+    )
+
+    assert (
+        FunctionReferenceControlResponse.from_control_response(response).reference
+        is reference
+    )
+    assert observed_revisions == ["revision"]
+
+
+def test_zmq_router_registers_custom_source_through_catalog_owner(
+    monkeypatch,
+) -> None:
+    request = CustomFunctionRegistrationRequest(
+        source_code="@numpy\ndef sample(image):\n    return image\n"
+    )
+    result = CustomFunctionRegistrationResult(
+        schema_version="openhcs.agent.v1",
+        registered_count=1,
+    )
+    observed_requests: list[CustomFunctionRegistrationRequest] = []
+    monkeypatch.setattr(
+        FunctionCatalogService,
+        "register_custom_function",
+        lambda self, current_request: (
+            observed_requests.append(current_request) or result
+        ),
+    )
+
+    response = ZMQControlMessageRouter.handle(
+        FunctionCatalogControlPayload.from_request(request).to_dict(),
+        _context(),
+    )
+
+    assert (
+        CustomFunctionRegistrationControlResponse.from_control_response(response).result
+        is result
+    )
+    assert observed_requests == [request]
 
 
 def test_zmq_router_delegates_search_to_catalog_owner(monkeypatch) -> None:
@@ -311,7 +502,7 @@ def test_zmq_router_delegates_search_to_catalog_owner(monkeypatch) -> None:
     )
 
     response = ZMQControlMessageRouter.handle(
-        FunctionSearchControlPayload(request=request).to_dict(),
+        FunctionCatalogControlPayload.from_request(request).to_dict(),
         _context(),
     )
 
@@ -422,7 +613,7 @@ def test_endpoint_catalog_reconciles_persisted_custom_function_sources(
         isolated_catalog.setattr(func_registry, "_registry_initialized", False)
         isolated_catalog.setattr(
             CustomFunctionRuntimeRegistry,
-            "_metadata_by_name",
+            "_declarations_by_name",
             {},
         )
         isolated_catalog.setattr(

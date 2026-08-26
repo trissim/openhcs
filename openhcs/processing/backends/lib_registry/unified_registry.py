@@ -45,26 +45,28 @@ from typing import (
     get_type_hints,
 )
 
-
 import numpy as np
 from arraybridge import MemoryContractAttribute, SliceBySliceRuntimeParameter
+from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict, RegistryConfig
+from python_introspect import RuntimeParameterDeclarationABC
+
+from openhcs.constants import MemoryType
 from openhcs.core.aligned_image_payload import AlignedImageStack
-from openhcs.core.xdg_paths import get_cache_file_path
+from openhcs.core.measurement_row_materialization import (
+    ConcatenatedColumnarRows,
+    MeasurementRowsAxisProjection,
+)
 from openhcs.core.memory import (
     stack_runtime_slices,
     unstack_runtime_slices,
 )
-from openhcs.core.runtime_relationships import (
-    DirectedObjectRelationshipPayload,
-)
-from openhcs.core.runtime_plane_projection import (
-    RuntimePlaneAxis,
-    RuntimePlaneAxisValueProjection,
-)
-from openhcs.core.measurement_row_materialization import MeasurementRowsAxisProjection
-from openhcs.core.measurement_row_materialization import ConcatenatedColumnarRows
-from openhcs.core.runtime_tabular_values import (
-    ColumnarRows,
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.runtime_array_values import RuntimeArrayPayload, is_array_payload
+from openhcs.core.runtime_batch_contracts import (
+    Pure2DSliceBatchExecutor,
+    RuntimeBatchExecutionDomain,
+    RuntimePure2DSliceBatchRequest,
+    runtime_batch_executors_from_callable,
 )
 from openhcs.core.runtime_image_values import (
     ImageMetadataPayload,
@@ -77,33 +79,33 @@ from openhcs.core.runtime_image_values import (
     image_payload_slice_context,
     with_image_payload_data,
 )
-from openhcs.core.runtime_array_values import RuntimeArrayPayload, is_array_payload
-from openhcs.core.runtime_object_labels import ObjectLabelPayload, ObjectLabelSet
 from openhcs.core.runtime_object_label_aggregation import (
     ObjectLabelPure2DSliceAggregator,
 )
-from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
-from openhcs.core.runtime_spatial_grid import SpatialGrid
-from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
+from openhcs.core.runtime_object_labels import ObjectLabelPayload, ObjectLabelSet
 from openhcs.core.runtime_output_matching import (
     RuntimeOutputBundle,
     runtime_output_tuple,
 )
-from openhcs.core.runtime_batch_contracts import (
-    Pure2DSliceBatchExecutor,
-    RuntimeBatchExecutionDomain,
-    RuntimePure2DSliceBatchRequest,
-    runtime_batch_executors_from_callable,
+from openhcs.core.runtime_plane_projection import (
+    RuntimePlaneAxis,
+    RuntimePlaneAxisValueProjection,
 )
-from openhcs.constants import MemoryType
+from openhcs.core.runtime_relationships import (
+    DirectedObjectRelationshipPayload,
+)
+from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
+from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
+from openhcs.core.runtime_spatial_grid import SpatialGrid
+from openhcs.core.runtime_tabular_values import (
+    ColumnarRows,
+)
 from openhcs.core.variable_component_stack_requirement import (
     AlwaysRequiresVariableComponentStack,
     SemanticControlVariableComponentStackRequirement,
     VariableComponentStackRequirement,
 )
-from python_introspect import RuntimeParameterDeclarationABC
-from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
-from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict, RegistryConfig
+from openhcs.core.xdg_paths import get_cache_file_path
 
 logger = logging.getLogger(__name__)
 
@@ -1400,31 +1402,64 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         del func
         return None
 
-    def composite_key_for_declared_callable(self, func: Callable) -> str:
-        """Prove the canonical key for one importable declaration locally."""
+    def composite_keys_for_declared_callable(
+        self,
+        func: Callable,
+    ) -> tuple[str, ...]:
+        """Derive every catalog key owned by one importable declaration."""
 
         metadata = type(self).metadata_for_declared_callable(func)
         if metadata is not None:
-            return metadata.composite_key
+            return (metadata.composite_key,)
+
         declared = inspect.unwrap(func)
-        function_key = self._generate_function_name(
-            declared.__name__,
-            declared.__module__,
+        if not any(
+            declared.__module__ == module_pattern
+            or declared.__module__.startswith(f"{module_pattern}.")
+            for module_pattern in self.get_module_patterns()
+        ):
+            return ()
+
+        module_names = (
+            "main" if module_name == "" else module_name
+            for module_name in self.MODULES_TO_SCAN
         )
-        return f"{self.library_name}:{function_key}"
+        return tuple(
+            dict.fromkeys(
+                f"{self.library_name}:"
+                f"{self._generate_function_name(declared.__name__, module_name)}"
+                for module_name in module_names
+            )
+        )
+
+    def require_declared_callable_composite_key(
+        self,
+        func: Callable,
+        composite_key: str,
+    ) -> None:
+        """Require a transported key to be owned by the declaration inventory."""
+
+        declared_keys = self.composite_keys_for_declared_callable(func)
+        if composite_key not in declared_keys:
+            raise RuntimeError(
+                f"Function reference {composite_key!r} contradicts "
+                f"declaration-owned identity candidates {declared_keys!r}."
+            )
 
     # ===== CONTRACT HANDLING =====
     def apply_contract_wrapper(
         self, func: Callable, contract: ProcessingContract
     ) -> Callable:
         """Apply contract wrapper with nominal runtime parameter injection."""
-        from functools import wraps
         import inspect
+        from functools import wraps
+
         from python_introspect import (
             Enableable,
             mark_enableable,
             set_signature_analysis_target,
         )
+
         from openhcs.core.callable_contract import (
             CallableContract,
             FunctionStepExecutionScope,
@@ -1615,16 +1650,12 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             source=func,
         )
 
-        # Explicitly copy nominal processing metadata when the wrapped callable owns it.
+        # The registry wrapper owns the exact declared or runtime-classified contract.
         from openhcs.core.callable_contract import attach_callable_contract_metadata
         from openhcs.core.function_contract_metadata import FunctionContractAttribute
 
-        source_namespace = vars(func)
         processing_contract_key = FunctionContractAttribute.processing_contract
-        if processing_contract_key in source_namespace:
-            vars(wrapper)[processing_contract_key] = source_namespace[
-                processing_contract_key
-            ]
+        vars(wrapper)[processing_contract_key] = contract
         attach_callable_contract_metadata(
             wrapper,
             raw_processing_function=func,
@@ -2316,8 +2347,9 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         """Extract type hints from docstring using mathematical simplification approach."""
         try:
             # Import from shared UI utilities (no circular dependency)
-            from openhcs.introspection import SignatureAnalyzer
             import numpy as np
+
+            from openhcs.introspection import SignatureAnalyzer
 
             logger.debug(
                 f"🔍 ENHANCE ANNOTATIONS: {original_func.__name__} from {original_func.__module__}"

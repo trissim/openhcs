@@ -449,6 +449,29 @@ def load_cached_ui_config_sync() -> UIConfig:
     )
 
 
+def load_cached_ui_execution_endpoint_sync() -> OpenHCSZMQConfig:
+    """Project the execution endpoint directly from the canonical UI document."""
+
+    from openhcs.core.config_document import ConfigDocumentAuthority
+
+    cache_file = ui_config_cache_spec().cache_file
+    if not cache_file.exists():
+        return OpenHCSZMQConfig()
+    try:
+        return ConfigDocumentAuthority.project_dataclass_field_from_source(
+            cache_file.read_text(encoding="utf-8"),
+            expected_config_type=UIConfig,
+            expected_field_type=OpenHCSZMQConfig,
+        )
+    except Exception as error:  # noqa: BLE001 - corrupt cache uses declared default
+        logger.warning(
+            "Failed to project execution endpoint from %s: %s",
+            cache_file,
+            error,
+        )
+        return OpenHCSZMQConfig()
+
+
 def save_ui_config_sync(config: UIConfig) -> bool:
     """Persist the exact process UI configuration."""
 

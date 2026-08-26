@@ -1,11 +1,15 @@
 """Headless function registry projection for OpenHCS agents."""
 
 from __future__ import annotations
+
 import inspect
 import re
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
+
 from pyqt_reactive.services.parameter_help_service import docstring_info_for_target
 from python_introspect import (
     enum_import_path,
@@ -13,19 +17,21 @@ from python_introspect import (
     enum_member_names,
     parameter_exclusions,
 )
+
+import openhcs.processing.custom_functions.manager as custom_function_manager
 from openhcs.agent.dto.common import SCHEMA_VERSION
 from openhcs.agent.dto.functions import (
+    DEFAULT_FUNCTION_DETAIL_DOC_CHARS,
     CellProfilerArtifactBindingSummary,
     CellProfilerModuleDeclarationSummary,
     CustomFunctionRegistrationRequest,
     CustomFunctionRegistrationResult,
-    DEFAULT_FUNCTION_DETAIL_DOC_CHARS,
     FunctionArtifactSpec,
     FunctionCatalogEntry,
     FunctionCatalogPage,
     FunctionDetail,
-    FunctionParameterSpec,
     FunctionParameterSource,
+    FunctionParameterSpec,
     FunctionRuntimeContractSummary,
     catalog_page,
 )
@@ -40,7 +46,9 @@ from openhcs.core.callable_contract import CallableContract
 from openhcs.interop.cellprofiler.setting_names import setting_names
 from openhcs.processing.backends.lib_registry.registry_service import RegistryService
 from openhcs.processing.backends.lib_registry.unified_registry import FunctionMetadata
-import openhcs.processing.custom_functions.manager as custom_function_manager
+
+if TYPE_CHECKING:
+    from openhcs.core.function_reference import FunctionReference
 
 MAX_FUNCTION_DETAIL_DOC_CHARS = 50000
 
@@ -380,7 +388,7 @@ class ParameterDocumentationPolicy:
                     default_repr=_format_default(parameter.default),
                     required=supplier is FunctionParameterSource.AGENT
                     and parameter.default is inspect.Parameter.empty,
-                    supplied_by=supplier.value,
+                    supplied_by=supplier,
                     description=self.parameter_description(
                         authored_descriptions.get(name),
                         supplier,
@@ -450,30 +458,71 @@ class ParameterDocumentationPolicy:
         authored_description: str | None,
         supplier: FunctionParameterSource,
     ) -> str | None:
-        runtime_description = self.runtime_parameter_description(supplier)
+        runtime_description = supplier.runtime_description
         if authored_description and runtime_description:
             return f"{authored_description.rstrip()} {runtime_description}"
         return authored_description or runtime_description
-
-    @staticmethod
-    def runtime_parameter_description(
-        supplier: FunctionParameterSource,
-    ) -> str | None:
-        if supplier is FunctionParameterSource.PRIMARY_INPUT:
-            return "Supplied by OpenHCS from the FunctionStep input image payload; do not pass this as a function kwarg."
-        if supplier is FunctionParameterSource.ARTIFACT_INPUT:
-            return "Supplied by OpenHCS from a declared artifact input during pipeline execution; do not pass this as a function kwarg."
-        if supplier is FunctionParameterSource.RUNTIME_PARAMETER:
-            return "Supplied by OpenHCS runtime execution infrastructure; do not pass this as a function kwarg."
-        if supplier is FunctionParameterSource.RUNTIME_ADAPTER:
-            return "Supplied by OpenHCS as a runtime adapter object; do not pass this as a function kwarg."
-        return None
 
 
 PARAMETER_DOCUMENTATION_POLICY = ParameterDocumentationPolicy()
 
 
-class FunctionCatalogService:
+class FunctionCatalogServiceABC(ABC):
+    """Callable-catalog authority consumed by agent authoring services."""
+
+    @abstractmethod
+    def register_custom_function(
+        self,
+        request: CustomFunctionRegistrationRequest,
+    ) -> CustomFunctionRegistrationResult:
+        """Register one custom declaration through this catalog authority."""
+
+    @abstractmethod
+    def search(
+        self,
+        *,
+        query: str | None = None,
+        library: str | None = None,
+        limit: int = 50,
+        compact_signatures: bool = False,
+    ) -> FunctionCatalogPage:
+        """Search the authoritative callable catalog."""
+
+    @abstractmethod
+    def catalog(
+        self,
+        *,
+        compact_signatures: bool = False,
+        status_callback: Callable[[str], None] | None = None,
+    ) -> FunctionCatalogPage:
+        """Return the complete authoritative callable catalog."""
+
+    @abstractmethod
+    def get(
+        self,
+        function_id: str,
+        *,
+        max_doc_chars: int | None = DEFAULT_FUNCTION_DETAIL_DOC_CHARS,
+        compact_signature: bool = True,
+    ) -> FunctionDetail:
+        """Return one callable detail."""
+
+    @abstractmethod
+    def get_by_import_path(
+        self,
+        import_path: str,
+        *,
+        max_doc_chars: int | None = DEFAULT_FUNCTION_DETAIL_DOC_CHARS,
+        compact_signature: bool = True,
+    ) -> FunctionDetail | None:
+        """Return the callable detail owned by one import path, when present."""
+
+    @abstractmethod
+    def resolve(self, function_id: str) -> Callable:
+        """Resolve one selected callable without materializing another catalog."""
+
+
+class FunctionCatalogService(FunctionCatalogServiceABC):
     """Expose registered OpenHCS processing callables through stable IDs."""
 
     def __init__(self) -> None:
@@ -536,13 +585,14 @@ class FunctionCatalogService:
     ) -> FunctionCatalogPage:
         if limit < 1:
             raise ValueError("limit must be at least 1")
-        entries = self._matching_entries(
+        catalog_entries, entries = self._matching_entries(
             query=query,
             library=library,
             compact_signatures=compact_signatures,
         )
         return catalog_page(
             items=entries[:limit],
+            catalog_items=catalog_entries,
             total=len(entries),
             limit=limit,
             query=query,
@@ -556,7 +606,7 @@ class FunctionCatalogService:
         status_callback: Callable[[str], None] | None = None,
     ) -> FunctionCatalogPage:
         """Return the complete authoritative registered-function catalog."""
-        entries = self._matching_entries(
+        catalog_entries, entries = self._matching_entries(
             query=None,
             library=None,
             compact_signatures=compact_signatures,
@@ -564,6 +614,7 @@ class FunctionCatalogService:
         )
         return catalog_page(
             items=entries,
+            catalog_items=catalog_entries,
             total=len(entries),
             limit=len(entries),
             query=None,
@@ -577,7 +628,10 @@ class FunctionCatalogService:
         library: str | None,
         compact_signatures: bool,
         status_callback: Callable[[str], None] | None = None,
-    ) -> tuple[FunctionCatalogEntry, ...]:
+    ) -> tuple[
+        tuple[FunctionCatalogEntry, ...],
+        tuple[FunctionCatalogEntry, ...],
+    ]:
         """Return ranked entries selected from the authoritative registry."""
         query_filter = CatalogFilterText.from_request(query)
         library_filter = CatalogFilterText.from_request(library)
@@ -586,13 +640,14 @@ class FunctionCatalogService:
         )
         summary_view = SummaryView.COMPACT if compact_signatures else SummaryView.FULL
         metadata_by_id = self._all_metadata(status_callback=status_callback)
-        candidates = []
-        for projection in self._search_projections(
+        projections = self._search_projections(
             metadata_by_id,
             signature_view=signature_view,
             summary_view=summary_view,
             status_callback=status_callback,
-        ):
+        )
+        candidates = []
+        for projection in projections:
             entry = projection.entry
             if not library_filter.accepts_library_or_tag(
                 entry.library,
@@ -607,7 +662,7 @@ class FunctionCatalogService:
             if not match.matched:
                 continue
             candidates.append(CatalogSearchCandidate(match.rank, match.score, entry))
-        return tuple(
+        matching_entries = tuple(
             (
                 candidate.entry
                 for candidate in sorted(
@@ -615,6 +670,7 @@ class FunctionCatalogService:
                 )
             )
         )
+        return tuple(projection.entry for projection in projections), matching_entries
 
     def _search_projections(
         self,
@@ -724,6 +780,24 @@ class FunctionCatalogService:
     def resolve(self, function_id: str) -> Callable:
         return self._metadata(function_id).func
 
+    def reference(self, function_id: str) -> "FunctionReference":
+        """Return the exact compiler reference owned by one catalog declaration."""
+
+        from openhcs.core.function_reference import FunctionReferenceTransportAuthority
+
+        return FunctionReferenceTransportAuthority.function_reference(
+            self._metadata(function_id).func
+        )
+
+    def require_revision(self, revision: str) -> None:
+        """Fail unless ``revision`` names current endpoint callable membership."""
+
+        if revision != self.catalog(compact_signatures=True).revision:
+            raise ValueError(
+                "The execution server function catalog changed after it was read. "
+                "Refresh the catalog before selecting a function."
+            )
+
     def function_ids_for_callables(
         self, functions: tuple[Callable, ...]
     ) -> tuple[str, ...]:
@@ -803,6 +877,7 @@ class FunctionCatalogService:
         )
         summary = _summary(metadata.func, metadata.doc, summary_view)
         tags = metadata.tags
+        backend_tags: tuple[str, ...]
         if tags is None:
             backend_tags = ()
         else:
@@ -851,7 +926,7 @@ def _bounded_summary(text: str, view: SummaryView) -> str:
         return text
     if len(text) <= view.character_limit:
         return text
-    return f"{text[:view.character_limit - 3].rstrip()}..."
+    return f"{text[: view.character_limit - 3].rstrip()}..."
 
 
 def _import_path(module: str, name: str) -> str:
@@ -892,7 +967,7 @@ def _parameter_search_text(
 ) -> str:
     """Project declaration-owned parameter vocabulary into catalog search."""
 
-    values = []
+    values: list[str] = []
     for parameter in parameters:
         values.extend(
             value
