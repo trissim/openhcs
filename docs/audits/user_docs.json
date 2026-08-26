@@ -3123,7 +3123,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/widgets/log_viewer.py",
-        "sha256": "343dcec6734c0abcb73dbb390dbce82cfac04000deeb19cb3c16b87ec3810e0d",
+        "sha256": "e68eda879c7cd3f5360dd1b4a08a481298cabf85cd72bdfda66b0efbd54d56f9",
         "role": "Implements log discovery, live-process filtering, record filtering, and viewer selection behaviour."
       },
       {
@@ -3157,7 +3157,8 @@
       "Passed `.venv/bin/python scripts/validate_docs.py docs/source/user_guide`: documentation validation passed: 12 files, 2 Python blocks.",
       "Re-reviewed the complete page after submission timeout ownership changed; its log-selection guidance remains accurate.",
       "The complete pyqt-reactive suite passed 320 tests, and a live MCP-driven desktop session selected the port 7777 server entry and displayed that server's corresponding log.",
-      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
+      "On 2026-08-26, re-read the complete how-to after its checkboxes adopted the shared leaf-owned themed control; discovery, filtering, process identity, and log-selection behaviour remain unchanged."
     ]
   },
   {
