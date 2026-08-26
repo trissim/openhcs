@@ -715,8 +715,6 @@ jobs:
   desktop-installer-source-test:
     runs-on: ${{ matrix.os }}
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    env:
-      OPENHCS_INSTALLER_CANDIDATE_WHEELHOUSE: ${{ runner.temp }}/openhcs-installer-candidate-wheels
     strategy:
       fail-fast: false
       matrix:
@@ -795,12 +793,14 @@ jobs:
         id: source_candidate
         shell: bash
         run: |
+          wheelhouse="$RUNNER_TEMP/openhcs-installer-candidate-wheels"
           release_version=$(python scripts/stage_ci_candidate_version.py \
             --run-id "$GITHUB_RUN_ID")
           python -m scripts.install_ci_candidate \
             --dependency-source submodules \
-            --wheel-directory "$OPENHCS_INSTALLER_CANDIDATE_WHEELHOUSE" \
+            --wheel-directory "$wheelhouse" \
             --build-only
+          printf 'wheelhouse=%s\n' "$wheelhouse" >> "$GITHUB_OUTPUT"
           printf 'release_version=%s\n' "$release_version" >> "$GITHUB_OUTPUT"
 
       - name: Parse Windows PowerShell installer sources
@@ -882,7 +882,7 @@ jobs:
           }
 
           $env:UV_FIND_LINKS = (
-            Resolve-Path $env:OPENHCS_INSTALLER_CANDIDATE_WHEELHOUSE
+            Resolve-Path "${{ steps.source_candidate.outputs.wheelhouse }}"
           ).Path
           $env:PIP_FIND_LINKS = $env:UV_FIND_LINKS
           $hostilePipIndex = "http://127.0.0.1:9/simple"
@@ -1466,7 +1466,7 @@ jobs:
 
           mkdir -p "$smoke_home"
           export HOME="$smoke_home"
-          export UV_FIND_LINKS="$OPENHCS_INSTALLER_CANDIDATE_WHEELHOUSE"
+          export UV_FIND_LINKS='${{ steps.source_candidate.outputs.wheelhouse }}'
           export PIP_FIND_LINKS="$UV_FIND_LINKS"
           hostile_pip_index='http://127.0.0.1:9/simple'
           hostile_pip_config="$RUNNER_TEMP/hostile-pip.ini"

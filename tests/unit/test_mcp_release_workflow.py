@@ -494,6 +494,7 @@ def test_real_viewer_smoke_validates_native_qt_and_prewarms_managed_fiji():
 def test_native_macos_installer_uses_native_qt_smoke_harness():
     workflow = yaml.safe_load(INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8"))
     installer_job = workflow["jobs"]["desktop-installer-source-test"]
+    assert "env" not in installer_job
     matrix = installer_job["strategy"]["matrix"]["include"]
     assert {
         "os": "macos-latest",
@@ -521,6 +522,8 @@ def test_native_macos_installer_uses_native_qt_smoke_harness():
     assert "--dependency-source submodules" in candidate_step["run"]
     assert "--build-only" in candidate_step["run"]
     assert "GITHUB_RUN_ID" in candidate_step["run"]
+    assert "RUNNER_TEMP" in candidate_step["run"]
+    assert "wheelhouse=%s" in candidate_step["run"]
     smoke_step = next(
         step
         for step in steps
@@ -532,7 +535,7 @@ def test_native_macos_installer_uses_native_qt_smoke_harness():
     assert '--latest-version "$release_version"' in smoke_step["run"]
     assert "OPENHCS_MCP_INSTALLATION_POINTER" in smoke_step["run"]
     assert "steps.source_candidate.outputs.release_version" in smoke_step["run"]
-    assert "OPENHCS_INSTALLER_CANDIDATE_WHEELHOUSE" in smoke_step["run"]
+    assert "steps.source_candidate.outputs.wheelhouse" in smoke_step["run"]
     assert "import tkinter as tk" in smoke_step["run"]
     assert '"$managed_python" -I "$installed_worker" --help' in smoke_step["run"]
     assert "macOS staged updater did not switch environments" in smoke_step["run"]

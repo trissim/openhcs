@@ -2686,7 +2686,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "7c3cae362c70c3896879d6301ffbb472516444add6c44464c6b39436ff61c713",
+    "source_sha256": "12c36c2943f498bd433f0f676fcb9cb8773838e4b5d31ea4bb1f8d7705e630b7",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2740,7 +2740,7 @@
       },
       {
         "path": "tests/unit/test_mcp_release_workflow.py",
-        "sha256": "c50b5ff9498df267c0ce5400565c958cc73dd40e6c2edbb70da9ab69347e59a6",
+        "sha256": "b0c818a0b05841eb40afff5d01ce90d8da5baac9ea321699fe194eee8c3dfcd0",
         "role": "Proves immutable tag resolution, exact-SHA checkout, publication ordering, recovery, Registry policy, and publication-independent native candidate ownership."
       },
       {
@@ -2750,13 +2750,18 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "cee01739a55022087911b4d6f749a7290bc4cc9e41f322e05cc08ba34998189f",
+        "sha256": "8db3092a8c68d184592878661f7f8ef575670941ae80e4d48825d209d60ec9ef",
         "role": "Cross-platform source-candidate and published-dependency readiness, installed-wheel live GUI/MCP operation, native installer, signing-helper parse, and staged-update validation matrix."
       },
       {
         "path": ".github/workflows/published-release-canary.yml",
         "sha256": "0b3c83f2eb183b3545f176d703936df590f4ffb6bca0628d6d9ae6c8f71b9d20",
         "role": "Daily Linux, Windows, and macOS live GUI/MCP proof for the dependency set resolved by the latest published desktop package."
+      },
+      {
+        "path": ".github/workflows/docs.yml",
+        "sha256": "536b5742bc00ab8910cbd38fa5d5848c27d21465ee1157dd03b7730a04ce5b4e",
+        "role": "Independently validates every workflow with a pinned and checksum-verified context-aware actionlint release before building documentation."
       },
       {
         "path": "scripts/smoke_installed_gui.py",
@@ -2775,8 +2780,8 @@
       },
       {
         "path": "tests/unit/test_ci_action_pinning.py",
-        "sha256": "99636e38f033a1709f2e508185050cd5223062b62bbc4d56a865307e429b1967",
-        "role": "Repository-wide proof that external workflow dependencies use immutable full-length commit identities and have an update owner."
+        "sha256": "ad0cb0664ba193267580d1e35bb1636c8f76a7ae738eb303dfe16e4cc71ae61f",
+        "role": "Repository-wide proof that external workflow dependencies use immutable identities and that context-aware workflow validation has a pinned, checksum-verified owner."
       },
       {
         "path": "packaging/installers/windows/Sign-Installer.ps1",
@@ -2852,7 +2857,9 @@
       "On 2026-08-26, re-read the CI and publication section after release-tag fetches were removed from source unit and documentation jobs; only dependency-readiness and publication gates now require tag history.",
       "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete page against the exact-wheel live GUI/MCP probe, source candidate workflow, tag workflow, and scheduled published-package canary; the probe passed with matching 0.7.27 identities and exact endpoint cleanup.",
       "On 2026-08-26, re-read the complete page against the metadata-derived desktop extras, candidate-wheel installer, complementary Windows and dual-architecture macOS candidate matrix, and focused workflow ownership tests.",
-      "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete page after separating native source-candidate evidence from published-wheel readiness; a real metadata-discovered nine-wheel build-only wheelhouse and focused installer/workflow regressions passed while the public PyPI installation lane remained gated."
+      "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete page after separating native source-candidate evidence from published-wheel readiness; a real metadata-discovered nine-wheel build-only wheelhouse and focused installer/workflow regressions passed while the public PyPI installation lane remained gated.",
+      "On 2026-08-26, GitHub rejected runner.temp in job-level env before scheduling any work; the exact wheelhouse path now originates in the runner-owned build step and crosses later platform steps through one declared output, with a regression preventing the invalid context from returning.",
+      "On 2026-08-26, re-read the release how-to after the Documentation workflow took independent ownership of context-aware workflow validation; actionlint 1.7.12 passed every current workflow from its checksum-verified Linux binary."
     ]
   },
   {
@@ -2911,7 +2918,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "cee01739a55022087911b4d6f749a7290bc4cc9e41f322e05cc08ba34998189f",
+        "sha256": "8db3092a8c68d184592878661f7f8ef575670941ae80e4d48825d209d60ec9ef",
         "role": "Runs explicitly selected live OMERO variants and preserves component and table-service diagnostics on failure."
       }
     ],

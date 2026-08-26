@@ -897,7 +897,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "cee01739a55022087911b4d6f749a7290bc4cc9e41f322e05cc08ba34998189f",
+        "sha256": "8db3092a8c68d184592878661f7f8ef575670941ae80e4d48825d209d60ec9ef",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -2032,7 +2032,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "522547be1a3d79c596c866d6931b2ba4ab41da803ae7a1405b88bbdc5332d68a",
+    "source_sha256": "b14d6eb3bab31740b00ec6ead559c29bda6323ccd3f7de2e0a32815f0dfa03aa",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -2052,8 +2052,18 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "cee01739a55022087911b4d6f749a7290bc4cc9e41f322e05cc08ba34998189f",
+        "sha256": "8db3092a8c68d184592878661f7f8ef575670941ae80e4d48825d209d60ec9ef",
         "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, pytest commands, and source-gate coverage artifacts used by CI."
+      },
+      {
+        "path": ".github/workflows/docs.yml",
+        "sha256": "536b5742bc00ab8910cbd38fa5d5848c27d21465ee1157dd03b7730a04ce5b4e",
+        "role": "Independently validates every workflow with a pinned and checksum-verified context-aware actionlint release before building documentation."
+      },
+      {
+        "path": "tests/unit/test_ci_action_pinning.py",
+        "sha256": "ad0cb0664ba193267580d1e35bb1636c8f76a7ae738eb303dfe16e4cc71ae61f",
+        "role": "Proves the independent workflow validator has a pinned version, checksum, and exact invocation in addition to immutable external action pins."
       },
       {
         "path": "scripts/install_ci_candidate.py",
@@ -2173,7 +2183,9 @@
       "On 2026-08-26, re-read the complete testing how-to against scripts/smoke_installed_gui.py and tests/unit/test_smoke_installed_gui.py after an exact-wheel probe contacted an existing desktop endpoint; the revised probe derives a free pair from UIConfig.zmq through DataControlPortPairAuthority without adding transport-specific dispatch.",
       "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete guide against the exact-wheel live GUI/MCP probe, source candidate workflow, native installer acceptance, and scheduled published-package canary; the probe passed with matching 0.7.27 identities and exact endpoint cleanup.",
       "On 2026-08-26, re-read the complete guide against the metadata-derived desktop extras, candidate-wheel installer, complementary Windows and dual-architecture macOS candidate matrix, and focused workflow ownership tests.",
-      "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete guide after native source candidates became independent from published dependency readiness; a real metadata-discovered nine-wheel build-only wheelhouse and focused workflow and installer tests passed, while public-package evidence remained a separate strict lane."
+      "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete guide after native source candidates became independent from published dependency readiness; a real metadata-discovered nine-wheel build-only wheelhouse and focused workflow and installer tests passed, while public-package evidence remained a separate strict lane.",
+      "On 2026-08-26, GitHub rejected runner.temp in job-level env before scheduling any work; the build step now publishes its runner-local wheelhouse path for the Windows and macOS installer steps, and focused workflow regressions enforce that context boundary.",
+      "On 2026-08-26, re-read the complete testing guide after the Documentation workflow took independent ownership of context-aware workflow validation; actionlint 1.7.12 passed every current workflow from its checksum-verified Linux binary."
     ]
   },
   {

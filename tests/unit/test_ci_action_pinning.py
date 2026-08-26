@@ -11,6 +11,8 @@ DEPENDABOT_PATH = REPOSITORY_ROOT / ".github" / "dependabot.yml"
 USES_LINE = re.compile(r"^\s*(?:-\s*)?uses:\s*(?P<target>[^#\s]+)")
 IMMUTABLE_ACTION = re.compile(r"[^@\s]+@[0-9a-f]{40}")
 IMMUTABLE_CONTAINER = re.compile(r"docker://[^@\s]+@sha256:[0-9a-f]{64}")
+RELEASE_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 def test_external_workflow_dependencies_are_immutable() -> None:
@@ -49,3 +51,18 @@ def test_dependabot_owns_github_action_pin_updates() -> None:
     assert action_updates["groups"] == {
         "github-actions": {"patterns": ["*"]},
     }
+
+
+def test_documentation_gate_owns_context_aware_workflow_validation() -> None:
+    workflow = yaml.safe_load((WORKFLOW_ROOT / "docs.yml").read_text(encoding="utf-8"))
+    lint_step = next(
+        step
+        for step in workflow["jobs"]["validate"]["steps"]
+        if step.get("name") == "Validate GitHub Actions workflows"
+    )
+
+    assert RELEASE_VERSION.fullmatch(lint_step["env"]["ACTIONLINT_VERSION"])
+    assert SHA256.fullmatch(lint_step["env"]["ACTIONLINT_LINUX_AMD64_SHA256"])
+    assert "rhysd/actionlint/releases/download" in lint_step["run"]
+    assert "sha256sum --check" in lint_step["run"]
+    assert '"$executable" -shellcheck= -pyflakes=' in lint_step["run"]

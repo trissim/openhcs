@@ -49,7 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alone as proof of desktop compatibility or reusing an existing server. The
   native installer lane builds its metadata-discovered wheelhouse directly
   from the candidate checkout, so unpublished dependency tags cannot suppress
-  Windows or macOS installer and update evidence.
+  Windows or macOS installer and update evidence. A separate checksum-pinned
+  workflow linter rejects invalid GitHub expression contexts before release
+  evidence is evaluated.
 - An explicitly selected UI bridge descriptor now owns both targeted bridge
   resolution and bridge-catalog discovery, including on macOS and Windows
   where Linux process-environment discovery is unavailable.

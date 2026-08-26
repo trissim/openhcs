@@ -75,6 +75,11 @@ installed-wheel jobs after the complete matrix succeeds. Its report therefore
 describes the union of those instrumented suites; installer and live-viewer
 jobs remain separate behavioral gates.
 
+The Documentation workflow also runs the context-aware ``actionlint`` checker
+against every GitHub Actions definition from a checksum-verified release
+binary. This catches invalid expressions and contexts that a YAML parser cannot
+recognize, even when the workflow containing the defect cannot schedule jobs.
+
 The Windows installer smoke also exercises a staged update while both the old
 environment entry point and the stable GUI launcher are held without delete
 sharing. It then releases the launcher and verifies that its deferred desktop

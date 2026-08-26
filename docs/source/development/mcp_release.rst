@@ -162,6 +162,12 @@ retains every change since the most recent successful Integration Tests head,
 so an unrelated follow-up commit cannot bypass a failed formatter or
 correctness check.
 
+The independent Documentation workflow runs the context-aware ``actionlint``
+checker across every GitHub Actions definition. Its release binary and checksum
+are pinned, so an invalid expression or unavailable context fails outside the
+workflow being checked instead of first appearing as an unscheduled release
+matrix.
+
 The scheduled Published Release Canary installs the latest stable desktop
 package from PyPI on Linux, Windows, and macOS, then runs the same live GUI/MCP
 probe. It detects dependency drift that occurs after a release, while the
