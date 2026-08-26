@@ -76,6 +76,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowSummary,
 )
 from openhcs.agent.dto.viewer import (
+    VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT,
     ViewerWindowDescriptor,
     ViewerWindowLayerIsolationResult,
     ViewerWindowLayerPayloads,
@@ -94,6 +95,9 @@ from openhcs.agent.services.object_state_field_projection import (
     ObjectStateFieldListProjector,
 )
 from openhcs.agent.services.selected_plate_service import SelectedPlateService
+from openhcs.agent.services.ui_bridge_service import (
+    DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
+)
 from openhcs.agent.services.viewer_window_service import ViewerWindowService
 from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.mcp.context import OpenHCSAgentContext
@@ -15217,24 +15221,28 @@ def test_mcp_server_exposes_ui_bridge_tools():
     assert wait_properties["poll_interval_seconds"]["default"] == 0.5
 
 
-def test_mcp_ui_bridge_timeout_policy_is_fail_fast():
-    assert server.McpUiBridgeTimeoutPolicy.resolve(None) == 750
-    assert server.McpUiBridgeTimeoutPolicy.resolve(2000) == 2000
+def test_mcp_ui_bridge_timeout_policy_derives_from_bridge_contract():
+    declared_timeout_ms = DEFAULT_UI_BRIDGE_CONNECTION_SPEC.timeout_ms
+    assert server.McpUiBridgeTimeoutPolicy.resolve(None) == declared_timeout_ms
+    assert server.McpUiBridgeTimeoutPolicy.resolve(declared_timeout_ms) == (
+        declared_timeout_ms
+    )
 
     try:
-        server.McpUiBridgeTimeoutPolicy.resolve(120_000)
+        server.McpUiBridgeTimeoutPolicy.resolve(declared_timeout_ms + 1)
     except ValueError as exc:
         assert "must not exceed" in str(exc)
     else:
         raise AssertionError("large UI bridge MCP timeout was accepted")
 
 
-def test_mcp_ui_bridge_command_timeout_policy_uses_existing_control_cap():
-    assert server.McpUiBridgeCommandTimeoutPolicy.resolve(None) == 2000
+def test_mcp_ui_bridge_command_timeout_policy_derives_from_bridge_contract():
+    declared_timeout_ms = DEFAULT_UI_BRIDGE_CONNECTION_SPEC.timeout_ms
+    assert server.McpUiBridgeCommandTimeoutPolicy.resolve(None) == declared_timeout_ms
     assert server.McpUiBridgeCommandTimeoutPolicy.resolve(750) == 750
 
     try:
-        server.McpUiBridgeCommandTimeoutPolicy.resolve(120_000)
+        server.McpUiBridgeCommandTimeoutPolicy.resolve(declared_timeout_ms + 1)
     except ValueError as exc:
         assert "must not exceed" in str(exc)
     else:
@@ -15248,22 +15256,29 @@ def test_mcp_dev_client_ui_connection_timeout_fails_before_mcp_call():
     import openhcs.mcp.dev_client as dev_client
 
     parser = dev_client._build_parser()
-    valid_args = parser.parse_args(("selected-plate-files", "--timeout-ms", "2000"))
+    valid_args = parser.parse_args(("selected-plate-files", "--timeout-ms", "5000"))
     valid_call = dev_client._calls_from_args(valid_args)[0]
 
-    assert valid_call.arguments["connection"]["timeout_ms"] == 2000
+    assert valid_call.arguments["connection"]["timeout_ms"] == 5000
 
-    invalid_args = parser.parse_args(("selected-plate-files", "--timeout-ms", "2001"))
-    with pytest.raises(dev_client.McpDevCliUsageError, match="--timeout-ms: .*2000ms"):
+    invalid_args = parser.parse_args(("selected-plate-files", "--timeout-ms", "5001"))
+    with pytest.raises(dev_client.McpDevCliUsageError, match="--timeout-ms: .*5000ms"):
         dev_client._calls_from_args(invalid_args)
 
 
-def test_mcp_viewer_timeout_policy_is_fail_fast():
-    assert server.McpViewerTimeoutPolicy.resolve(None) == 750
-    assert server.McpViewerTimeoutPolicy.resolve(2000) == 2000
+def test_mcp_viewer_timeout_policy_derives_from_viewer_contract():
+    assert server.McpViewerTimeoutPolicy.resolve(None) == (
+        VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT
+    )
+    assert (
+        server.McpViewerTimeoutPolicy.resolve(VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT)
+        == VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT
+    )
 
     try:
-        server.McpViewerTimeoutPolicy.resolve(120_000)
+        server.McpViewerTimeoutPolicy.resolve(
+            VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT + 1
+        )
     except ValueError as exc:
         assert "must not exceed" in str(exc)
     else:
@@ -15277,15 +15292,15 @@ def test_mcp_dev_client_viewer_connection_timeout_fails_before_mcp_call():
     import openhcs.mcp.dev_client as dev_client
 
     parser = dev_client._build_parser()
-    valid_args = parser.parse_args(("validate-viewer", "5555", "--timeout-ms", "2000"))
+    valid_args = parser.parse_args(("validate-viewer", "5555", "--timeout-ms", "4999"))
     valid_call = dev_client._calls_from_args(valid_args)[0]
 
-    assert valid_call.arguments["timeout_ms"] == 2000
+    assert valid_call.arguments["timeout_ms"] == 4999
 
     invalid_args = parser.parse_args(
-        ("validate-viewer", "5555", "--timeout-ms", "2001")
+        ("validate-viewer", "5555", "--timeout-ms", "5001")
     )
-    with pytest.raises(dev_client.McpDevCliUsageError, match="--timeout-ms: .*2000ms"):
+    with pytest.raises(dev_client.McpDevCliUsageError, match="--timeout-ms: .*5000ms"):
         dev_client._calls_from_args(invalid_args)
 
 
@@ -15296,24 +15311,28 @@ def test_mcp_dev_client_viewer_payload_timeout_fails_before_mcp_call():
     import openhcs.mcp.dev_client as dev_client
 
     parser = dev_client._build_parser()
-    valid_args = parser.parse_args(("viewer-payloads", "5555", "--timeout-ms", "2000"))
+    valid_args = parser.parse_args(("viewer-payloads", "5555", "--timeout-ms", "4999"))
     valid_call = dev_client._calls_from_args(valid_args)[0]
 
-    assert valid_call.arguments["timeout_ms"] == 2000
+    assert valid_call.arguments["timeout_ms"] == 4999
 
     invalid_args = parser.parse_args(
-        ("viewer-payloads", "5555", "--timeout-ms", "2001")
+        ("viewer-payloads", "5555", "--timeout-ms", "5001")
     )
-    with pytest.raises(dev_client.McpDevCliUsageError, match="--timeout-ms: .*2000ms"):
+    with pytest.raises(dev_client.McpDevCliUsageError, match="--timeout-ms: .*5000ms"):
         dev_client._calls_from_args(invalid_args)
 
 
-def test_mcp_viewer_command_timeout_policy_uses_existing_control_cap():
-    assert server.McpViewerCommandTimeoutPolicy.resolve(None) == 2000
+def test_mcp_viewer_command_timeout_policy_derives_from_viewer_contract():
+    assert server.McpViewerCommandTimeoutPolicy.resolve(None) == (
+        VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT
+    )
     assert server.McpViewerCommandTimeoutPolicy.resolve(750) == 750
 
     try:
-        server.McpViewerCommandTimeoutPolicy.resolve(120_000)
+        server.McpViewerCommandTimeoutPolicy.resolve(
+            VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT + 1
+        )
     except ValueError as exc:
         assert "must not exceed" in str(exc)
     else:
@@ -15328,9 +15347,12 @@ def test_mcp_viewer_connection_fields_project_timeout_policy():
         timeout_ms=None,
     )
 
-    assert fields.to_control_args().timeout_ms == 750
     assert (
-        fields.to_control_args(server.McpViewerCommandTimeoutPolicy).timeout_ms == 2000
+        fields.to_control_args().timeout_ms == VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT
+    )
+    assert (
+        fields.to_control_args(server.McpViewerCommandTimeoutPolicy).timeout_ms
+        == VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT
     )
 
 
@@ -15414,12 +15436,12 @@ def test_mcp_viewer_mutation_tools_default_to_command_timeout():
 
     assert viewer_window_service.navigation_requests
     assert all(
-        request.timeout_ms == 2000
+        request.timeout_ms == VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT
         for request in viewer_window_service.navigation_requests
     )
     assert viewer_window_service.isolation_requests
     assert all(
-        request.timeout_ms == 2000
+        request.timeout_ms == VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT
         for request in viewer_window_service.isolation_requests
     )
 

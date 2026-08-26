@@ -110,10 +110,8 @@ from openhcs.runtime.zmq_application import OPENHCS_ENDPOINT_APPLICATION
 from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 UI_BRIDGE_PROTOCOL_VERSION = "openhcs.ui_bridge.v2"
-DEFAULT_UI_BRIDGE_TIMEOUT_MS = 5000
-DEFAULT_UI_BRIDGE_CONNECTION_SPEC = UiBridgeConnectionSpec(
-    timeout_ms=DEFAULT_UI_BRIDGE_TIMEOUT_MS
-)
+DEFAULT_UI_BRIDGE_CONNECTION_SPEC = UiBridgeConnectionSpec()
+DEFAULT_UI_BRIDGE_TIMEOUT_MS = DEFAULT_UI_BRIDGE_CONNECTION_SPEC.timeout_ms
 UNAVAILABLE_UI_CODE_DOCUMENT_TITLE = "Unavailable UI code document"
 UNAVAILABLE_UI_STATE_SURFACE_TITLE = "Unavailable UI state surface"
 UiBridgeResultT = TypeVar("UiBridgeResultT")
@@ -1940,7 +1938,7 @@ class UiBridgeService:
     ) -> UiBridgeConnectionSpec:
         return UiBridgeConnectionSpec.from_fields(
             fields,
-            defaults=UiBridgeConnectionSpec(timeout_ms=DEFAULT_UI_BRIDGE_TIMEOUT_MS),
+            defaults=DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
         )
 
     def _dispatch_gateway(

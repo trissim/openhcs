@@ -56,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An explicitly selected UI bridge descriptor now owns both targeted bridge
   resolution and bridge-catalog discovery, including on macOS and Windows
   where Linux process-environment discovery is unavailable.
+- MCP UI and viewer control calls now derive their timeout bounds from the
+  corresponding connection declarations. Cold native desktop startup no
+  longer replaces the UI bridge's declared five-second budget with a separate
+  750-millisecond adapter default.
 - Windows and macOS installers ignore inherited workstation package indexes,
   preventing an unreachable optional NVIDIA index from stalling an otherwise
   resolvable OpenHCS installation.

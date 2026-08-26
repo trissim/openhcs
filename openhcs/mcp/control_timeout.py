@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
+from openhcs.agent.dto.viewer import VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT
+from openhcs.agent.services.ui_bridge_service import DEFAULT_UI_BRIDGE_TIMEOUT_MS
 
-DEFAULT_MCP_CONTROL_TIMEOUT_MS = 750
-MAX_MCP_CONTROL_TIMEOUT_MS = 2_000
 MIN_MCP_CONTROL_TIMEOUT_MS = 1
 
 
@@ -33,12 +33,12 @@ class BoundedMcpTimeoutPolicy:
 
 
 class McpControlTimeoutPolicy:
-    """Shared fail-fast timeout contract for Codex-facing MCP control tools."""
+    """Shared bounds mechanism for declaration-owned MCP control timeouts."""
 
     label: ClassVar[str]
-    default_ms: ClassVar[int] = DEFAULT_MCP_CONTROL_TIMEOUT_MS
+    default_ms: ClassVar[int]
     min_ms: ClassVar[int] = MIN_MCP_CONTROL_TIMEOUT_MS
-    max_ms: ClassVar[int] = MAX_MCP_CONTROL_TIMEOUT_MS
+    max_ms: ClassVar[int]
 
     @classmethod
     def resolve(cls, requested_timeout_ms: int | None) -> int:
@@ -51,34 +51,26 @@ class McpControlTimeoutPolicy:
 
 
 class McpUiBridgeTimeoutPolicy(McpControlTimeoutPolicy):
-    """Fail-fast timeout contract for Codex-facing UI bridge tools."""
+    """MCP projection of the UI bridge connection timeout contract."""
 
     label = "UI bridge"
+    default_ms = DEFAULT_UI_BRIDGE_TIMEOUT_MS
+    max_ms = DEFAULT_UI_BRIDGE_TIMEOUT_MS
 
 
-class McpUiBridgeCommandTimeoutPolicy(McpControlTimeoutPolicy):
-    """Bounded timeout contract for UI bridge commands."""
+class McpUiBridgeCommandTimeoutPolicy(McpUiBridgeTimeoutPolicy):
+    """UI bridge command profile with the bridge-owned timeout bounds."""
 
     label = "UI bridge command"
 
-    @classmethod
-    def resolve(cls, requested_timeout_ms: int | None) -> int:
-        if requested_timeout_ms is None:
-            requested_timeout_ms = cls.max_ms
-        return super().resolve(requested_timeout_ms)
-
 
 class McpViewerTimeoutPolicy(McpControlTimeoutPolicy):
-    """Fail-fast timeout contract for viewer state and snapshot tools."""
+    """MCP projection of the viewer control timeout contract."""
 
     label = "Viewer"
+    default_ms = VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT
+    max_ms = VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT
 
 
 class McpViewerCommandTimeoutPolicy(McpViewerTimeoutPolicy):
-    """Bounded timeout contract for viewer state-mutating commands."""
-
-    @classmethod
-    def resolve(cls, requested_timeout_ms: int | None) -> int:
-        if requested_timeout_ms is None:
-            requested_timeout_ms = cls.max_ms
-        return super().resolve(requested_timeout_ms)
+    """Viewer command profile with the viewer-owned timeout bounds."""
