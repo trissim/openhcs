@@ -46,7 +46,12 @@ declaration while allowing explicit host, port, web-port, user, and password
 overrides for a remote instance. Start Docker before requesting the packaged
 local stack. The manager waits briefly for an already-starting daemon to become
 responsive, but host daemon lifecycle remains outside the OpenHCS integration
-boundary.
+boundary. During a cold packaged start, repository creation and the OMERO table
+component may finish independently. If the table component stops before the
+repository exists, the manager waits for PolyStore's managed-repository
+declaration, restarts that component within the packaged Compose stack, and
+rechecks table readiness. Explicitly configured external stacks are never
+restarted by this recovery path.
 
 Durable artifact materialization
 --------------------------------

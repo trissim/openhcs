@@ -37,6 +37,10 @@ responsive Blitz endpoint alone is not sufficient.
 Start Docker before selecting the live variant. The instance manager may start
 the packaged Compose services and waits boundedly for an already-starting
 daemon, but it does not start Docker Desktop or a host service manager.
+For a cold packaged deployment, prove that repository readiness precedes any
+recovery of the independently starting table component and that the final
+PolyStore table capability becomes ready. The manager must not restart table
+components on an externally managed deployment.
 
 Keep credentials in the test environment, never in pipeline declarations or
 fixtures committed to the repository. Always close gateway connections and

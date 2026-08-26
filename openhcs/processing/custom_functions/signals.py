@@ -12,7 +12,12 @@ class CustomFunctionSignals(QObject):
 
     def __init__(self) -> None:
         super().__init__()
-        custom_function_changed.subscribe(self.functions_changed.emit)
+        custom_function_changed.subscribe(self._emit_functions_changed)
+
+    def _emit_functions_changed(self) -> None:
+        """Project one live domain notification through the Qt adapter."""
+
+        self.functions_changed.emit()
 
 
 custom_function_signals = CustomFunctionSignals()

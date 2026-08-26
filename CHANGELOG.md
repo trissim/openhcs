@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transport during cleanup.
 - Persisted custom-function reconciliation now retains ephemeral declarations
   registered by the current authoring process.
+- Custom-function domain notifications no longer retain destroyed Qt adapters,
+  preventing later catalogue updates from invoking invalid GUI objects.
 - Fresh and updated desktop installations now launch with the current nominal
   PyQt provider contracts. The installed-GUI gate reaches the painted main
   window instead of treating dependency resolution alone as proof of startup
@@ -71,8 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Materialized text outputs retain their declared semantics across storage
   backends, and complete component projections preserve the domains required by
   downstream viewers and source bindings.
-- Cold OMERO startup now waits for the complete declared service stack and
-  releases only the resources owned by the current session.
+- Cold packaged OMERO startup now waits for its managed repository before
+  recovering the independently starting table component, while external stacks
+  remain under their operator's control.
 
 ### Removed
 

@@ -144,4 +144,6 @@ start independently. For OMERO failures, distinguish dependency installation,
 server readiness, authentication, source projection, and result
 materialization. The CI failure step emits OMERO component diagnostics and the
 ``Tables-0`` log before the container logs so independent table-service startup
-is visible.
+is visible. A cold packaged deployment may recover that component only after
+PolyStore reports its managed repository; an external deployment remains under
+its operator's lifecycle control.

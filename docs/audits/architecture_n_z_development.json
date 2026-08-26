@@ -120,7 +120,7 @@
   },
   {
     "path": "docs/source/architecture/omero_backend_system.rst",
-    "source_sha256": "c0c40d5350ce89719bf002498c4483f3fcf7cf5bc8b3754f09796cd1d5a0a2b5",
+    "source_sha256": "c62d31950f0d453ce5d6741f628f37ed758dbae64e45398ca470526f623c6e46",
     "audience": [
       "OpenHCS users and integrators following the former OMERO architecture URL"
     ],
@@ -134,7 +134,7 @@
       },
       {
         "path": "external/PolyStore/src/polystore/omero_tables.py",
-        "sha256": "e3e51ced79aedbe85e0e2d509e7da9f20a12ca90eab9fc069854c8e921c9779d",
+        "sha256": "910aaa6bea75f40bae82df71dd414415278b1387b80c7f1bc11e8d681874451e",
         "role": "Owns OMERO column projection, table-service readiness, repository validation, and table creation."
       },
       {
@@ -154,8 +154,8 @@
       },
       {
         "path": "openhcs/runtime/omero_instance_manager.py",
-        "sha256": "3ea44f4c02bbdb141db487cf4d29846359027dea707891429791090e34119b40",
-        "role": "Consumes the packaged Compose declaration and accepts connections only after the complete stack and table service are ready."
+        "sha256": "af94c8b851bd4e1456e5c85b16f83ac8008944b05a71ed9d9db5574416704933",
+        "role": "Consumes the packaged Compose declaration, recovers its table component after repository readiness, and accepts only a complete ready stack."
       },
       {
         "path": "openhcs/omero/plugin/setup.py",
@@ -175,7 +175,8 @@
       "The default stack exposed an alpha web panel whose owner documents an incompatible execution payload; the pinned upstream OMERO.web viewer now remains separate from that prototype until its integration gate passes.",
       "Local ports and credentials were duplicated between Python constants and Compose; the manager now projects typed settings from the canonical deployment declaration.",
       "The OMERO manager contained generic platform-string dispatch for Docker Desktop and system service startup; Docker daemon lifecycle now remains with the host.",
-      "A cold Docker daemon could become responsive moments after the manager's one-shot probe; startup now waits boundedly and passes the resolved command into Compose once."
+      "A cold Docker daemon could become responsive moments after the manager's one-shot probe; startup now waits boundedly and passes the resolved command into Compose once.",
+      "OMERO.tables could start before the managed repository, disable itself, and never recover; the local packaged lifecycle now waits on PolyStore's repository declaration before restarting only that component."
     ],
     "disposition": "redirect",
     "validation": [
@@ -189,7 +190,8 @@
       "On 2026-08-25, re-read the reference after removing the parallel deployment file and local shell readiness logic; it now distinguishes the canonical upstream stack from the separately gated alpha panel.",
       "On 2026-08-25, verified that the Compose connection extension owns local endpoint and credential values and the runtime manager only projects or explicitly overrides them.",
       "On 2026-08-25, removed platform-specific Docker daemon launch and re-read the boundary: OpenHCS owns its Compose services, while the host owns Docker availability.",
-      "On 2026-08-25, re-read the complete reference after a live Python 3.11 OMERO job exposed transient Docker daemon readiness; the bounded wait preserves host ownership, reuses one resolved command, and stores a gateway only after connection succeeds."
+      "On 2026-08-25, re-read the complete reference after a live Python 3.11 OMERO job exposed transient Docker daemon readiness; the bounded wait preserves host ownership, reuses one resolved command, and stores a gateway only after connection succeeds.",
+      "On 2026-08-26, re-read the reference after Python 3.12 CI exposed independent repository and Tables-0 startup; PolyStore owns repository readiness and OpenHCS recovers only the packaged local component."
     ]
   },
   {
@@ -1294,7 +1296,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
+        "sha256": "d7453f85729cdffb3b994a3141e5a970c3d5c39f4843ac97f9411b7522db9996",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1501,7 +1503,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
+        "sha256": "d7453f85729cdffb3b994a3141e5a970c3d5c39f4843ac97f9411b7522db9996",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1563,7 +1565,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
+        "sha256": "d7453f85729cdffb3b994a3141e5a970c3d5c39f4843ac97f9411b7522db9996",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -2321,7 +2323,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
+        "sha256": "d7453f85729cdffb3b994a3141e5a970c3d5c39f4843ac97f9411b7522db9996",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2397,7 +2399,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
+        "sha256": "d7453f85729cdffb3b994a3141e5a970c3d5c39f4843ac97f9411b7522db9996",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2434,7 +2436,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
+        "sha256": "d7453f85729cdffb3b994a3141e5a970c3d5c39f4843ac97f9411b7522db9996",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2743,7 +2745,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "acb5b13603403a7ab5bc8e44ebd27dec5b488922bd9fbdcec2820b23af076fd5",
+        "sha256": "bf19a5598655fd23a457033f55ba2325632f36d2ca3209d6d1b6e1bf7588fd0c",
         "role": "Cross-platform release-candidate dependency-readiness, installed-wheel GUI startup, installer, signing-helper parse, and staged-update validation matrix."
       },
       {
@@ -2793,7 +2795,7 @@
       },
       {
         "path": "tests/unit/test_ci_package_boundaries.py",
-        "sha256": "55f0e8147b23484914e0bbdc28861fd7d5b7ff9cf0136574ed1ab4f895cd682a",
+        "sha256": "46dfe1ed3480ccf7c58646e0e028f868850cdc55211e76a75954883030993e88",
         "role": "Proves publication consumes the central release requirements instead of a copied workflow package list."
       }
     ],
@@ -2836,12 +2838,13 @@
       "On 2026-08-25, re-read the complete page against the integration workflow after OMERO selection became fail-closed and component diagnostics exposed table-service startup; all remaining CI claims remain accurate.",
       "On 2026-08-25, re-read the complete release how-to against the installed GUI probe, release workflow, cross-platform wheel matrix, and published-package canary after issue 105 exposed post-release dependency drift; the page now distinguishes candidate, publication, and post-release startup evidence.",
       "On 2026-08-25, re-read every documentation source whose package-metadata authority changed after all first-party requirements gained breaking-series ceilings; installation, ownership, package surface, and runtime claims remain accurate, and 15 focused validator tests prove the metadata-derived policy.",
-      "On 2026-08-25, re-read and revised the complete release how-to after source-candidate compatibility and installer-facing publication readiness became independent proofs; 55 focused policy tests and a real eight-submodule wheel installation confirmed that unreleased source is tested without weakening exact-floor, tag, or PyPI gates."
+      "On 2026-08-25, re-read and revised the complete release how-to after source-candidate compatibility and installer-facing publication readiness became independent proofs; 55 focused policy tests and a real eight-submodule wheel installation confirmed that unreleased source is tested without weakening exact-floor, tag, or PyPI gates.",
+      "On 2026-08-26, re-read the CI and publication section after release-tag fetches were removed from source unit and documentation jobs; only dependency-readiness and publication gates now require tag history."
     ]
   },
   {
     "path": "docs/source/development/omero_testing.rst",
-    "source_sha256": "8ce6c8004822735ac9539d03761caf1e4f25b1ec5a9799f8327c6490dedfe4de",
+    "source_sha256": "9441f99ede10ea2532d3b4bdb3a8d240cce00c1f737157da0f46a733c4633cd3",
     "audience": [
       "OpenHCS and OMERO integration testers"
     ],
@@ -2870,7 +2873,7 @@
       },
       {
         "path": "external/PolyStore/tests/test_omero_tables.py",
-        "sha256": "ee6607fd000972009c7b98fa7a25645f25bc6b2b038050f1cf0687aa1c92ff7e",
+        "sha256": "45ab6ce56b95dfcf9b2c202e2caa587a67bd0de4769e77b36a9986b482cea159",
         "role": "Proves dtype-owned column construction, table-service readiness, repository validation, bounded waiting, and fail-closed creation."
       },
       {
@@ -2890,12 +2893,12 @@
       },
       {
         "path": "openhcs/runtime/omero_instance_manager.py",
-        "sha256": "3ea44f4c02bbdb141db487cf4d29846359027dea707891429791090e34119b40",
-        "role": "Owns gateway, web, and table-service readiness plus exact Compose lifecycle commands."
+        "sha256": "af94c8b851bd4e1456e5c85b16f83ac8008944b05a71ed9d9db5574416704933",
+        "role": "Owns gateway and web readiness plus packaged-only table-component recovery through exact Compose lifecycle commands."
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "acb5b13603403a7ab5bc8e44ebd27dec5b488922bd9fbdcec2820b23af076fd5",
+        "sha256": "bf19a5598655fd23a457033f55ba2325632f36d2ca3209d6d1b6e1bf7588fd0c",
         "role": "Runs explicitly selected live OMERO variants and preserves component and table-service diagnostics on failure."
       }
     ],
@@ -2904,7 +2907,8 @@
       "Legacy setup documentation inferred readiness from a hardcoded container name; the how-to now follows the instance manager and PolyStore table-service authorities.",
       "The how-to did not distinguish the packaged Compose lifecycle from host-owned Docker daemon startup.",
       "The address-testing boundary did not distinguish concrete plane identities from symbolic pattern-discovery templates.",
-      "A live cold-start test could fail on a transient Docker daemon probe even though the same runner became ready moments later; the instance lifecycle now owns a bounded readiness wait."
+      "A live cold-start test could fail on a transient Docker daemon probe even though the same runner became ready moments later; the instance lifecycle now owns a bounded readiness wait.",
+      "The Python 3.12 cold deployment exposed Tables-0 disabling itself before the managed repository existed; tests now distinguish generic repository readiness from packaged deployment recovery."
     ],
     "disposition": "revise",
     "validation": [
@@ -2920,7 +2924,8 @@
       "On 2026-08-25, re-read the complete page against the integration workflow after OMERO selection became fail-closed and component diagnostics exposed table-service startup; all remaining CI claims remain accurate.",
       "On 2026-08-25, re-read the complete how-to against PolyStore's separate exact-address and symbolic-template declarations and their owner tests.",
       "On 2026-08-25, re-read the complete how-to after live Python 3.11 CI proved a cold Docker daemon race; documented the bounded wait without moving daemon startup into OpenHCS and verified rejected gateways are not retained.",
-      "On 2026-08-25, re-read and revised the complete OMERO testing how-to after its source lane became independent of dependency publication readiness; current submodule wheels remain the behavior proof and the public installer lane remains the publication proof."
+      "On 2026-08-25, re-read and revised the complete OMERO testing how-to after its source lane became independent of dependency publication readiness; current submodule wheels remain the behavior proof and the public installer lane remains the publication proof.",
+      "On 2026-08-26, re-read and revised the how-to against PolyStore's managed-repository wait and OpenHCS's packaged-only Tables-0 recovery; the full PolyStore suite and focused manager tests cover both ownership boundaries."
     ]
   },
   {
@@ -2934,7 +2939,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
+        "sha256": "d7453f85729cdffb3b994a3141e5a970c3d5c39f4843ac97f9411b7522db9996",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -3103,7 +3108,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
+        "sha256": "d7453f85729cdffb3b994a3141e5a970c3d5c39f4843ac97f9411b7522db9996",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

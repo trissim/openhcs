@@ -15,6 +15,39 @@ from polystore.omero_tables import (
 
 logger = logging.getLogger(__name__)
 
+_OMERO_TABLE_GRID_SERVER = "Tables-0"
+_OMERO_SERVER_CLI = "/opt/omero/server/OMERO.server/bin/omero"
+
+
+@dataclass(frozen=True, slots=True)
+class _OMEROComposeDeployment:
+    """Invoke one packaged Compose declaration through a resolved Docker client."""
+
+    docker_command: tuple[str, ...]
+    declaration: Path
+
+    def run(
+        self,
+        *arguments: str,
+        timeout: float,
+        capture_output: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run one lifecycle operation against this exact deployment."""
+
+        return subprocess.run(
+            [
+                *self.docker_command,
+                "compose",
+                "--file",
+                str(self.declaration),
+                *arguments,
+            ],
+            capture_output=capture_output,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+
 
 @dataclass(frozen=True)
 class _OMEROConnectionSettings:
@@ -269,6 +302,11 @@ class OMEROInstanceManager:
                 return False
             self.conn = connection
             try:
+                if self._started_by_us and not OMERO_TABLE_SERVICE.is_available(
+                    connection
+                ):
+                    OMERO_TABLE_SERVICE.wait_until_repository_available(connection)
+                    self._restart_local_table_service()
                 OMERO_TABLE_SERVICE.wait_until_available(connection)
             except OMEROTableServiceUnavailableError:
                 logger.exception(
@@ -283,6 +321,46 @@ class OMEROInstanceManager:
             self.close()
             logger.error(f"Failed to connect to OMERO: {e}")
             return False
+
+    def _restart_local_table_service(self) -> None:
+        """Restart the packaged table component after its repository exists."""
+
+        docker_command = self._docker_command()
+        if docker_command is None:
+            logger.warning(
+                "Docker became unavailable before the local OMERO table service "
+                "could be restarted"
+            )
+            return
+
+        deployment = _OMEROComposeDeployment(
+            docker_command,
+            self.docker_compose_path,
+        )
+        command_prefix = (
+            "exec",
+            "-T",
+            "omeroserver",
+            _OMERO_SERVER_CLI,
+            "admin",
+            "ice",
+            "server",
+        )
+        for action in ("stop", "enable", "start"):
+            result = deployment.run(
+                *command_prefix,
+                action,
+                _OMERO_TABLE_GRID_SERVER,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                detail = result.stderr.strip() or result.stdout.strip()
+                logger.info(
+                    "OMERO table service %s returned %s: %s",
+                    action,
+                    result.returncode,
+                    detail or "no diagnostic output",
+                )
 
     def _start_omero_docker(self, docker_command: tuple[str, ...]) -> bool:
         """
@@ -302,20 +380,14 @@ class OMEROInstanceManager:
                 "Starting OMERO from %s",
                 self.docker_compose_path,
             )
-            result = subprocess.run(
-                [
-                    *docker_command,
-                    "compose",
-                    "--file",
-                    str(self.docker_compose_path),
-                    "up",
-                    "-d",
-                ],
-                stdout=None,  # Inherit stdout to show startup output in real-time
-                stderr=None,  # Inherit stderr to show startup errors in real-time
-                text=True,
+            result = _OMEROComposeDeployment(
+                docker_command,
+                self.docker_compose_path,
+            ).run(
+                "up",
+                "-d",
                 timeout=600,
-                check=False,
+                capture_output=False,
             )
 
             if result.returncode == 0:
@@ -399,18 +471,12 @@ class OMEROInstanceManager:
         try:
             logger.info("Stopping OMERO via Docker Compose...")
 
-            result = subprocess.run(
-                [
-                    *docker_command,
-                    "compose",
-                    "--file",
-                    str(self.docker_compose_path),
-                    "down",
-                ],
-                capture_output=True,
-                text=True,
+            result = _OMEROComposeDeployment(
+                docker_command,
+                self.docker_compose_path,
+            ).run(
+                "down",
                 timeout=60,
-                check=False,
             )
 
             if result.returncode == 0:

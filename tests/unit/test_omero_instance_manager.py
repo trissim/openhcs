@@ -283,6 +283,107 @@ def test_connection_requires_declared_table_service(monkeypatch) -> None:
     assert observed_connections == [gateway]
 
 
+def test_new_local_stack_restarts_tables_after_repository_readiness(
+    monkeypatch,
+) -> None:
+    gateway = _ConnectedGateway()
+    observations: list[tuple[str, object]] = []
+    table_service = SimpleNamespace(
+        is_available=lambda connection: False,
+        wait_until_repository_available=lambda connection: observations.append(
+            ("repository", connection)
+        ),
+        wait_until_available=lambda connection: observations.append(
+            ("tables", connection)
+        ),
+    )
+    _install_gateway_module(monkeypatch, gateway)
+    monkeypatch.setattr(
+        "openhcs.runtime.omero_instance_manager.OMERO_TABLE_SERVICE",
+        table_service,
+    )
+    manager = OMEROInstanceManager()
+    manager._started_by_us = True
+    monkeypatch.setattr(
+        manager,
+        "_restart_local_table_service",
+        lambda: observations.append(("restart", gateway)),
+    )
+
+    assert manager._connect_to_omero() is True
+    assert observations == [
+        ("repository", gateway),
+        ("restart", gateway),
+        ("tables", gateway),
+    ]
+
+
+def test_existing_stack_remains_under_external_lifecycle_control(monkeypatch) -> None:
+    gateway = _ConnectedGateway()
+    observations: list[tuple[str, object]] = []
+    table_service = SimpleNamespace(
+        is_available=lambda connection: False,
+        wait_until_repository_available=lambda connection: observations.append(
+            ("repository", connection)
+        ),
+        wait_until_available=lambda connection: observations.append(
+            ("tables", connection)
+        ),
+    )
+    _install_gateway_module(monkeypatch, gateway)
+    monkeypatch.setattr(
+        "openhcs.runtime.omero_instance_manager.OMERO_TABLE_SERVICE",
+        table_service,
+    )
+    manager = OMEROInstanceManager()
+    monkeypatch.setattr(
+        manager,
+        "_restart_local_table_service",
+        lambda: observations.append(("restart", gateway)),
+    )
+
+    assert manager._connect_to_omero() is True
+    assert observations == [("tables", gateway)]
+
+
+def test_local_table_restart_targets_the_packaged_grid_component(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    compose_path = tmp_path / "docker-compose.yml"
+    _write_compose(compose_path)
+    commands: list[list[str]] = []
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        return SimpleNamespace(returncode=0, stderr="", stdout="")
+
+    monkeypatch.setattr("openhcs.runtime.omero_instance_manager.subprocess.run", run)
+    manager = OMEROInstanceManager(docker_compose_path=compose_path)
+    monkeypatch.setattr(manager, "_docker_command", lambda: ("docker",))
+
+    manager._restart_local_table_service()
+
+    command_prefix = [
+        "docker",
+        "compose",
+        "--file",
+        str(compose_path),
+        "exec",
+        "-T",
+        "omeroserver",
+        "/opt/omero/server/OMERO.server/bin/omero",
+        "admin",
+        "ice",
+        "server",
+    ]
+    assert commands == [
+        [*command_prefix, "stop", "Tables-0"],
+        [*command_prefix, "enable", "Tables-0"],
+        [*command_prefix, "start", "Tables-0"],
+    ]
+
+
 def test_connection_does_not_retain_a_rejected_gateway(monkeypatch) -> None:
     gateway = _ConnectedGateway()
     gateway.connect = lambda: False

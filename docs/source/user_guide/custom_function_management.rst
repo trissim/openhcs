@@ -21,7 +21,9 @@ directly.
 
 Custom-function changes are published as a headless domain event. The desktop
 loads a Qt signal adapter for that event, while local MCP and execution-server
-processes use the same manager without importing Qt.
+processes use the same manager without importing Qt. The event observes
+subscribers without owning their lifetime, so closing a temporary desktop
+adapter cannot leave an invalid GUI callback in the headless domain owner.
 
 Programmatic registration is available for tooling:
 

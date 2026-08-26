@@ -1,4 +1,4 @@
-from importlib.metadata import distribution
+from importlib.resources import files
 
 import numpy as np
 import pytest
@@ -69,9 +69,7 @@ def test_installed_npe2_manifest_discovers_and_reads_swc_points_and_shapes(
         shape_kwargs["features"]["sample_type"],
         np.array((2, 3)),
     )
-    assert "openhcs/napari.yaml" in {
-        str(path) for path in distribution("openhcs").files or ()
-    }
+    assert files("openhcs").joinpath("napari.yaml").is_file()
 
 
 @pytest.mark.unit

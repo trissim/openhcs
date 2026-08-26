@@ -154,7 +154,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
+        "sha256": "d7453f85729cdffb3b994a3141e5a970c3d5c39f4843ac97f9411b7522db9996",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -626,7 +626,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
+        "sha256": "d7453f85729cdffb3b994a3141e5a970c3d5c39f4843ac97f9411b7522db9996",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -812,7 +812,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
+        "sha256": "d7453f85729cdffb3b994a3141e5a970c3d5c39f4843ac97f9411b7522db9996",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -897,7 +897,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "acb5b13603403a7ab5bc8e44ebd27dec5b488922bd9fbdcec2820b23af076fd5",
+        "sha256": "bf19a5598655fd23a457033f55ba2325632f36d2ca3209d6d1b6e1bf7588fd0c",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -940,7 +940,8 @@
       "On 2026-08-25, re-read the complete page against the integration workflow after OMERO selection became fail-closed and component diagnostics exposed table-service startup; all remaining CI claims remain accurate.",
       "On 2026-08-25, re-read the complete how-to after the installer contract stopped mirroring PolyStore's patch floor; installer behaviour is unchanged, 68 installer tests pass, and the declaration-derived release-floor gate accepts every extracted package.",
       "On 2026-08-25, re-read the complete install and update how-to against declaration-owned updater progress events and enum-backed Tk progress modes; the user workflow remains accurate.",
-      "On 2026-08-25, re-read the complete installation how-to after source-candidate CI was separated from public dependency readiness; the user-facing installer, manual install, verification, and update instructions remain unchanged and accurate."
+      "On 2026-08-25, re-read the complete installation how-to after source-candidate CI was separated from public dependency readiness; the user-facing installer, manual install, verification, and update instructions remain unchanged and accurate.",
+      "On 2026-08-26, re-read the installation how-to after source unit and documentation jobs stopped fetching release tags; installer-facing readiness remains a separate strict gate, so the user procedure is unchanged."
     ]
   },
   {
@@ -1302,7 +1303,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
+        "sha256": "d7453f85729cdffb3b994a3141e5a970c3d5c39f4843ac97f9411b7522db9996",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1840,7 +1841,7 @@
   },
   {
     "path": "docs/source/guides/omero_integration.rst",
-    "source_sha256": "168efa544d8d8ea13bee2e3757e7eb7757be58d4b078a99a5e799ea3f5d428a9",
+    "source_sha256": "84ff3469dbaad9c13b8008db2edf86455074acea007efc9942b8a88b67593794",
     "audience": [
       "OMERO integrators",
       "deployment contributors"
@@ -1865,7 +1866,7 @@
       },
       {
         "path": "external/PolyStore/src/polystore/omero_tables.py",
-        "sha256": "e3e51ced79aedbe85e0e2d509e7da9f20a12ca90eab9fc069854c8e921c9779d",
+        "sha256": "910aaa6bea75f40bae82df71dd414415278b1387b80c7f1bc11e8d681874451e",
         "role": "Owns dtype-specific OMERO column construction, table-service readiness, and validated table creation."
       },
       {
@@ -1910,12 +1911,12 @@
       },
       {
         "path": "openhcs/runtime/omero_instance_manager.py",
-        "sha256": "3ea44f4c02bbdb141db487cf4d29846359027dea707891429791090e34119b40",
-        "role": "Owns OpenHCS instance lifecycle, exact Compose invocation, and complete gateway-plus-table-service acceptance."
+        "sha256": "af94c8b851bd4e1456e5c85b16f83ac8008944b05a71ed9d9db5574416704933",
+        "role": "Owns OpenHCS instance lifecycle, packaged-only table-component recovery, exact Compose invocation, and complete readiness acceptance."
       },
       {
         "path": "pyproject.toml",
-        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
+        "sha256": "d7453f85729cdffb3b994a3141e5a970c3d5c39f4843ac97f9411b7522db9996",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -1925,8 +1926,8 @@
       },
       {
         "path": "tests/unit/test_omero_instance_manager.py",
-        "sha256": "b22753cc0e2dd901c6025c89b479154cbf0812f6e44896d626a5e1a1e5b75abd",
-        "role": "Proves canonical compose resolution, pinned images, startup failure, table readiness, and fail-closed context entry."
+        "sha256": "c9341221f85069ebb465e67f28f240191a94bc690c2999d9de36212505dccda1",
+        "role": "Proves canonical compose resolution, pinned images, packaged table recovery, external lifecycle preservation, and fail-closed context entry."
       },
       {
         "path": "tests/unit/test_validate_wheel_deployment.py",
@@ -1949,7 +1950,8 @@
       "The manager mirrored local connection defaults from Compose; typed settings now project the canonical declaration and explicit values remain remote-instance overrides.",
       "Generic platform-string dispatch attempted to start Docker Desktop or a host service manager; the integration boundary now requires host-owned Docker availability.",
       "Pattern discovery passed symbolic fields through the strict concrete plane-address type; PolyStore now owns a separate template identity without weakening address validation.",
-      "A one-shot Docker daemon probe made otherwise valid cold local deployments fail transiently; the instance manager now waits boundedly without taking ownership of daemon startup."
+      "A one-shot Docker daemon probe made otherwise valid cold local deployments fail transiently; the instance manager now waits boundedly without taking ownership of daemon startup.",
+      "A cold packaged deployment could leave Tables-0 disabled after it started before the managed repository; the explanation now distinguishes PolyStore readiness from OpenHCS-owned local recovery."
     ],
     "disposition": "revise",
     "validation": [
@@ -1971,7 +1973,8 @@
       "On 2026-08-25, re-read the explanation after removing platform-specific Docker daemon launch; the packaged Compose lifecycle remains OpenHCS-owned and host process lifecycle remains external.",
       "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
       "On 2026-08-25, re-read the complete explanation against PolyStore 0.2.8, the OpenHCS adapter, and the exact PatternDiscoveryEngine regression; revised the owner boundary for symbolic filename templates.",
-      "On 2026-08-25, re-read the complete explanation after a live OMERO cold-start race; clarified that OpenHCS waits for an operator-started daemon but never starts or configures it, and verified that only accepted gateways enter manager state."
+      "On 2026-08-25, re-read the complete explanation after a live OMERO cold-start race; clarified that OpenHCS waits for an operator-started daemon but never starts or configures it, and verified that only accepted gateways enter manager state.",
+      "On 2026-08-26, re-read and revised the explanation after Python 3.12 CI exposed repository and Tables-0 startup ordering; only a stack started by the manager receives component recovery."
     ]
   },
   {
@@ -2027,7 +2030,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "21bd1da9696294d6641bbdd2fbcb79f6548fc1d4f6a524c277d1d6801feba4f9",
+    "source_sha256": "66e2a50ecd93b87556c39119af8e83cccfa536e43f74396455e9b0997fd3c0fb",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -2047,7 +2050,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "acb5b13603403a7ab5bc8e44ebd27dec5b488922bd9fbdcec2820b23af076fd5",
+        "sha256": "bf19a5598655fd23a457033f55ba2325632f36d2ca3209d6d1b6e1bf7588fd0c",
         "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel GUI startup, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
@@ -2067,7 +2070,7 @@
       },
       {
         "path": "tests/unit/test_ci_package_boundaries.py",
-        "sha256": "55f0e8147b23484914e0bbdc28861fd7d5b7ff9cf0136574ed1ab4f895cd682a",
+        "sha256": "46dfe1ed3480ccf7c58646e0e028f868850cdc55211e76a75954883030993e88",
         "role": "Proves source-gate coverage artifacts fail closed, the combined report describes only instrumented suites, and published-release canary ownership remains cross-platform."
       },
       {
@@ -2112,12 +2115,12 @@
       },
       {
         "path": "openhcs/runtime/omero_instance_manager.py",
-        "sha256": "3ea44f4c02bbdb141db487cf4d29846359027dea707891429791090e34119b40",
-        "role": "Owns complete stack readiness and exact lifecycle behavior used by explicitly selected OMERO tests."
+        "sha256": "af94c8b851bd4e1456e5c85b16f83ac8008944b05a71ed9d9db5574416704933",
+        "role": "Owns complete stack readiness and packaged-only table recovery used by explicitly selected OMERO tests."
       },
       {
         "path": "external/PolyStore/src/polystore/omero_tables.py",
-        "sha256": "e3e51ced79aedbe85e0e2d509e7da9f20a12ca90eab9fc069854c8e921c9779d",
+        "sha256": "910aaa6bea75f40bae82df71dd414415278b1387b80c7f1bc11e8d681874451e",
         "role": "Owns the table-service readiness contract required before OMERO storage tests proceed."
       }
     ],
@@ -2131,7 +2134,8 @@
       "The native installer section did not record that each supported Windows/macOS architecture now exercises the packaged restart worker against a real parent exit and detached command.",
       "The generated coverage README rendered its update command literally instead of recording when the report was produced; the workflow now appends an ISO 8601 UTC timestamp.",
       "Native installer acceptance did not exercise hostile workstation pip index configuration; Windows installation and reinstall, macOS installation, and the staged updater now run while an unreachable index is injected.",
-      "The release matrix proved dependency resolution and importability but did not construct the installed GUI, and no cross-platform canary re-resolved a published release after publication; both boundaries now exercise painted application readiness."
+      "The release matrix proved dependency resolution and importability but did not construct the installed GUI, and no cross-platform canary re-resolved a published release after publication; both boundaries now exercise painted application readiness.",
+      "The OMERO failure guide did not describe the cold repository race exposed by Python 3.12 CI or the boundary that prevents OpenHCS from restarting externally managed components."
     ],
     "disposition": "revise",
     "validation": [
@@ -2153,7 +2157,8 @@
       "On 2026-08-25, re-read the complete page against the integration workflow after OMERO selection became fail-closed and component diagnostics exposed table-service startup; all remaining CI claims remain accurate.",
       "On 2026-08-25, re-read the complete testing guide after the instance manager gained bounded Docker readiness and stopped retaining rejected gateways; the existing operator guidance and failure-diagnosis boundaries remain accurate without duplicating lifecycle details.",
       "On 2026-08-25, re-read the complete testing how-to against the installed GUI probe, wheel matrix, native desktop smoke, and published-package canary after issue 105 exposed a resolver-valid startup failure; the CI section now states the candidate and post-release GUI evidence boundaries.",
-      "On 2026-08-25, re-read and revised the complete testing how-to after current-source wheel jobs were made independent from exact-tag and PyPI readiness; 55 focused workflow tests and a real local-candidate wheel installation confirmed both evidence lanes."
+      "On 2026-08-25, re-read and revised the complete testing how-to after current-source wheel jobs were made independent from exact-tag and PyPI readiness; 55 focused workflow tests and a real local-candidate wheel installation confirmed both evidence lanes.",
+      "On 2026-08-26, re-read and revised the OMERO diagnosis section against PolyStore repository readiness and packaged-only component recovery; external deployment lifecycle remains operator-owned."
     ]
   },
   {
@@ -2290,7 +2295,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
+        "sha256": "d7453f85729cdffb3b994a3141e5a970c3d5c39f4843ac97f9411b7522db9996",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2760,7 +2765,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "327cd652c45cf69eb30921a673297fc07135fc9b5469a1dce4c157bc1e7f595b",
+        "sha256": "d7453f85729cdffb3b994a3141e5a970c3d5c39f4843ac97f9411b7522db9996",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -2781,7 +2786,7 @@
   },
   {
     "path": "docs/source/user_guide/custom_function_management.rst",
-    "source_sha256": "f505cc781b03109930c227eb06cb31ece3c4c18e491a1a2356d11dcb573c669b",
+    "source_sha256": "ad370ca5697052941ec01024f7e4f99f2310d83b8917a6266a080fc0b205f687",
     "audience": [
       "desktop callable authors"
     ],
@@ -2795,13 +2800,18 @@
       },
       {
         "path": "openhcs/processing/custom_functions/events.py",
-        "sha256": "f12364b5a9747f7238290e6e705fc00fc96993a5b83e6d44e90474424263e959",
-        "role": "Publishes process-local custom-function changes without importing a GUI runtime."
+        "sha256": "656aa22bea92ff306f121628dfe355426871d243cd38a5c2ab950a014436de77",
+        "role": "Publishes process-local custom-function changes through weak identity-preserving subscriptions without importing a GUI runtime."
       },
       {
         "path": "openhcs/processing/custom_functions/signals.py",
-        "sha256": "6862f7d4b9ca50366f7b4d51d9c77a257dbff59273a7229c189869e9678d7f9b",
+        "sha256": "39f0653402191b40e33c6c834b6f7945e46ecca1f2c69f558cbf405eb16a0f4b",
         "role": "Adapts the headless domain event into Qt signal delivery for desktop consumers."
+      },
+      {
+        "path": "tests/unit/test_custom_function_events.py",
+        "sha256": "38cab73a4dc16b21beed2fd109fd0ae9fc3efefe4ae391c0906bb3022404c8dc",
+        "role": "Proves weak subscriber lifetimes, exact callback identity, duplicate bound-method suppression, and safe Qt adapter collection."
       },
       {
         "path": "openhcs/pyqt_gui/dialogs/custom_function_manager_dialog.py",
@@ -2842,12 +2852,13 @@
     "findings": [
       "The task guide did not explain that custom-function changes invalidate and asynchronously refresh the endpoint-owned catalogue projection.",
       "The guide assigned both persistence and runtime publication to CustomFunctionManager instead of distinguishing persisted source from the atomic process projection.",
-      "The custom-function manager imported a global Qt signal as part of its headless lifecycle; change publication is now a domain event with a separate desktop Qt adapter."
+      "The custom-function manager imported a global Qt signal as part of its headless lifecycle; change publication is now a domain event with a separate desktop Qt adapter.",
+      "The domain event retained temporary Qt adapters after their C++ objects were destroyed, allowing a later custom-function update to invoke an invalid callback and crash the process."
     ],
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/user_guide/custom_function_management.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/processing/custom_functions/manager.py; openhcs/pyqt_gui/dialogs/custom_function_manager_dialog.py; openhcs/pyqt_gui/main.py; tests/unit/test_function_catalog_zmq.py; openhcs/agent/services/endpoint_function_catalog_service.py; openhcs/pyqt_gui/dialogs/function_selector_dialog.py; openhcs/processing/custom_functions/runtime_registry.py; tests/unit/test_custom_function_lifecycle.py.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/processing/custom_functions/manager.py; openhcs/processing/custom_functions/events.py; openhcs/processing/custom_functions/signals.py; tests/unit/test_custom_function_events.py; openhcs/pyqt_gui/dialogs/custom_function_manager_dialog.py; openhcs/pyqt_gui/main.py; tests/unit/test_function_catalog_zmq.py; openhcs/agent/services/endpoint_function_catalog_service.py; openhcs/pyqt_gui/dialogs/function_selector_dialog.py; openhcs/processing/custom_functions/runtime_registry.py; tests/unit/test_custom_function_lifecycle.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
@@ -2855,7 +2866,8 @@
       "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate.",
       "On 2026-08-25, re-read the complete custom-function how-to against endpoint-owned registration and the single lifetime-bearing runtime declaration map; focused lifecycle and ZMQ tests confirmed persisted reconciliation retains ephemeral declarations.",
       "On 2026-08-25, re-read the complete how-to after custom-function change notification was split into a headless domain event and desktop Qt adapter; cold MCP import and affected custom-function, catalogue, and help regressions passed.",
-      "On 2026-08-25, re-read the complete custom-function management how-to after formatting its runtime projection authority; no behavior, ownership, or user workflow changed."
+      "On 2026-08-25, re-read the complete custom-function management how-to after formatting its runtime projection authority; no behavior, ownership, or user workflow changed.",
+      "On 2026-08-26, re-read and revised the how-to after the domain event stopped owning Qt adapter lifetimes; exact callback identity and the historical CI crash ordering are covered directly."
     ]
   },
   {

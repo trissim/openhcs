@@ -26,7 +26,12 @@ OMERO server components become available independently. A responsive Blitz
 gateway or web application therefore does not by itself establish storage
 readiness. The OpenHCS instance lifecycle accepts a connection only after
 PolyStore's table-service declaration reports that OMERO.tables is enabled; the
-same declaration owns the bounded retry policy used by table creation.
+same declaration owns managed-repository detection and the bounded retry policy
+used by table creation. When OpenHCS has just started its packaged stack and the
+table component loses the cold-start race with repository creation, the manager
+waits for that declaration, restarts only the packaged table component through
+the same Compose deployment, and asks PolyStore to establish readiness again.
+It never applies that recovery to an externally managed stack.
 
 See :doc:`external_foundations` for the package boundary and
 :doc:`../guides/omero_integration` for the supported integration path.

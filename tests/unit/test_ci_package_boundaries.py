@@ -237,7 +237,7 @@ def test_installed_wheel_integration_uses_headless_qt_platform() -> None:
     assert "MPLBACKEND: Agg" in wheel_job
 
 
-def test_source_unit_gate_checks_out_static_authority_submodules() -> None:
+def test_source_unit_gate_does_not_fetch_release_tags() -> None:
     workflow = (WORKFLOW_ROOT / "integration-tests.yml").read_text(encoding="utf-8")
     match = re.search(
         r"(?ms)^  unit-tests:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
@@ -247,7 +247,7 @@ def test_source_unit_gate_checks_out_static_authority_submodules() -> None:
     assert match is not None
     unit_job = match.group("body")
     assert "submodules: recursive" in unit_job
-    assert "git submodule foreach --recursive git fetch --tags --force" in unit_job
+    assert "git submodule foreach --recursive git fetch --tags --force" not in unit_job
 
 
 def test_code_quality_gate_carries_red_python_changes_until_a_green_head() -> None:
@@ -349,10 +349,21 @@ def test_coverage_collection_and_publication_fail_closed() -> None:
     )
 
 
-def test_docs_and_publish_gates_fetch_submodule_release_tags() -> None:
+def test_only_release_gates_fetch_submodule_release_tags() -> None:
     fetch_command = "git submodule foreach --recursive git fetch --tags --force"
+    integration_workflow = (WORKFLOW_ROOT / "integration-tests.yml").read_text(
+        encoding="utf-8"
+    )
+    readiness_match = re.search(
+        r"(?ms)^  pypi-dependency-readiness:\n"
+        r"(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+        integration_workflow,
+    )
 
-    assert fetch_command in (WORKFLOW_ROOT / "docs.yml").read_text(encoding="utf-8")
+    assert readiness_match is not None
+    assert integration_workflow.count(fetch_command) == 1
+    assert fetch_command in readiness_match.group("body")
+    assert fetch_command not in (WORKFLOW_ROOT / "docs.yml").read_text(encoding="utf-8")
     assert fetch_command in (WORKFLOW_ROOT / "publish.yml").read_text(encoding="utf-8")
 
 
