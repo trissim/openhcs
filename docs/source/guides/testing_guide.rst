@@ -89,6 +89,13 @@ then closes the GUI. Both execution and authenticated UI-bridge endpoints are
 allocated through the configured transport declaration; cleanup targets only
 those endpoints and removes the bridge descriptor.
 
+The Linux wheel job runs this operation before its installed integration suite.
+A complementary desktop candidate matrix runs it on Windows and both macOS
+architectures using wheels built from the recursively recorded first-party
+submodules. These jobs run independently of dependency publication, providing
+cross-platform evidence for an unreleased dependency graph before the PyPI and
+native-installer lanes become eligible.
+
 The daily Published Release Canary installs the latest stable desktop package
 from PyPI on Linux, Windows, and macOS and repeats that live GUI/MCP probe. It is
 the post-release signal for a dependency update that leaves package resolution

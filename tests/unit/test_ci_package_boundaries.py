@@ -168,6 +168,26 @@ def test_installed_acceptance_separates_source_and_public_dependency_proofs() ->
     assert "pip','install','-e" not in workflow_text
 
 
+def test_desktop_candidate_canary_precedes_dependency_publication() -> None:
+    workflow_path = WORKFLOW_ROOT / "integration-tests.yml"
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    job = workflow["jobs"]["desktop-candidate-canary"]
+
+    assert "needs" not in job
+    assert set(job["strategy"]["matrix"]["os"]) == {
+        "windows-latest",
+        "macos-latest",
+        "macos-15-intel",
+    }
+    steps = "\n".join(step.get("run", "") for step in job["steps"])
+    assert "--dependency-source submodules" in steps
+    assert "sync_mcp_release_metadata.py" in steps
+    assert "--print-desktop-extras" in steps
+    assert "python -m pip check" in steps
+    assert 'python -I "$GITHUB_WORKSPACE/scripts/smoke_installed_gui.py"' in steps
+    assert "--forbid-import-root" in steps
+
+
 def test_published_release_canary_owns_post_release_dependency_drift() -> None:
     workflow_path = WORKFLOW_ROOT / "published-release-canary.yml"
     workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))

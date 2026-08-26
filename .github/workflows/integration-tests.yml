@@ -8,6 +8,12 @@
 #   - Runs the maintained PyQt GUI suite against the recursively pinned
 #     pyqt-reactive candidate
 #
+# Desktop candidate canary (3 jobs)
+#   - Python 3.12 on Windows, Apple Silicon macOS, and Intel macOS
+#   - Builds the recursively pinned first-party wheels before publication
+#   - Operates the installed candidate GUI through its packaged MCP surface
+#   - Complements the Linux wheel-integration canary without repeating it
+#
 # Group 1: Python boundary tests (6 jobs)
 #   - Python 3.11 (oldest) and 3.13 (newest well-supported) on Linux + Windows + macOS
 #   - 2 Python versions × 3 OSes = 6 jobs
@@ -49,8 +55,9 @@
 #     existing end-to-end viewer validation boundary
 #
 # Together these jobs cover all supported Python versions and operating systems,
-# every declared backend/microscope combination, native desktop installers,
-# the serialized real Official30 parity corpus, and a real-viewer smoke.
+# every declared backend/microscope combination, the pre-publication desktop
+# candidate, native desktop installers, the serialized real Official30 parity
+# corpus, and a real-viewer smoke.
 
 name: Integration Tests
 
@@ -201,6 +208,61 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
+
+  # Complete the desktop candidate matrix outside the Linux wheel lane without
+  # waiting for recorded first-party dependency versions to reach PyPI.
+  desktop-candidate-canary:
+    name: desktop-candidate-live-mcp (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, macos-15-intel]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Linux Qt runtime
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1
+          sudo apt-get install -y libegl1 || sudo apt-get install -y libegl1-mesa
+
+      - name: Build and install the desktop candidate wheels
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip build
+          desktop_extras=$(python "$GITHUB_WORKSPACE/scripts/sync_mcp_release_metadata.py" --print-desktop-extras)
+          python -m scripts.install_ci_candidate \
+            --dependency-source submodules \
+            --wheel-directory "$RUNNER_TEMP/openhcs-desktop-candidate-wheels" \
+            --extras "$desktop_extras"
+          python -m pip check
+
+      - name: Operate the desktop candidate through packaged MCP
+        shell: bash
+        env:
+          OPENHCS_CPU_ONLY: true
+          XDG_CACHE_HOME: ${{ runner.temp }}/openhcs-desktop-candidate-cache
+          XDG_CONFIG_HOME: ${{ runner.temp }}/openhcs-desktop-candidate-config
+          XDG_DATA_HOME: ${{ runner.temp }}/openhcs-desktop-candidate-data
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            export QT_QPA_PLATFORM=offscreen
+          fi
+          python -I "$GITHUB_WORKSPACE/scripts/smoke_installed_gui.py" \
+            --forbid-import-root "$GITHUB_WORKSPACE"
 
   # Group 1: Python version boundary testing (6 jobs)
   # Test oldest (3.11) and newest (3.13) Python on all 3 OSes

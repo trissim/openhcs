@@ -41,11 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Custom-function domain notifications no longer retain destroyed Qt adapters,
   preventing later catalogue updates from invoking invalid GUI objects.
 - Fresh and updated desktop installations now launch with the current nominal
-  PyQt provider contracts. The installed-GUI gate reaches the painted main
-  window on transport-declaration-allocated execution and UI-bridge endpoints,
-  then uses the packaged desktop MCP to discover the live UI and invoke a
-  declared action instead of treating dependency resolution alone as proof of
-  desktop compatibility or reusing an existing server.
+  PyQt provider contracts. A pre-publication matrix builds the recorded
+  first-party wheels on Linux, Windows, and both macOS architectures, reaches
+  the painted main window on transport-declaration-allocated execution and
+  UI-bridge endpoints, then uses the packaged desktop MCP to discover the live
+  UI and invoke a declared action instead of treating dependency resolution
+  alone as proof of desktop compatibility or reusing an existing server.
 - Windows and macOS installers ignore inherited workstation package indexes,
   preventing an unreachable optional NVIDIA index from stalling an otherwise
   resolvable OpenHCS installation.
