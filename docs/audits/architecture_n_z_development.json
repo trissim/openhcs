@@ -2479,7 +2479,7 @@
     "authority": [
       {
         "path": "scripts/capture_media_gallery.py",
-        "sha256": "623318b3fd2dcf841e171561124a25a2034049a5d4cabd8ccb65a289eb81a462",
+        "sha256": "2ae351a136f02ebdb8691c12c04d2a68b73588d5fe909165a86bafe069c71807",
         "role": "Owns the typed capture manifest, host-tool discovery, trusted UI snapshot ingestion, X11 capture, deterministic derivative construction, validation, and command-line surface."
       },
       {
@@ -2507,7 +2507,8 @@
       "Re-read the complete how-to against scripts/capture_media_gallery.py, scripts/gallery_catalog.py, scripts/website_gallery_projection.py, and tests/unit/test_capture_media_gallery.py; every capture, transformation, ownership, validation, and no-overwrite claim matches its current owner.",
       "Passed python -m scripts.capture_media_gallery catalog and verified all six declaration-owned scenario ids; python -m scripts.gallery_catalog --check confirmed the checked-in release projection.",
       "Passed 42 focused capture and website tests, including a real FFmpeg derivative build and independent revalidation.",
-      "Passed scripts/validate_docs.py docs/source and a warning-as-error Sphinx build after adding the page to the focused development-guide navigation."
+      "Passed scripts/validate_docs.py docs/source and a warning-as-error Sphinx build after adding the page to the focused development-guide navigation.",
+      "On 2026-08-26, re-read the complete how-to after trusted UI snapshot capture switched from a deleted duplicate command-profile name to the canonical declaration-derived UI bridge timeout policy; the documented timeout, capture, validation, and no-overwrite behavior remains unchanged, and all 23 gallery capture tests passed."
     ]
   },
   {

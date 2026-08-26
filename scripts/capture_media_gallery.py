@@ -485,14 +485,14 @@ def capture_ui_bridge_window_source(
         UiWindowSnapshotRequest,
         UiWindowSnapshotResult,
     )
-    from openhcs.mcp.control_timeout import McpUiBridgeCommandTimeoutPolicy
+    from openhcs.mcp.control_timeout import McpUiBridgeTimeoutPolicy
     from openhcs.mcp.dev_client import McpDevClient
     from openhcs.mcp.dev_client_core import UiConnectionArguments
     from openhcs.mcp.dev_client_rendering import McpDevPayloadProjection
 
     target_path = _capture_target(request.source_root, request.output, ".png")
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    control_timeout_ms = McpUiBridgeCommandTimeoutPolicy.resolve(request.timeout_ms)
+    control_timeout_ms = McpUiBridgeTimeoutPolicy.resolve(request.timeout_ms)
     snapshot_request = UiWindowSnapshotRequest.from_fields(
         window_id=target.window_id,
         output_dir_path=str(target_path.parent),
