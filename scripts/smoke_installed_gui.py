@@ -17,7 +17,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar, get_type_hints
 
 if TYPE_CHECKING:
+    from zmqruntime import OperationDeadline
+
     from openhcs.agent.dto.ui_bridge import UiWindowSnapshotResult
+    from openhcs.agent.services.endpoint_function_catalog_service import (
+        ZMQFunctionCatalogService,
+    )
     from openhcs.mcp.dev_client import McpDevClient, McpDevCommandExecution
     from openhcs.pyqt_gui.config import UIConfig
 
@@ -104,6 +109,16 @@ class InstalledGuiSnapshotEvidenceAuthority:
 
 
 @dataclass(frozen=True, slots=True)
+class InstalledFunctionCatalogSmokeResult:
+    """Evidence that the GUI-prewarmed endpoint catalogue is usable."""
+
+    resolved_function_id: str
+    resolved_import_path: str
+    revision: str
+    total: int
+
+
+@dataclass(frozen=True, slots=True)
 class InstalledLiveMcpSmokeResult:
     """Typed evidence from the packaged MCP operating the live packaged GUI."""
 
@@ -112,6 +127,7 @@ class InstalledLiveMcpSmokeResult:
     bridge_port: int
     bridge_reachable: bool
     bridge_transport: str
+    function_catalog: InstalledFunctionCatalogSmokeResult
     health_status: str
     mcp_server_source_path: str
     mcp_server_version: str
@@ -398,12 +414,46 @@ def _capture_installed_gui_snapshot(
     )
 
 
+def verify_installed_function_catalog(
+    service: ZMQFunctionCatalogService,
+    *,
+    deadline: OperationDeadline,
+) -> InstalledFunctionCatalogSmokeResult:
+    """Require the GUI's background endpoint catalogue and one usable reference."""
+
+    page = service.prepare().result(timeout=deadline.remaining_seconds())
+    if not page.revision.strip():
+        raise AssertionError("Installed function catalog omitted its revision.")
+    if page.total <= 0 or not page.items:
+        raise AssertionError("Installed function catalog is empty.")
+    if page.total != len(page.items):
+        raise AssertionError(
+            "Installed function catalog read was incomplete: "
+            f"total={page.total} items={len(page.items)}"
+        )
+
+    entry = page.items[0]
+    resolved = service.resolve(entry.function_id)
+    if not callable(resolved):
+        raise AssertionError(
+            "Installed function catalog returned a non-callable reference: "
+            f"{entry.function_id}"
+        )
+    return InstalledFunctionCatalogSmokeResult(
+        resolved_function_id=entry.function_id,
+        resolved_import_path=entry.import_path,
+        revision=page.revision,
+        total=page.total,
+    )
+
+
 def run_installed_live_mcp_smoke(
     *,
     descriptor_path: Path,
     evidence_directory: Path,
     forbidden_root: Path,
-    timeout_seconds: float,
+    function_catalog_service: ZMQFunctionCatalogService,
+    deadline: OperationDeadline,
 ) -> InstalledLiveMcpSmokeResult:
     """Operate one live packaged GUI through one packaged desktop MCP session."""
 
@@ -433,7 +483,10 @@ def run_installed_live_mcp_smoke(
         UiSmokeCommandSpec,
     )
 
-    timeout_text = f"{timeout_seconds:g}"
+    function_catalog = verify_installed_function_catalog(
+        function_catalog_service,
+        deadline=deadline,
+    )
     windows_command = CapabilityBackedCommandSpec.for_capability_name(
         agent_capabilities.ui_list_windows.name
     )
@@ -443,11 +496,12 @@ def run_installed_live_mcp_smoke(
     with McpDevClient(
         sys.executable,
         surface_profile=DesktopLocalCapabilitySurfaceProfile(),
-        initialize_timeout_seconds=timeout_seconds,
+        initialize_timeout_seconds=deadline.remaining_seconds(),
     ) as client:
+        timeout_text = f"{deadline.remaining_seconds():g}"
         smoke_execution = client.execute(
             (UiSmokeCommandSpec.command, "--timeout-seconds", timeout_text),
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=deadline.remaining_seconds(),
         )
         health = _typed_tool_payload(
             smoke_execution,
@@ -517,6 +571,7 @@ def run_installed_live_mcp_smoke(
                 f"missing={sorted(required_window_ids - observed_window_ids)}"
             )
 
+        timeout_text = f"{deadline.remaining_seconds():g}"
         action_execution = client.execute(
             (
                 InvokeActionCommandSpec.command,
@@ -527,7 +582,7 @@ def run_installed_live_mcp_smoke(
                 "--timeout-seconds",
                 timeout_text,
             ),
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=deadline.remaining_seconds(),
         )
         action_result = _typed_tool_payload(
             action_execution,
@@ -539,9 +594,10 @@ def run_installed_live_mcp_smoke(
                 f"Installed UI action was not accepted: {action_result}"
             )
 
+        timeout_text = f"{deadline.remaining_seconds():g}"
         windows_execution = client.execute(
             (windows_command.command, "--timeout-seconds", timeout_text),
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=deadline.remaining_seconds(),
         )
         windows_after = _declared_catalog_items(
             windows_execution,
@@ -576,7 +632,7 @@ def run_installed_live_mcp_smoke(
                 client,
                 descriptor_path=descriptor_path,
                 evidence_directory=evidence_directory,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=deadline.remaining_seconds(),
                 window_id=window_id,
             )
             for window_id in (
@@ -593,6 +649,7 @@ def run_installed_live_mcp_smoke(
         bridge_transport=(
             bridge_status.connection.transport_endpoint().transport_mode.value
         ),
+        function_catalog=function_catalog,
         health_status=health.status,
         mcp_server_source_path=str(server_source_path),
         mcp_server_version=health.openhcs_version,
@@ -639,6 +696,7 @@ def run_installed_gui_smoke(
     os.environ["OPENHCS_CPU_ONLY"] = "true"
 
     from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+    from zmqruntime import OperationDeadline
 
     import openhcs
     from openhcs.agent.ui_bridge_environment import UiBridgeDescriptorEnvironment
@@ -671,6 +729,10 @@ def run_installed_gui_smoke(
         ["openhcs-gui-installed-smoke", "--no-gpu"],
         runtime_context=runtime_context,
     )
+    deadline = OperationDeadline.after_milliseconds(
+        round(timeout_seconds * 1_000),
+        operation="installed GUI and packaged MCP smoke",
+    )
     observation = _StartupObservation()
     worker_thread: threading.Thread | None = None
 
@@ -700,7 +762,8 @@ def run_installed_gui_smoke(
                         descriptor_path=descriptor_path,
                         evidence_directory=evidence_directory,
                         forbidden_root=forbidden_root,
-                        timeout_seconds=max(5.0, timeout_seconds / 4),
+                        function_catalog_service=application.function_catalog_service,
+                        deadline=deadline,
                     )
                 )
             except (
@@ -737,7 +800,7 @@ def run_installed_gui_smoke(
         close_application()
 
     completion.completed.connect(live_mcp_completed)
-    QTimer.singleShot(round(timeout_seconds * 1_000), startup_timed_out)
+    QTimer.singleShot(deadline.timeout_ms, startup_timed_out)
     try:
         exit_code = application.run(
             on_main_window_ready=startup_ready,
@@ -745,7 +808,7 @@ def run_installed_gui_smoke(
         )
     finally:
         if worker_thread is not None:
-            worker_thread.join(timeout=max(5.0, timeout_seconds / 4))
+            worker_thread.join(timeout=deadline.remaining_seconds_or_zero())
             if worker_thread.is_alive():
                 observation.record_timeout()
         shutdown_isolated_execution_endpoint(ui_config)

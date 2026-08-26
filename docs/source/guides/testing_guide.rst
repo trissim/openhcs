@@ -91,8 +91,10 @@ The installed-desktop smoke on Windows and both macOS architectures also runs
 the packaged restart worker against a real short-lived parent process and
 requires its detached restart command to execute from the installed
 environment. It constructs the installed OpenHCS application as well, requires
-the main window to reach its painted-ready boundary, and drives the live UI
-through a packaged desktop MCP session. The probe discovers the main and Plate
+the main window to reach its painted-ready boundary, and waits for the GUI's
+background execution endpoint to return a complete, revisioned function
+catalogue. The probe resolves one returned function reference, then drives the
+live UI through a packaged desktop MCP session. It discovers the main and Plate
 Manager windows, invokes the declared code action, verifies its new window, and
 captures the main window and newly opened editor through the production MCP
 snapshot capability before closing the GUI. It verifies each PNG's path,

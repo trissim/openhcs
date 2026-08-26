@@ -1,21 +1,66 @@
 """Ownership checks for the installed GUI and packaged MCP smoke test."""
 
 import hashlib
+from concurrent.futures import Future
 from pathlib import Path
 
 import pytest
 from pyqt_reactive.services.window_snapshot import WindowSnapshotCaptureScope
-from zmqruntime import DataControlPortPair, DataControlPortPairAuthority, TransportMode
+from zmqruntime import (
+    DataControlPortPair,
+    DataControlPortPairAuthority,
+    OperationDeadline,
+    TransportMode,
+)
 
 from openhcs.agent.dto.common import AgentResourceRef
+from openhcs.agent.dto.functions import FunctionCatalogEntry, FunctionCatalogPage
 from openhcs.agent.dto.ui_bridge import UiWindowSnapshotResult
 from openhcs.pyqt_gui.config import AgentUiBridgeConfig, UIConfig
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 from scripts.smoke_installed_gui import (
     InstalledGuiSnapshotEvidenceAuthority,
     assert_not_source_checkout_import,
+    verify_installed_function_catalog,
     with_isolated_runtime_topology,
 )
+
+
+def _catalog_page(*entries: FunctionCatalogEntry) -> FunctionCatalogPage:
+    return FunctionCatalogPage(
+        schema_version="test",
+        revision="catalog-revision",
+        items=entries,
+        total=len(entries),
+        limit=len(entries),
+    )
+
+
+def _catalog_entry() -> FunctionCatalogEntry:
+    return FunctionCatalogEntry(
+        function_id="test:function",
+        import_path="test.module.function",
+        name="function",
+        module="test.module",
+        library="test",
+        signature="function()",
+        summary="test function",
+    )
+
+
+class _FunctionCatalogService:
+    def __init__(self, page: FunctionCatalogPage) -> None:
+        self.page = page
+        self.resolved_function_ids: list[str] = []
+
+    def prepare(self) -> Future[FunctionCatalogPage]:
+        future: Future[FunctionCatalogPage] = Future()
+        future.set_result(self.page)
+        return future
+
+    def resolve(self, function_id: str):
+        self.resolved_function_ids.append(function_id)
+        return lambda: None
 
 
 def test_gui_smoke_rejects_source_package(tmp_path: Path) -> None:
@@ -36,6 +81,25 @@ def test_gui_smoke_allows_wheel_venv_inside_checkout(tmp_path: Path) -> None:
         package_path=site_packages / "openhcs" / "__init__.py",
         forbidden_root=checkout,
     )
+
+
+def test_gui_smoke_requires_prepared_catalog_and_resolvable_reference() -> None:
+    entry = _catalog_entry()
+    service = _FunctionCatalogService(_catalog_page(entry))
+
+    result = verify_installed_function_catalog(
+        service,
+        deadline=OperationDeadline.after_milliseconds(
+            2_000,
+            operation="test installed function catalog",
+        ),
+    )
+
+    assert result.resolved_function_id == entry.function_id
+    assert result.resolved_import_path == entry.import_path
+    assert result.revision == "catalog-revision"
+    assert result.total == 1
+    assert service.resolved_function_ids == [entry.function_id]
 
 
 def test_gui_smoke_allocates_topology_through_transport_authority(

@@ -64,7 +64,9 @@ from outside the checkout. The MCP smoke test asserts that:
 
 The GUI smoke allocates isolated execution and authenticated UI-bridge endpoints
 through the configured transport declaration, constructs the installed
-application, and waits for its painted-ready boundary. A packaged desktop MCP
+application, and waits for its painted-ready boundary. It also requires the
+background execution endpoint to return a complete, revisioned function
+catalogue and resolves one returned function reference. A packaged desktop MCP
 session then verifies health and version identity, discovers the live main and
 Plate Manager windows, and invokes the declared Plate Manager code action. The
 probe requires the resulting window to appear, then captures the main window

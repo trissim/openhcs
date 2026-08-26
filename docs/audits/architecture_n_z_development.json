@@ -2727,7 +2727,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "84e3456efbfcb2d8aa86b1f37ec257274c7687c920534618315044f0c1599408",
+    "source_sha256": "bda580f69f79b8853b19c75521769c4cf5e14a9b3fcd10c9b9a1933f6127df59",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2806,13 +2806,13 @@
       },
       {
         "path": "scripts/smoke_installed_gui.py",
-        "sha256": "76124d0c66da2668067986f76c2ba994476cb0de6ac65fbef6682f493780d079",
-        "role": "Constructs the installed application on declaration-allocated endpoints, drives it through packaged MCP, validates retained window snapshots, and cleans up exact owned resources outside the checkout."
+        "sha256": "b363c9ae396b1ce7a84386a343a4fad33016e08b7d2cea8426d9c07bcda241f5",
+        "role": "Constructs the installed application on declaration-allocated endpoints, proves the background function catalogue is usable, drives the GUI through packaged MCP, validates retained window snapshots, and cleans up exact owned resources outside the checkout."
       },
       {
         "path": "tests/unit/test_smoke_installed_gui.py",
-        "sha256": "e632d114ee67d5f9220a506f39bc11cc4791f4cbb8653095173efc1cf28ecd1f",
-        "role": "Proves source-checkout rejection, declaration-owned endpoint allocation, snapshot CLI projection, and emitted PNG identity validation for the installed GUI/MCP probe."
+        "sha256": "9e2db54051918bf4600667ff2132c0f7ec9a8ec522d15c9055db3da02697ab4c",
+        "role": "Proves source-checkout rejection, declaration-owned endpoint allocation, function-catalogue readiness, snapshot CLI projection, and emitted PNG identity validation for the installed GUI/MCP probe."
       },
       {
         "path": ".github/dependabot.yml",
@@ -2904,7 +2904,8 @@
       "On 2026-08-26, re-read the release how-to after the Documentation workflow took independent ownership of context-aware workflow validation; actionlint 1.7.12 passed every current workflow from its checksum-verified Linux binary.",
       "On 2026-08-26, GitHub rejected an expression embedded in the large Windows installer run block at its 21000-character hosted parser ceiling; candidate outputs now cross through step-level env, and the repository-wide ceiling regression passed.",
       "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after native GUI evidence became retained; 54 focused contract tests and a live 0.7.27 GUI/MCP run validated two PNGs through their typed paths, sizes, dimensions, and SHA-256 values.",
-      "On 2026-08-26, re-read the complete release how-to against the 0.8.0 version authority and regenerated MCP metadata; the source-candidate test now derives the root wheel identity from that authority, and 73 focused release tests plus wheel metadata validation passed."
+      "On 2026-08-26, re-read the complete release how-to against the 0.8.0 version authority and regenerated MCP metadata; the source-candidate test now derives the root wheel identity from that authority, and 73 focused release tests plus wheel metadata validation passed.",
+      "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after the installed GUI canary gained background function-catalogue readiness proof; a cold installed wheel completed launch, catalogue resolution, packaged MCP control, and retained screenshots within one 60-second deadline."
     ]
   },
   {
