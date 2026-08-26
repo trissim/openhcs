@@ -63,7 +63,9 @@ from outside the checkout. The MCP smoke test asserts that:
 * no knowledge path resolves back into the source checkout.
 
 The GUI smoke constructs the installed application, reaches its painted-ready
-boundary, verifies that the main window is visible, and closes it cleanly. This
+boundary, verifies that the main window is visible, and closes it cleanly. It
+allocates an isolated execution endpoint through the configured transport
+declaration, so an existing desktop server cannot influence the result. This
 checks the resolved desktop dependency set rather than only importing modules
 from the source checkout.
 

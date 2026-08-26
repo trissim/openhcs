@@ -2030,7 +2030,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "66e2a50ecd93b87556c39119af8e83cccfa536e43f74396455e9b0997fd3c0fb",
+    "source_sha256": "928ef8c9544f88e3dadacd27a2695d124c02a404267b180cf365900a4f51e5c8",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -2085,13 +2085,13 @@
       },
       {
         "path": "scripts/smoke_installed_gui.py",
-        "sha256": "75519309f3b088a77050483f20a370cda6cdc06fff3f9afa4578305d1772f01a",
-        "role": "Constructs the installed application, reaches painted readiness, verifies main-window visibility, and closes it cleanly outside the checkout."
+        "sha256": "b4be0ed0a3386bb1cfa99aeaca05a3d95e40ce376dab64e92180e238abd74c8f",
+        "role": "Constructs the installed application on a transport-declaration-allocated execution endpoint, reaches painted readiness, records the endpoint evidence, verifies main-window visibility, and closes it cleanly outside the checkout."
       },
       {
         "path": "tests/unit/test_smoke_installed_gui.py",
-        "sha256": "93145d77a75d70c9f860720a2f9cc8713cb2ff66fca51f84bdd7ed7709fa6769",
-        "role": "Proves the installed-GUI probe uses the installed package and rejects source-checkout contamination."
+        "sha256": "039c622852c24ae59db95ee9af0d78e3cdb37f771b15a589a3ea58c4dd1f3f33",
+        "role": "Proves the installed-GUI probe uses the installed package, rejects source-checkout contamination, and derives endpoint isolation from the configured transport authority."
       },
       {
         "path": "openhcs/pyqt_gui/config.py",
@@ -2135,7 +2135,8 @@
       "The generated coverage README rendered its update command literally instead of recording when the report was produced; the workflow now appends an ISO 8601 UTC timestamp.",
       "Native installer acceptance did not exercise hostile workstation pip index configuration; Windows installation and reinstall, macOS installation, and the staged updater now run while an unreachable index is injected.",
       "The release matrix proved dependency resolution and importability but did not construct the installed GUI, and no cross-platform canary re-resolved a published release after publication; both boundaries now exercise painted application readiness.",
-      "The OMERO failure guide did not describe the cold repository race exposed by Python 3.12 CI or the boundary that prevents OpenHCS from restarting externally managed components."
+      "The OMERO failure guide did not describe the cold repository race exposed by Python 3.12 CI or the boundary that prevents OpenHCS from restarting externally managed components.",
+      "The installed-GUI probe reused the default execution endpoint, allowing an existing desktop server to influence an otherwise isolated package canary; it now allocates the endpoint through the selected transport declaration."
     ],
     "disposition": "revise",
     "validation": [
@@ -2158,7 +2159,8 @@
       "On 2026-08-25, re-read the complete testing guide after the instance manager gained bounded Docker readiness and stopped retaining rejected gateways; the existing operator guidance and failure-diagnosis boundaries remain accurate without duplicating lifecycle details.",
       "On 2026-08-25, re-read the complete testing how-to against the installed GUI probe, wheel matrix, native desktop smoke, and published-package canary after issue 105 exposed a resolver-valid startup failure; the CI section now states the candidate and post-release GUI evidence boundaries.",
       "On 2026-08-25, re-read and revised the complete testing how-to after current-source wheel jobs were made independent from exact-tag and PyPI readiness; 55 focused workflow tests and a real local-candidate wheel installation confirmed both evidence lanes.",
-      "On 2026-08-26, re-read and revised the OMERO diagnosis section against PolyStore repository readiness and packaged-only component recovery; external deployment lifecycle remains operator-owned."
+      "On 2026-08-26, re-read and revised the OMERO diagnosis section against PolyStore repository readiness and packaged-only component recovery; external deployment lifecycle remains operator-owned.",
+      "On 2026-08-26, re-read the complete testing how-to against scripts/smoke_installed_gui.py and tests/unit/test_smoke_installed_gui.py after an exact-wheel probe contacted an existing desktop endpoint; the revised probe derives a free pair from UIConfig.zmq through DataControlPortPairAuthority without adding transport-specific dispatch."
     ]
   },
   {

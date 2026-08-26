@@ -10,6 +10,10 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 from importlib.metadata import distribution
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from openhcs.pyqt_gui.config import UIConfig
 
 JsonScalar = str | int | bool | None
 
@@ -18,6 +22,8 @@ JsonScalar = str | int | bool | None
 class InstalledGuiSmokeResult:
     """Validated installed-GUI lifecycle evidence."""
 
+    execution_port: int
+    execution_transport: str
     exit_code: int
     openhcs_version: str
     package_path: str
@@ -58,6 +64,8 @@ class _StartupObservation:
     def result(
         self,
         *,
+        execution_port: int,
+        execution_transport: str,
         exit_code: int,
         openhcs_version: str,
         package_path: Path,
@@ -81,6 +89,8 @@ class _StartupObservation:
         if exit_code != 0:
             raise AssertionError(f"Installed GUI exited with {exit_code}.")
         return InstalledGuiSmokeResult(
+            execution_port=execution_port,
+            execution_transport=execution_transport,
             exit_code=exit_code,
             openhcs_version=openhcs_version,
             package_path=str(package_path),
@@ -104,6 +114,23 @@ def assert_not_source_checkout_import(
             "Smoke test imported the source checkout instead of the wheel: "
             f"{package_path}"
         )
+
+
+def with_isolated_execution_endpoint(ui_config: UIConfig) -> UIConfig:
+    """Return the UI configuration with one declaration-allocated endpoint."""
+
+    from zmqruntime import DataControlPortPairAuthority
+
+    transport_config = ui_config.zmq
+    port_pair = DataControlPortPairAuthority.acquire(
+        transport_config,
+        transport_mode=transport_config.transport_mode,
+        host=transport_config.client_host,
+    )
+    return replace(
+        ui_config,
+        zmq=replace(transport_config, default_port=port_pair.data_port),
+    )
 
 
 def run_installed_gui_smoke(
@@ -134,9 +161,11 @@ def run_installed_gui_smoke(
         forbidden_root=forbidden_root.resolve(),
     )
 
-    ui_config = UIConfig(
-        check_for_updates_on_startup=False,
-        agent_bridge=replace(AgentUiBridgeConfig(), enabled=False),
+    ui_config = with_isolated_execution_endpoint(
+        UIConfig(
+            check_for_updates_on_startup=False,
+            agent_bridge=replace(AgentUiBridgeConfig(), enabled=False),
+        )
     )
     runtime_context = PyQtGuiRuntimeContext(
         ui_config=ui_config,
@@ -177,6 +206,8 @@ def run_installed_gui_smoke(
         on_startup_failure=startup_failed,
     )
     return observation.result(
+        execution_port=ui_config.zmq.default_port,
+        execution_transport=ui_config.zmq.transport_mode.value,
         exit_code=exit_code,
         openhcs_version=distribution("openhcs").version,
         package_path=package_path,

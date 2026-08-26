@@ -82,7 +82,9 @@ The installed-desktop smoke on Windows and both macOS architectures also runs
 the packaged restart worker against a real short-lived parent process and
 requires its detached restart command to execute from the installed
 environment. It constructs the installed OpenHCS application as well, requires
-the main window to reach its painted-ready boundary, and closes it cleanly.
+the main window to reach its painted-ready boundary, and closes it cleanly. The
+GUI probe allocates its execution endpoint through the configured transport
+declaration instead of attaching to an existing desktop server.
 
 The daily Published Release Canary installs the latest stable desktop package
 from PyPI on Linux, Windows, and macOS and repeats that GUI startup probe. It is

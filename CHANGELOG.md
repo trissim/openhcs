@@ -42,8 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preventing later catalogue updates from invoking invalid GUI objects.
 - Fresh and updated desktop installations now launch with the current nominal
   PyQt provider contracts. The installed-GUI gate reaches the painted main
-  window instead of treating dependency resolution alone as proof of startup
-  compatibility.
+  window on a transport-declaration-allocated execution endpoint instead of
+  treating dependency resolution alone as proof of startup compatibility or
+  reusing an existing desktop server.
 - Windows and macOS installers ignore inherited workstation package indexes,
   preventing an unreachable optional NVIDIA index from stalling an otherwise
   resolvable OpenHCS installation.
