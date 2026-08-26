@@ -6,24 +6,23 @@ All ObjectStates across all scopes are captured together for coherent time-trave
 """
 
 import logging
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
-
-from PyQt6.QtWidgets import (
-    QWidget,
-    QHBoxLayout,
-    QSlider,
-    QLabel,
-    QPushButton,
-    QToolTip,
-    QCheckBox,
-    QSizePolicy,
-    QComboBox,
-)
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint
-from PyQt6.QtGui import QFont
+from typing import TYPE_CHECKING, Any
 
 from objectstate.object_state import ObjectStateRegistry
+from PyQt6.QtCore import QPoint, Qt, pyqtSignal
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QSlider,
+    QToolTip,
+    QWidget,
+)
 from pyqt_reactive.theming import ColorScheme
+from pyqt_reactive.widgets import ThemedCheckBox
 
 if TYPE_CHECKING:
     from openhcs.pyqt_gui.services.main_window_workflows import (
@@ -47,14 +46,14 @@ class TimeTravelWidget(QWidget):
     """
 
     # OpenHCS-specific filter: hide system-only scopes from history
-    _HIDDEN_SCOPES = {"", "__plates__"}
+    _HIDDEN_SCOPES = frozenset({"", "__plates__"})
 
     # Emitted when time-travel position changes
     position_changed = pyqtSignal(int)  # (index)
 
     def __init__(
         self,
-        color_scheme: Optional[ColorScheme] = None,
+        color_scheme: ColorScheme | None = None,
         show_browse_button: bool = True,
         *,
         time_travel_workflow: "MainWindowTimeTravelWorkflow",
@@ -127,7 +126,7 @@ class TimeTravelWidget(QWidget):
         layout.addWidget(self.branch_combo)
 
         # Skip unsaved checkbox
-        self.skip_unsaved_cb = QCheckBox("Saves only")
+        self.skip_unsaved_cb = ThemedCheckBox("Saves only")
         self.skip_unsaved_cb.setToolTip(
             "Skip unsaved changes, jump only between save points"
         )
@@ -237,10 +236,12 @@ class TimeTravelWidget(QWidget):
 
     def _on_branch_changed(self, name: str):
         """Handle branch dropdown selection change."""
-        if name and name != ObjectStateRegistry.get_current_branch():
-            if not self.time_travel_workflow.switch_branch(name):
-                self._update_ui()
-                return
+        if (
+            name
+            and name != ObjectStateRegistry.get_current_branch()
+            and not self.time_travel_workflow.switch_branch(name)
+        ):
+            self._update_ui()
 
     def _on_slider_changed(self, value: int):
         """Handle slider value change. Direct mapping: slider value = history index."""
@@ -258,10 +259,10 @@ class TimeTravelWidget(QWidget):
 
     def _is_save_snapshot(self, label: str) -> bool:
         """Check if a snapshot label represents a save operation."""
-        return label.startswith("save") or label.startswith("init")
+        return label.startswith(("save", "init"))
 
     def _find_next_save_index(
-        self, history: List[Dict[str, Any]], current_pos: int, direction: int
+        self, history: list[dict[str, Any]], current_pos: int, direction: int
     ) -> int:
         """Find next save snapshot in given direction.
 
