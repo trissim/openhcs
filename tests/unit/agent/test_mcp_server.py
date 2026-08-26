@@ -14601,6 +14601,7 @@ def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatc
     monkeypatch.setenv("XAUTHORITY", "/tmp/test.Xauthority")
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/dbus-test")
     monkeypatch.setenv("XDG_DATA_HOME", "/tmp/test-data-home")
+    monkeypatch.setenv("TMPDIR", "/tmp/test-temporary-root")
     monkeypatch.setenv(
         AgentPathPolicy.readable_roots_environment_key,
         "/tmp/readable-one:/tmp/readable-two",
@@ -14622,6 +14623,7 @@ def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatc
     assert environment["XAUTHORITY"] == "/tmp/test.Xauthority"
     assert environment["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/tmp/dbus-test"
     assert environment["XDG_DATA_HOME"] == "/tmp/test-data-home"
+    assert environment["TMPDIR"] == "/tmp/test-temporary-root"
     assert environment[AgentPathPolicy.readable_roots_environment_key] == (
         "/tmp/readable-one:/tmp/readable-two"
     )
@@ -14670,16 +14672,16 @@ def test_mcp_dev_client_server_spec_preserves_windows_host_environment(monkeypat
         "LOGNAME",
         "PATH",
         "SHELL",
+        "TEMP",
         "TERM",
+        "TMP",
+        "TMPDIR",
         "USER",
         "APPDATA",
         "HOMEDRIVE",
         "HOMEPATH",
         "LOCALAPPDATA",
         "SYSTEMROOT",
-        "TEMP",
-        "TMP",
-        "TMPDIR",
         "USERPROFILE",
         "WINDIR",
     }

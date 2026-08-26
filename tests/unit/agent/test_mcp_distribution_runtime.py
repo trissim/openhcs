@@ -102,6 +102,25 @@ def test_linux_platform_authority_projects_only_declared_graphical_environment(
     assert not hasattr(authority, "process_environment")
 
 
+def test_posix_platform_authority_preserves_declared_temporary_root():
+    authority = LinuxAgentRuntimePlatformAuthority()
+
+    environment = authority.project_child_process_environment(
+        {
+            "HOME": "/home/tester",
+            "PATH": "/usr/bin",
+            "TMPDIR": "/runtime/user-temp",
+            "SECRET_TOKEN": "do-not-forward",
+        }
+    )
+
+    assert environment == {
+        "HOME": "/home/tester",
+        "PATH": "/usr/bin",
+        "TMPDIR": "/runtime/user-temp",
+    }
+
+
 def test_linux_platform_authority_owns_graphical_session_availability():
     authority = LinuxAgentRuntimePlatformAuthority()
 

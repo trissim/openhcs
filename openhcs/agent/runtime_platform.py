@@ -95,7 +95,10 @@ class AgentRuntimePlatformAuthority(
             "LOGNAME",
             "PATH",
             "SHELL",
+            "TEMP",
             "TERM",
+            "TMP",
+            "TMPDIR",
             "USER",
         )
 
@@ -139,11 +142,7 @@ class AgentRuntimePlatformAuthority(
                 *additional_keys,
             )
         )
-        return {
-            key: environment[key]
-            for key in allowed_keys
-            if key in environment
-        }
+        return {key: environment[key] for key in allowed_keys if key in environment}
 
     def graphical_process_environment(
         self,
@@ -210,8 +209,7 @@ class PosixAgentRuntimePlatformMixin:
     """Reusable POSIX runtime ownership and XDG path semantics."""
 
     def current_user_id(self) -> int | None:
-        getuid = getattr(os, "getuid", None)
-        return getuid() if getuid is not None else None
+        return os.getuid()
 
     def supports_posix_permissions(self) -> bool:
         return self.current_user_id() is not None
@@ -260,6 +258,17 @@ class PosixAgentRuntimePlatformMixin:
         return (
             self.resolved_path(configured) / application_name.casefold() / component,
         )
+
+
+class NativeGraphicalSessionMixin:
+    """Declare platforms whose desktop session needs no environment marker."""
+
+    def graphical_session_available(
+        self,
+        environment: Mapping[str, str],
+    ) -> bool:
+        del environment
+        return True
 
 
 class PosixAgentRuntimePlatformAuthority(
@@ -315,6 +324,7 @@ class LinuxAgentRuntimePlatformAuthority(
 
 
 class MacOSAgentRuntimePlatformAuthority(
+    NativeGraphicalSessionMixin,
     PosixAgentRuntimePlatformMixin,
     AgentRuntimePlatformAuthority,
 ):
@@ -322,32 +332,19 @@ class MacOSAgentRuntimePlatformAuthority(
 
     platform_key = AgentRuntimePlatformKey.MACOS
 
-    def graphical_session_available(
-        self,
-        environment: Mapping[str, str],
-    ) -> bool:
-        """A validated macOS desktop process can launch Cocoa without markers."""
-        del environment
-        return True
-
     def application_data_root(self, application_name: str) -> Path:
         return (
             Path.home() / "Library" / "Application Support" / application_name
         ).resolve(strict=False)
 
 
-class WindowsAgentRuntimePlatformAuthority(AgentRuntimePlatformAuthority):
+class WindowsAgentRuntimePlatformAuthority(
+    NativeGraphicalSessionMixin,
+    AgentRuntimePlatformAuthority,
+):
     """Windows user-data and local runtime path conventions."""
 
     platform_key = AgentRuntimePlatformKey.WINDOWS
-
-    def graphical_session_available(
-        self,
-        environment: Mapping[str, str],
-    ) -> bool:
-        """A validated Windows desktop process can launch GUI children."""
-        del environment
-        return True
 
     def child_process_environment_keys(self) -> tuple[str, ...]:
         """Preserve native Windows process, home, app-data, and temp roots."""
@@ -358,9 +355,6 @@ class WindowsAgentRuntimePlatformAuthority(AgentRuntimePlatformAuthority):
             "HOMEPATH",
             "LOCALAPPDATA",
             "SYSTEMROOT",
-            "TEMP",
-            "TMP",
-            "TMPDIR",
             "USERPROFILE",
             "WINDIR",
         )
