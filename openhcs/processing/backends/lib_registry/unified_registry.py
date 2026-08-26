@@ -48,6 +48,7 @@ from typing import (
 import numpy as np
 from arraybridge import MemoryContractAttribute, SliceBySliceRuntimeParameter
 from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict, RegistryConfig
+from polystore import atomic_write_json
 from python_introspect import RuntimeParameterDeclarationABC
 
 from openhcs.constants import MemoryType
@@ -1967,7 +1968,6 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
                 cache_data = json.load(f)
         except json.JSONDecodeError:
             logger.warning(f"Corrupt cache file {self._cache_path}, rebuilding")
-            self._cache_path.unlink(missing_ok=True)
             return None
 
         if "functions" not in cache_data:
@@ -2020,7 +2020,6 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
                     self.library_name,
                     exc,
                 )
-                self._discard_stale_cache()
                 return None
             if not callable(func):
                 logger.warning(
@@ -2031,7 +2030,6 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
                     type(func).__name__,
                     self.library_name,
                 )
-                self._discard_stale_cache()
                 return None
             contract = ProcessingContract[cached_data["contract"]]
 
@@ -2111,24 +2109,9 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             },
         }
 
-        self._cache_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self._cache_path, "w") as f:
-            json.dump(cache_data, f, indent=2)
+        atomic_write_json(self._cache_path, cache_data)
 
         logger.info(f"💾 Saved {len(functions)} {self.library_name} functions to cache")
-
-    def _discard_stale_cache(self) -> None:
-        """Best-effort stale-cache deletion without blocking fresh discovery."""
-        try:
-            self._cache_path.unlink(missing_ok=True)
-        except OSError as exc:
-            logger.warning(
-                "Registry cache path %s could not be invalidated; using fresh "
-                "%s discovery without refreshing the disk cache: %s",
-                self._cache_path,
-                self.library_name,
-                exc,
-            )
 
     def _writable_cache_parent(self) -> Optional[str]:
         """Return the nearest existing writable cache parent, or None."""

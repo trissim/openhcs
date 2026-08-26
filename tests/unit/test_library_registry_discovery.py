@@ -8,6 +8,7 @@ import sys
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -220,6 +221,49 @@ def test_registry_cache_miss_is_prepared_out_of_process(monkeypatch) -> None:
     assert RegistryService.get_all_functions_with_metadata() is cached_catalog
     assert prepared == [True]
     assert RegistryService._metadata_cache is cached_catalog
+
+
+def test_registry_cache_publication_uses_atomic_storage_owner(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Concurrent preparers can only publish complete cache documents."""
+
+    from openhcs.processing.backends.lib_registry import unified_registry
+
+    cache_path = tmp_path / "cache" / "functions.json"
+    writes: list[tuple[Path, dict[str, Any]]] = []
+    registry = SimpleNamespace(
+        _cache_path=cache_path,
+        library_name="test",
+        CACHE_FORMAT_VERSION="1.1",
+        _writable_cache_parent=lambda: str(tmp_path),
+        get_library_version=lambda: "1.0",
+        get_discovery_signature=lambda: "signature",
+    )
+    metadata = SimpleNamespace(
+        name="identity",
+        original_name="identity",
+        module="test.functions",
+        get_memory_type=lambda: "numpy",
+        contract=SimpleNamespace(name="SINGLE_ARRAY"),
+        doc="Return the input.",
+        tags=("test",),
+    )
+    monkeypatch.setattr(
+        unified_registry,
+        "atomic_write_json",
+        lambda path, data: writes.append((path, data)),
+    )
+
+    unified_registry.LibraryRegistryBase._save_to_cache(
+        registry,
+        {"identity": metadata},
+    )
+
+    assert len(writes) == 1
+    assert writes[0][0] == cache_path
+    assert writes[0][1]["functions"]["identity"]["module"] == "test.functions"
 
 
 def test_catalog_inventory_excludes_a_registry_that_cannot_warm(

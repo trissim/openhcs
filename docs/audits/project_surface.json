@@ -47,7 +47,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
+        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
         "role": "Owns declaration-based callable discovery, execution memory contracts, dimensional execution, and registry caching."
       },
       {

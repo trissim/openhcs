@@ -21,6 +21,10 @@ exact subset currently occupied. Proof-gated stale cleanup and forced local
 release descend through the selected transport declaration as well. Launchers
 and test harnesses use that typed endpoint authority instead of duplicating the
 control-port offset, reconstructing a pair, or branching on transport mode.
+Every transport declaration also projects its endpoint-specific startup-lock
+path. ZMQRuntime acquires that lock across processes under the caller's shared
+cancellation token and operation deadline, so concurrent desktop and MCP
+clients cannot both launch a server for the same endpoint.
 
 ZMQRuntime also owns the execution status transition boundary. Terminal states
 are immutable, a cancellation request addresses one execution, and queued
@@ -72,9 +76,12 @@ projection. Only declarations on that module's public surface enter the
 browsable catalogue; an explicitly transported private decorated callable can
 still be reconstructed from its own contract. Cache identity includes the
 current source revision and framework admission context; a failed projection
-publishes no partial catalogue, and clearing the service removes every derived
-lookup view. The transport service therefore consumes one declaration-derived
-catalogue instead of synchronizing a second function registry.
+publishes no partial catalogue, and PolyStore's atomic JSON writer replaces the
+persistent cache as one complete document. A reader that encounters an older or
+invalid document leaves the path intact while fresh preparation publishes its
+replacement. Clearing the service removes every derived lookup view. The
+transport service therefore consumes one declaration-derived catalogue instead
+of synchronizing a second function registry.
 
 Catalogue control messages preserve the endpoint's complete membership revision
 across full and filtered pages. Detail reads and callable-reference reads require

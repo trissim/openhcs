@@ -492,7 +492,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
+        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
         "role": "Processing-contract execution and registry-owned catalogue admission and cache semantics."
       }
     ],
@@ -761,7 +761,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
+        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
         "role": "Processing-contract execution and registry-owned catalogue admission and cache semantics."
       },
       {
@@ -1690,7 +1690,7 @@
   },
   {
     "path": "docs/source/architecture/zmq_execution_service_extracted.rst",
-    "source_sha256": "6dd0231cb860a61c6ea16aadfd8e37edbfcaa583d987a920d4368deb937c5e3e",
+    "source_sha256": "b92dc867f1df63e59090a1f7472fbd076d95644f616a0bc1a6744494928c5130",
     "audience": [
       "OpenHCS contributors following the former local ZMQ execution-service URL"
     ],
@@ -1724,7 +1724,7 @@
       },
       {
         "path": "external/zmqruntime/tests/test_execution.py",
-        "sha256": "bfdcd1de26614fd9d9827f664114bc78ed06cda29e9f84893cdcbb5e0baff0aa",
+        "sha256": "eadc940b9c04b221b993892442bcc71bd489de0687696bc037b3de931c0fffe5",
         "role": "Proves immutable per-execution progress observations alongside terminal cancellation, readiness cleanup, and lifecycle guarantees."
       },
       {
@@ -1734,12 +1734,12 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/transport_modes.py",
-        "sha256": "c2273d6d79842dee42a6d44f142c826bd3219ed6ecd0c0795dd90d065091fb83",
+        "sha256": "a4287d0045e69506b4f8b570aeaa14fd6b6b25a61c86467f67ac2ee8bdc74d83",
         "role": "Owns transport-specific endpoint operations, including IPC deadlines and data/control pair availability."
       },
       {
         "path": "external/zmqruntime/tests/test_transport.py",
-        "sha256": "ea4ef3f5c3465eb4438405ad6a8c6627899ec44bb6406523f34e6b68183d5831",
+        "sha256": "02072b46ca87c082eeedccb02f4b85a1ba02bc51a4c24ebfc6930a6b8b2a21f9",
         "role": "Proves IPC deadline behaviour, transport-selected pair availability, exact occupancy, and single server endpoint projection."
       },
       {
@@ -1789,7 +1789,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
+        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
         "role": "Processing-contract execution and registry-owned catalogue admission and cache semantics."
       },
       {
@@ -1799,7 +1799,7 @@
       },
       {
         "path": "tests/unit/test_library_registry_discovery.py",
-        "sha256": "7e002cad969481c7a8ba30f6dbe64757fe589a7e12642bb3d1ef1956a42bbfd7",
+        "sha256": "5561ecf3aa8013d5a1eaa98e8c67d304a7c3c31fc785a8e7aa3ae6a2a6a1b2a9",
         "role": "Proves source-revision cache invalidation, stable optional-runtime admission, declaration-owned projection, and no partial catalogue after failure."
       },
       {

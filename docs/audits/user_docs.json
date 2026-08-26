@@ -92,7 +92,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
+        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
         "role": "Declares the nominal processing-contract members defined by the glossary."
       }
     ],
@@ -201,7 +201,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
+        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -340,7 +340,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
+        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -476,7 +476,7 @@
     "authority": [
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
+        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -516,7 +516,7 @@
       },
       {
         "path": "tests/unit/test_library_registry_discovery.py",
-        "sha256": "7e002cad969481c7a8ba30f6dbe64757fe589a7e12642bb3d1ef1956a42bbfd7",
+        "sha256": "5561ecf3aa8013d5a1eaa98e8c67d304a7c3c31fc785a8e7aa3ae6a2a6a1b2a9",
         "role": "Proves declaration-derived catalogue discovery and process policy filtering."
       }
     ],
@@ -651,7 +651,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
+        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -1182,7 +1182,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
+        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -2450,7 +2450,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
+        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -2803,7 +2803,7 @@
       },
       {
         "path": "tests/unit/test_library_registry_discovery.py",
-        "sha256": "7e002cad969481c7a8ba30f6dbe64757fe589a7e12642bb3d1ef1956a42bbfd7",
+        "sha256": "5561ecf3aa8013d5a1eaa98e8c67d304a7c3c31fc785a8e7aa3ae6a2a6a1b2a9",
         "role": "Proves backend discovery and availability filtering produce the expected callable registry."
       },
       {
@@ -2929,7 +2929,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "e41aca5ef091943331470dc160d45ab4d883fd71360b2c52277717e5147065cd",
+        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
