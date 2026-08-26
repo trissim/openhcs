@@ -79,6 +79,8 @@ The Documentation workflow also runs the context-aware ``actionlint`` checker
 against every GitHub Actions definition from a checksum-verified release
 binary. This catches invalid expressions and contexts that a YAML parser cannot
 recognize, even when the workflow containing the defect cannot schedule jobs.
+A repository-wide regression separately keeps expression-bearing ``run``
+blocks below GitHub's hosted parser ceiling.
 
 The Windows installer smoke also exercises a staged update while both the old
 environment entry point and the stable GUI launcher are held without delete

@@ -2686,7 +2686,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "12c36c2943f498bd433f0f676fcb9cb8773838e4b5d31ea4bb1f8d7705e630b7",
+    "source_sha256": "6a8044a6e56d9568f1977e30a0bffa10d479ae1df460946edd5a21209798d4b9",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2740,7 +2740,7 @@
       },
       {
         "path": "tests/unit/test_mcp_release_workflow.py",
-        "sha256": "b0c818a0b05841eb40afff5d01ce90d8da5baac9ea321699fe194eee8c3dfcd0",
+        "sha256": "dd9ecfc26acb2b39bd6458a25b101acf76f7a7eb65cb52b0612fb1c0845020f4",
         "role": "Proves immutable tag resolution, exact-SHA checkout, publication ordering, recovery, Registry policy, and publication-independent native candidate ownership."
       },
       {
@@ -2750,7 +2750,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "8db3092a8c68d184592878661f7f8ef575670941ae80e4d48825d209d60ec9ef",
+        "sha256": "b6cbbee8db564ca371612224d62f1bb76435b9a793f944725df57672a9f53a0a",
         "role": "Cross-platform source-candidate and published-dependency readiness, installed-wheel live GUI/MCP operation, native installer, signing-helper parse, and staged-update validation matrix."
       },
       {
@@ -2780,8 +2780,8 @@
       },
       {
         "path": "tests/unit/test_ci_action_pinning.py",
-        "sha256": "ad0cb0664ba193267580d1e35bb1636c8f76a7ae738eb303dfe16e4cc71ae61f",
-        "role": "Repository-wide proof that external workflow dependencies use immutable identities and that context-aware workflow validation has a pinned, checksum-verified owner."
+        "sha256": "ef540fdc31ce7415adf55e8a6dd16f6524cc44d833e0b94c4e778a7435ba2799",
+        "role": "Repository-wide proof that external workflow dependencies use immutable identities, context-aware validation has a pinned owner, and expression-bearing run blocks respect GitHub's hosted parser ceiling."
       },
       {
         "path": "packaging/installers/windows/Sign-Installer.ps1",
@@ -2859,7 +2859,8 @@
       "On 2026-08-26, re-read the complete page against the metadata-derived desktop extras, candidate-wheel installer, complementary Windows and dual-architecture macOS candidate matrix, and focused workflow ownership tests.",
       "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete page after separating native source-candidate evidence from published-wheel readiness; a real metadata-discovered nine-wheel build-only wheelhouse and focused installer/workflow regressions passed while the public PyPI installation lane remained gated.",
       "On 2026-08-26, GitHub rejected runner.temp in job-level env before scheduling any work; the exact wheelhouse path now originates in the runner-owned build step and crosses later platform steps through one declared output, with a regression preventing the invalid context from returning.",
-      "On 2026-08-26, re-read the release how-to after the Documentation workflow took independent ownership of context-aware workflow validation; actionlint 1.7.12 passed every current workflow from its checksum-verified Linux binary."
+      "On 2026-08-26, re-read the release how-to after the Documentation workflow took independent ownership of context-aware workflow validation; actionlint 1.7.12 passed every current workflow from its checksum-verified Linux binary.",
+      "On 2026-08-26, GitHub rejected an expression embedded in the large Windows installer run block at its 21000-character hosted parser ceiling; candidate outputs now cross through step-level env, and the repository-wide ceiling regression passed."
     ]
   },
   {
@@ -2918,7 +2919,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "8db3092a8c68d184592878661f7f8ef575670941ae80e4d48825d209d60ec9ef",
+        "sha256": "b6cbbee8db564ca371612224d62f1bb76435b9a793f944725df57672a9f53a0a",
         "role": "Runs explicitly selected live OMERO variants and preserves component and table-service diagnostics on failure."
       }
     ],

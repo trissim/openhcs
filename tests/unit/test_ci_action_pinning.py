@@ -13,6 +13,7 @@ IMMUTABLE_ACTION = re.compile(r"[^@\s]+@[0-9a-f]{40}")
 IMMUTABLE_CONTAINER = re.compile(r"docker://[^@\s]+@sha256:[0-9a-f]{64}")
 RELEASE_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+GITHUB_EXPRESSION_SOURCE_LIMIT = 21_000
 
 
 def test_external_workflow_dependencies_are_immutable() -> None:
@@ -66,3 +67,20 @@ def test_documentation_gate_owns_context_aware_workflow_validation() -> None:
     assert "rhysd/actionlint/releases/download" in lint_step["run"]
     assert "sha256sum --check" in lint_step["run"]
     assert '"$executable" -shellcheck= -pyflakes=' in lint_step["run"]
+
+
+def test_workflow_run_expressions_respect_hosted_parser_limit() -> None:
+    oversized_expressions: list[str] = []
+    for workflow_path in sorted(WORKFLOW_ROOT.glob("*.y*ml")):
+        workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+        for job_name, job in workflow["jobs"].items():
+            for step in job.get("steps", ()):
+                run = step.get("run")
+                if not isinstance(run, str) or "${{" not in run:
+                    continue
+                if len(run) > GITHUB_EXPRESSION_SOURCE_LIMIT:
+                    oversized_expressions.append(
+                        f"{workflow_path.name}:{job_name}:{step.get('name', '<unnamed>')}"
+                    )
+
+    assert oversized_expressions == []

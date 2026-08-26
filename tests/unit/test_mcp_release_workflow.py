@@ -534,8 +534,13 @@ def test_native_macos_installer_uses_native_qt_smoke_harness():
     assert "scripts/smoke_staged_desktop_update.py" in smoke_step["run"]
     assert '--latest-version "$release_version"' in smoke_step["run"]
     assert "OPENHCS_MCP_INSTALLATION_POINTER" in smoke_step["run"]
-    assert "steps.source_candidate.outputs.release_version" in smoke_step["run"]
-    assert "steps.source_candidate.outputs.wheelhouse" in smoke_step["run"]
+    assert smoke_step["env"] == {
+        "OPENHCS_INSTALLER_CANDIDATE_VERSION": "${{ steps.source_candidate.outputs.release_version }}",
+        "OPENHCS_INSTALLER_CANDIDATE_WHEELHOUSE": "${{ steps.source_candidate.outputs.wheelhouse }}",
+    }
+    assert "steps.source_candidate.outputs" not in smoke_step["run"]
+    assert "OPENHCS_INSTALLER_CANDIDATE_VERSION" in smoke_step["run"]
+    assert "OPENHCS_INSTALLER_CANDIDATE_WHEELHOUSE" in smoke_step["run"]
     assert "import tkinter as tk" in smoke_step["run"]
     assert '"$managed_python" -I "$installed_worker" --help' in smoke_step["run"]
     assert "macOS staged updater did not switch environments" in smoke_step["run"]

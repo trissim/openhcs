@@ -819,8 +819,11 @@ jobs:
         if: matrix.platform == 'windows'
         shell: pwsh
         timeout-minutes: 30
+        env:
+          OPENHCS_INSTALLER_CANDIDATE_VERSION: ${{ steps.source_candidate.outputs.release_version }}
+          OPENHCS_INSTALLER_CANDIDATE_WHEELHOUSE: ${{ steps.source_candidate.outputs.wheelhouse }}
         run: |
-          $releaseVersion = "${{ steps.source_candidate.outputs.release_version }}"
+          $releaseVersion = $env:OPENHCS_INSTALLER_CANDIDATE_VERSION
           $stage = Join-Path $env:RUNNER_TEMP "OpenHCS-Windows-Smoke"
           $installRoot = Join-Path `
             ([Environment]::GetFolderPath("LocalApplicationData")) `
@@ -882,7 +885,7 @@ jobs:
           }
 
           $env:UV_FIND_LINKS = (
-            Resolve-Path "${{ steps.source_candidate.outputs.wheelhouse }}"
+            Resolve-Path $env:OPENHCS_INSTALLER_CANDIDATE_WHEELHOUSE
           ).Path
           $env:PIP_FIND_LINKS = $env:UV_FIND_LINKS
           $hostilePipIndex = "http://127.0.0.1:9/simple"
@@ -1425,8 +1428,11 @@ jobs:
 
       - name: Execute and verify macOS installer
         if: matrix.platform == 'macos'
+        env:
+          OPENHCS_INSTALLER_CANDIDATE_VERSION: ${{ steps.source_candidate.outputs.release_version }}
+          OPENHCS_INSTALLER_CANDIDATE_WHEELHOUSE: ${{ steps.source_candidate.outputs.wheelhouse }}
         run: |
-          release_version='${{ steps.source_candidate.outputs.release_version }}'
+          release_version="$OPENHCS_INSTALLER_CANDIDATE_VERSION"
           staged_contract="$RUNNER_TEMP/installer_contract.json"
           installer_app="$RUNNER_TEMP/OpenHCS Release Installer.app"
           smoke_home="$RUNNER_TEMP/openhcs-installer-home"
@@ -1466,7 +1472,7 @@ jobs:
 
           mkdir -p "$smoke_home"
           export HOME="$smoke_home"
-          export UV_FIND_LINKS='${{ steps.source_candidate.outputs.wheelhouse }}'
+          export UV_FIND_LINKS="$OPENHCS_INSTALLER_CANDIDATE_WHEELHOUSE"
           export PIP_FIND_LINKS="$UV_FIND_LINKS"
           hostile_pip_index='http://127.0.0.1:9/simple'
           hostile_pip_config="$RUNNER_TEMP/hostile-pip.ini"

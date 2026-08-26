@@ -897,7 +897,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "8db3092a8c68d184592878661f7f8ef575670941ae80e4d48825d209d60ec9ef",
+        "sha256": "b6cbbee8db564ca371612224d62f1bb76435b9a793f944725df57672a9f53a0a",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -2032,7 +2032,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "b14d6eb3bab31740b00ec6ead559c29bda6323ccd3f7de2e0a32815f0dfa03aa",
+    "source_sha256": "f8ca6111a789ce90ad3e09032bf3c4cb949da7cef2efd679ce00d4ac3f55c343",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -2052,7 +2052,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "8db3092a8c68d184592878661f7f8ef575670941ae80e4d48825d209d60ec9ef",
+        "sha256": "b6cbbee8db564ca371612224d62f1bb76435b9a793f944725df57672a9f53a0a",
         "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
@@ -2062,8 +2062,8 @@
       },
       {
         "path": "tests/unit/test_ci_action_pinning.py",
-        "sha256": "ad0cb0664ba193267580d1e35bb1636c8f76a7ae738eb303dfe16e4cc71ae61f",
-        "role": "Proves the independent workflow validator has a pinned version, checksum, and exact invocation in addition to immutable external action pins."
+        "sha256": "ef540fdc31ce7415adf55e8a6dd16f6524cc44d833e0b94c4e778a7435ba2799",
+        "role": "Proves the independent workflow validator has a pinned version, checksum, and exact invocation, and rejects expression-bearing run blocks above GitHub's hosted parser ceiling."
       },
       {
         "path": "scripts/install_ci_candidate.py",
@@ -2185,7 +2185,8 @@
       "On 2026-08-26, re-read the complete guide against the metadata-derived desktop extras, candidate-wheel installer, complementary Windows and dual-architecture macOS candidate matrix, and focused workflow ownership tests.",
       "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete guide after native source candidates became independent from published dependency readiness; a real metadata-discovered nine-wheel build-only wheelhouse and focused workflow and installer tests passed, while public-package evidence remained a separate strict lane.",
       "On 2026-08-26, GitHub rejected runner.temp in job-level env before scheduling any work; the build step now publishes its runner-local wheelhouse path for the Windows and macOS installer steps, and focused workflow regressions enforce that context boundary.",
-      "On 2026-08-26, re-read the complete testing guide after the Documentation workflow took independent ownership of context-aware workflow validation; actionlint 1.7.12 passed every current workflow from its checksum-verified Linux binary."
+      "On 2026-08-26, re-read the complete testing guide after the Documentation workflow took independent ownership of context-aware workflow validation; actionlint 1.7.12 passed every current workflow from its checksum-verified Linux binary.",
+      "On 2026-08-26, GitHub rejected an expression embedded in the large Windows installer run block at its 21000-character hosted parser ceiling; candidate outputs now cross through step-level env, and the repository-wide ceiling regression passed."
     ]
   },
   {
