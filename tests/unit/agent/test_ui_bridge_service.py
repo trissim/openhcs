@@ -815,6 +815,39 @@ def test_descriptor_resolution_uses_token_without_exposing_it(monkeypatch, tmp_p
     assert AUTH_TOKEN not in set(_json_payload_values(payload))
 
 
+def test_descriptor_catalog_uses_exact_environment_selector(monkeypatch, tmp_path):
+    selected_directory = tmp_path / "selected"
+    selected_directory.mkdir()
+    selected_descriptor = UiBridgeDescriptorFile(
+        selected_directory / "bridge.json",
+        BRIDGE_ID,
+        token=AUTH_TOKEN,
+    ).write()
+    discovered_directory = tmp_path / "discovered"
+    discovered_directory.mkdir()
+    UiBridgeDescriptorFile(
+        discovered_directory / "ui_bridge_other.json",
+        "other-bridge",
+        token="other-token",
+    ).write()
+    monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR", str(selected_descriptor))
+    monkeypatch.setenv(
+        "OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR",
+        str(discovered_directory),
+    )
+    monkeypatch.setattr(
+        UiBridgeProcessAdvertisedDescriptorCatalog,
+        "descriptor_paths",
+        classmethod(lambda cls: ()),
+    )
+
+    catalog = UiBridgeService().list_bridges()
+
+    assert [bridge.bridge_instance_id for bridge in catalog.bridges] == [BRIDGE_ID]
+    assert catalog.bridges[0].descriptor_file_path == str(selected_descriptor.resolve())
+    assert catalog.errors == ()
+
+
 def test_ui_bridge_service_resolves_projected_graphical_viewer_launch_context(
     monkeypatch,
     tmp_path,

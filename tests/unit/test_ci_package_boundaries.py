@@ -179,6 +179,17 @@ def test_desktop_candidate_canary_precedes_dependency_publication() -> None:
         "macos-latest",
         "macos-15-intel",
     }
+    long_path_step = next(
+        step
+        for step in job["steps"]
+        if step.get("name") == "Allow Git to checkout long Windows paths"
+    )
+    checkout_step = next(
+        step for step in job["steps"] if step.get("name") == "Checkout"
+    )
+    assert job["steps"].index(long_path_step) < job["steps"].index(checkout_step)
+    assert long_path_step["if"] == "runner.os == 'Windows'"
+    assert "core.longpaths true" in long_path_step["run"]
     steps = "\n".join(step.get("run", "") for step in job["steps"])
     assert "--dependency-source submodules" in steps
     assert "sync_mcp_release_metadata.py" in steps

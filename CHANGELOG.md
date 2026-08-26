@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   UI-bridge endpoints, then uses the packaged desktop MCP to discover the live
   UI and invoke a declared action instead of treating dependency resolution
   alone as proof of desktop compatibility or reusing an existing server.
+- An explicitly selected UI bridge descriptor now owns both targeted bridge
+  resolution and bridge-catalog discovery, including on macOS and Windows
+  where Linux process-environment discovery is unavailable.
 - Windows and macOS installers ignore inherited workstation package indexes,
   preventing an unreachable optional NVIDIA index from stalling an otherwise
   resolvable OpenHCS installation.

@@ -897,7 +897,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "ff4de5eca8846dcce8d399a1b32f5ed0b445668526bf058c20582108ecfe99b1",
+        "sha256": "e3a65db3512ace7b8bfc115d2c2908158cf6e238dcec1393c2e82095d68df782",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -977,7 +977,7 @@
       },
       {
         "path": "openhcs/agent/services/ui_bridge_service.py",
-        "sha256": "229238417bfa3ecabfe40ef9bc1cf762adb274623cb3c1a92657454e57ef8896",
+        "sha256": "60aae652a9ca101761590382f9aa327153ccdeadb0843237b9aa2e78ac17c469",
         "role": "Owns agent-to-UI declaration inspection and mutation, including code and form synchronisation."
       },
       {
@@ -2051,7 +2051,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "ff4de5eca8846dcce8d399a1b32f5ed0b445668526bf058c20582108ecfe99b1",
+        "sha256": "e3a65db3512ace7b8bfc115d2c2908158cf6e238dcec1393c2e82095d68df782",
         "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
@@ -2071,7 +2071,7 @@
       },
       {
         "path": "tests/unit/test_ci_package_boundaries.py",
-        "sha256": "885741f15173c2a2faa323266c837bd3f87b0033a46fc593bc55471fa7009a4e",
+        "sha256": "aa1bc7b3197408d839e1068d95bc2cc4ffdbc99964b95da0443bf97de3be2df7",
         "role": "Proves source-gate coverage artifacts fail closed, the combined report describes only instrumented suites, and live GUI/MCP canary ownership remains cross-platform."
       },
       {
@@ -2673,7 +2673,7 @@
       },
       {
         "path": "openhcs/agent/services/ui_bridge_service.py",
-        "sha256": "229238417bfa3ecabfe40ef9bc1cf762adb274623cb3c1a92657454e57ef8896",
+        "sha256": "60aae652a9ca101761590382f9aa327153ccdeadb0843237b9aa2e78ac17c469",
         "role": "Owns agent-to-UI declaration inspection and mutation, including code and form synchronisation."
       },
       {

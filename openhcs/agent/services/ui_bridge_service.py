@@ -1663,8 +1663,17 @@ class UiBridgeDescriptorReader:
             )
 
 
-class UiBridgeDescriptorDirectoryCatalog:
-    """Read live descriptor sets and public descriptor catalogs from the runtime dir."""
+class UiBridgeDescriptorCatalog:
+    """Discover the descriptor set selected for the current process."""
+
+    @staticmethod
+    def selected_descriptor_path() -> Path | None:
+        """Return the exact descriptor selected by the shared environment contract."""
+
+        configured = environ.get(UiBridgeDescriptorEnvironment.descriptor_file_path_key)
+        if not configured:
+            return None
+        return AgentRuntimePlatformAuthority.resolved_path(configured)
 
     @classmethod
     def live_descriptors(cls) -> tuple[UiBridgeDescriptorFile, ...]:
@@ -1691,6 +1700,10 @@ class UiBridgeDescriptorDirectoryCatalog:
 
     @classmethod
     def _read_descriptor_results(cls) -> tuple[UiBridgeDescriptorReadResult, ...]:
+        selected_path = cls.selected_descriptor_path()
+        if selected_path is not None:
+            return (UiBridgeDescriptorReader.read(selected_path),)
+
         results: list[UiBridgeDescriptorReadResult] = []
         for directory in UiBridgeDescriptorDirectoryAuthority.descriptor_dirs():
             if not directory.exists():
@@ -1793,12 +1806,10 @@ class UiBridgeDescriptorResolver:
                 connection,
             )
 
-        env_descriptor = environ.get(
-            UiBridgeDescriptorEnvironment.descriptor_file_path_key
-        )
-        if env_descriptor:
+        selected_descriptor_path = UiBridgeDescriptorCatalog.selected_descriptor_path()
+        if selected_descriptor_path is not None:
             return self._resolve_explicit_file(
-                AgentRuntimePlatformAuthority.resolved_path(env_descriptor),
+                selected_descriptor_path,
                 connection,
             )
 
@@ -1806,7 +1817,7 @@ class UiBridgeDescriptorResolver:
             return self._resolve_instance(connection.bridge_instance_id, connection)
 
         descriptor_set = LiveUiBridgeDescriptorSet(
-            UiBridgeDescriptorDirectoryCatalog.live_descriptors()
+            UiBridgeDescriptorCatalog.live_descriptors()
         )
         return DescriptorSetResolutionRunner.for_cardinality(
             descriptor_set.cardinality
@@ -1833,7 +1844,7 @@ class UiBridgeDescriptorResolver:
         bridge_instance_id: str,
         connection: UiBridgeConnectionSpec,
     ) -> UiBridgeConnectionResolution:
-        live_descriptors = UiBridgeDescriptorDirectoryCatalog.live_descriptors()
+        live_descriptors = UiBridgeDescriptorCatalog.live_descriptors()
         matches = tuple(
             descriptor
             for descriptor in live_descriptors
@@ -1949,7 +1960,7 @@ class UiBridgeService:
             return error_result(self._gateway_errors(unavailable_error_code, exc))
 
     def list_bridges(self) -> UiBridgeCatalog:
-        return UiBridgeDescriptorDirectoryCatalog.descriptor_catalog()
+        return UiBridgeDescriptorCatalog.descriptor_catalog()
 
     def viewer_launch_context(
         self,
