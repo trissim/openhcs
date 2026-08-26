@@ -17,6 +17,7 @@ from packaging.requirements import Requirement
 
 from openhcs.desktop_installation import DesktopInstallerSchemaVersion
 from openhcs.utils.environment import OpenHCSProcessEnvironment
+from scripts.smoke_installed_gui import INSTALLED_GUI_SMOKE_TIMING
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 INSTALLED_GUI_SMOKE_PATH = Path(__file__).with_name("smoke_installed_gui.py")
@@ -363,10 +364,12 @@ def _smoke_installed_gui(
             str(REPOSITORY_ROOT),
             "--evidence-directory",
             str((install_root / "gui-evidence").resolve()),
+            "--timeout-seconds",
+            str(INSTALLED_GUI_SMOKE_TIMING.operation_timeout_seconds),
         ],
         cwd=install_root,
         environment=environment,
-        timeout_seconds=60,
+        timeout_seconds=INSTALLED_GUI_SMOKE_TIMING.subprocess_timeout_seconds,
     )
     payload = json.loads(completed.stdout)
     if not payload.get("ready") or not payload.get("visible"):

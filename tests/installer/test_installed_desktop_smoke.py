@@ -215,9 +215,14 @@ def test_gui_smoke_uses_installed_python_and_isolated_runtime(
         str(desktop_smoke.REPOSITORY_ROOT),
         "--evidence-directory",
         str((tmp_path / "gui-evidence").resolve()),
+        "--timeout-seconds",
+        str(desktop_smoke.INSTALLED_GUI_SMOKE_TIMING.operation_timeout_seconds),
     ]
     assert observed["cwd"] == tmp_path
-    assert observed["timeout_seconds"] == 60
+    assert (
+        observed["timeout_seconds"]
+        == desktop_smoke.INSTALLED_GUI_SMOKE_TIMING.subprocess_timeout_seconds
+    )
     smoke_environment = observed["environment"]
     assert isinstance(smoke_environment, dict)
     assert smoke_environment["OPENHCS_CPU_ONLY"] == "true"

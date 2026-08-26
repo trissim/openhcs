@@ -30,6 +30,29 @@ JsonValue = str | int | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
 AgentDtoT = TypeVar("AgentDtoT")
 
 
+@dataclass(frozen=True, slots=True)
+class InstalledGuiSmokeTiming:
+    """One safety budget for the complete installed-GUI acceptance process."""
+
+    operation_timeout_seconds: float = 180.0
+    process_exit_grace_seconds: float = 30.0
+
+    def __post_init__(self) -> None:
+        if self.operation_timeout_seconds <= 0:
+            raise ValueError("Installed GUI smoke timeout must be positive.")
+        if self.process_exit_grace_seconds <= 0:
+            raise ValueError("Installed GUI smoke exit grace must be positive.")
+
+    @property
+    def subprocess_timeout_seconds(self) -> float:
+        """Allow the owned operation deadline plus bounded teardown time."""
+
+        return self.operation_timeout_seconds + self.process_exit_grace_seconds
+
+
+INSTALLED_GUI_SMOKE_TIMING = InstalledGuiSmokeTiming()
+
+
 class InstalledGuiSnapshotEvidenceAuthority:
     """Retain capability-owned native screenshot evidence for CI."""
 
@@ -421,7 +444,13 @@ def verify_installed_function_catalog(
 ) -> InstalledFunctionCatalogSmokeResult:
     """Require the GUI's background endpoint catalogue and one usable reference."""
 
-    page = service.prepare().result(timeout=deadline.remaining_seconds())
+    future = service.prepare()
+    try:
+        page = future.result(timeout=deadline.remaining_seconds())
+    except TimeoutError as error:
+        if not future.cancelled() and future.done() and future.exception() is error:
+            raise
+        raise deadline.timeout_error() from error
     if not page.revision.strip():
         raise AssertionError("Installed function catalog omitted its revision.")
     if page.total <= 0 or not page.items:
@@ -435,7 +464,7 @@ def verify_installed_function_catalog(
     entry = page.items[0]
     resolved = service.resolve(entry.function_id)
     if not callable(resolved):
-        raise AssertionError(
+        raise TypeError(
             "Installed function catalog returned a non-callable reference: "
             f"{entry.function_id}"
         )
@@ -844,7 +873,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--timeout-seconds",
         type=float,
-        default=60.0,
+        default=INSTALLED_GUI_SMOKE_TIMING.operation_timeout_seconds,
         help="Maximum time for painted GUI readiness and live MCP operation.",
     )
     args = parser.parse_args(argv)

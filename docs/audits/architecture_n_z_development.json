@@ -1839,13 +1839,13 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "e1b6d299fe8cbacc21f05b0460899fcccbe6e57bb63086f852912052eecd2d00",
-        "role": "Executes the packaged restart worker against a real parent exit and detached restart command from the installed environment."
+        "sha256": "b20d80afbbbb8619dfb0f5e50cb3b7228bbd483c5e6bcbb4149a4e9fade97830",
+        "role": "Executes the GUI acceptance probe and packaged restart worker from the installed environment while deriving the outer process ceiling from the probe's timing authority."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "bd1e852c8c58ed373cfbfb8b352cba0faf6cd5526206c236d62f429f863417a0",
-        "role": "Proves platform smoke orchestration passes the exact installed Python, install root, and environment to the restart-worker verifier and reports its result."
+        "sha256": "4fe40048a3423f7d8a543da88d77bffee7fe5d7ff60e89fe078bc4560ba0cd47",
+        "role": "Proves platform smoke orchestration passes the exact installed Python, install root, environment, and declaration-derived GUI operation and process-exit budgets to the installed verifiers."
       },
       {
         "path": "openhcs/processing/custom_functions/runtime_registry.py",
@@ -1913,7 +1913,8 @@
       "On 2026-08-25, re-read the complete transition reference against revision-checked catalogue transport and typed endpoint shutdown; 152 ZMQRuntime tests and an isolated non-default TCP endpoint probe confirmed exact transport preservation and process cleanup.",
       "On 2026-08-25, re-read the complete transition reference after formatting the custom-function runtime authority; the formatting-only change leaves its atomic catalogue projection and the documented ownership boundary unchanged.",
       "On 2026-08-26, re-read the complete transition reference after the installed desktop verifier began retaining MCP window snapshots; its declaration-allocated endpoint, exact cleanup, and transport-ownership claims remain unchanged.",
-      "On 2026-08-26, re-read and revised the complete reference after a Windows boundary run exhausted the former shared five-second budget during request serialisation; the OpenHCS configuration declaration now owns a dedicated submission default, 98 focused tests passed, and the exact CometAssay ZMQ path passed in 93.82 seconds."
+      "On 2026-08-26, re-read and revised the complete reference after a Windows boundary run exhausted the former shared five-second budget during request serialisation; the OpenHCS configuration declaration now owns a dedicated submission default, 98 focused tests passed, and the exact CometAssay ZMQ path passed in 93.82 seconds.",
+      "On 2026-08-26, re-read the complete transition reference after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; the acceptance harness now derives its outer limit from one timing owner without replacing ZMQRuntime's progress-aware endpoint inactivity semantics, and a fresh 0.8.0 wheel completed the cold 263-function catalogue path."
     ]
   },
   {
@@ -2806,13 +2807,13 @@
       },
       {
         "path": "scripts/smoke_installed_gui.py",
-        "sha256": "b363c9ae396b1ce7a84386a343a4fad33016e08b7d2cea8426d9c07bcda241f5",
-        "role": "Constructs the installed application on declaration-allocated endpoints, proves the background function catalogue is usable, drives the GUI through packaged MCP, validates retained window snapshots, and cleans up exact owned resources outside the checkout."
+        "sha256": "f64816d7f61c1b92d9ce6a896918352bfd0a43c974d1776599d63becd4418dfe",
+        "role": "Owns the installed-GUI acceptance timing, constructs the application on declaration-allocated endpoints, proves the background function catalogue is usable, drives the GUI through packaged MCP, validates retained window snapshots, and cleans up exact owned resources outside the checkout."
       },
       {
         "path": "tests/unit/test_smoke_installed_gui.py",
-        "sha256": "9e2db54051918bf4600667ff2132c0f7ec9a8ec522d15c9055db3da02697ab4c",
-        "role": "Proves source-checkout rejection, declaration-owned endpoint allocation, function-catalogue readiness, snapshot CLI projection, and emitted PNG identity validation for the installed GUI/MCP probe."
+        "sha256": "0c3bef0dd15aa1b75a4e3109195071290ee6535984152921aef6e4175980f314",
+        "role": "Proves source-checkout rejection, one derived smoke timing policy, deadline-owner error preservation, declaration-owned endpoint allocation, function-catalogue readiness, snapshot CLI projection, and emitted PNG identity validation for the installed GUI/MCP probe."
       },
       {
         "path": ".github/dependabot.yml",
@@ -2905,7 +2906,8 @@
       "On 2026-08-26, GitHub rejected an expression embedded in the large Windows installer run block at its 21000-character hosted parser ceiling; candidate outputs now cross through step-level env, and the repository-wide ceiling regression passed.",
       "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after native GUI evidence became retained; 54 focused contract tests and a live 0.7.27 GUI/MCP run validated two PNGs through their typed paths, sizes, dimensions, and SHA-256 values.",
       "On 2026-08-26, re-read the complete release how-to against the 0.8.0 version authority and regenerated MCP metadata; the source-candidate test now derives the root wheel identity from that authority, and 73 focused release tests plus wheel metadata validation passed.",
-      "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after the installed GUI canary gained background function-catalogue readiness proof; a cold installed wheel completed launch, catalogue resolution, packaged MCP control, and retained screenshots within one 60-second deadline."
+      "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after the installed GUI canary gained background function-catalogue readiness proof; a cold installed wheel completed launch, catalogue resolution, packaged MCP control, and retained screenshots within one end-to-end deadline.",
+      "On 2026-08-26, re-read the complete release how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; one installed-GUI timing declaration now derives the operation and process budgets, 106 focused release and installer tests passed, and a fresh 0.8.0 wheel completed cold launch, 263-function catalogue resolution, packaged MCP control, and two visually inspected native screenshots."
     ]
   },
   {

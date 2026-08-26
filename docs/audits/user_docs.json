@@ -852,13 +852,13 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "e1b6d299fe8cbacc21f05b0460899fcccbe6e57bb63086f852912052eecd2d00",
-        "role": "Exercises the installed distribution, launchers, MCP/runtime path, viewers, and packaged restart worker outside the source checkout."
+        "sha256": "b20d80afbbbb8619dfb0f5e50cb3b7228bbd483c5e6bcbb4149a4e9fade97830",
+        "role": "Exercises the installed distribution, launchers, MCP/runtime path, viewers, and packaged restart worker outside the source checkout while deriving the GUI subprocess ceiling from the installed-GUI smoke timing authority."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "bd1e852c8c58ed373cfbfb8b352cba0faf6cd5526206c236d62f429f863417a0",
-        "role": "Proves platform smoke orchestration passes the exact installed Python, install root, and environment to the restart-worker verifier and reports its result."
+        "sha256": "4fe40048a3423f7d8a543da88d77bffee7fe5d7ff60e89fe078bc4560ba0cd47",
+        "role": "Proves platform smoke orchestration passes the exact installed Python, install root, environment, and declaration-derived GUI operation and process-exit budgets to the installed verifiers."
       },
       {
         "path": "tests/installer/test_installer_contract.py",
@@ -945,7 +945,8 @@
       "On 2026-08-26, re-read the complete installation how-to after the integration workflow added a publication-independent Windows and dual-architecture macOS desktop candidate matrix; installation, update, and native-installer claims remain unchanged.",
       "On 2026-08-26, re-read the full installation how-to after native CI began constructing the complete current-source wheelhouse independently from published dependency readiness; the user-facing install, launch, verification, and update procedure remains unchanged.",
       "On 2026-08-26, re-read the complete installation how-to after installed desktop verification began retaining native MCP window snapshots; the supported install, launch, verification, and update instructions remain unchanged.",
-      "On 2026-08-26, re-read the complete installation how-to after the installed MCP demo stopped narrowing the declaration-owned execution submission deadline; the documented bounded verification command remains accurate."
+      "On 2026-08-26, re-read the complete installation how-to after the installed MCP demo stopped narrowing the declaration-owned execution submission deadline; the documented bounded verification command remains accurate.",
+      "On 2026-08-26, re-read the complete installation how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; installed GUI acceptance now owns one operation budget and derives a bounded outer process-exit grace, while a fresh 0.8.0 wheel completed cold launch, 263-function catalogue resolution, packaged MCP control, and two validated native screenshots."
     ]
   },
   {
@@ -1508,13 +1509,13 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "e1b6d299fe8cbacc21f05b0460899fcccbe6e57bb63086f852912052eecd2d00",
-        "role": "Executes the packaged restart worker against a real parent exit and detached restart command from the installed environment."
+        "sha256": "b20d80afbbbb8619dfb0f5e50cb3b7228bbd483c5e6bcbb4149a4e9fade97830",
+        "role": "Executes the GUI acceptance probe and packaged restart worker from the installed environment while deriving the outer process ceiling from the probe's timing authority."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "bd1e852c8c58ed373cfbfb8b352cba0faf6cd5526206c236d62f429f863417a0",
-        "role": "Proves platform smoke orchestration passes the exact installed Python, install root, and environment to the restart-worker verifier and reports its result."
+        "sha256": "4fe40048a3423f7d8a543da88d77bffee7fe5d7ff60e89fe078bc4560ba0cd47",
+        "role": "Proves platform smoke orchestration passes the exact installed Python, install root, environment, and declaration-derived GUI operation and process-exit budgets to the installed verifiers."
       },
       {
         "path": "openhcs/agent/services/endpoint_function_catalog_service.py",
@@ -1566,7 +1567,8 @@
       "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; revised its startup wording and confirmed the remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete troubleshooting how-to against the persisted desktop endpoint snapshot and shared catalogue lifecycle; focused tests and a fresh stdio MCP probe confirmed non-default endpoint use and restart guidance.",
       "On 2026-08-26, re-read the complete troubleshooting how-to after the installed desktop smoke added retained native screenshots; endpoint, catalogue, viewer, and restart guidance remain current.",
-      "On 2026-08-26, re-read and revised the complete troubleshooting how-to after a busy Windows runner exposed the former shared submission deadline; the recovery path now distinguishes the dedicated preparation budget from short control requests and preserves the known-versus-unknown dispatch outcome."
+      "On 2026-08-26, re-read and revised the complete troubleshooting how-to after a busy Windows runner exposed the former shared submission deadline; the recovery path now distinguishes the dedicated preparation budget from short control requests and preserves the known-versus-unknown dispatch outcome.",
+      "On 2026-08-26, re-read the complete troubleshooting how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; product-owned catalogue timeout errors remain distinct from the acceptance harness deadline, and a fresh 0.8.0 wheel completed the cold catalogue and packaged MCP path."
     ]
   },
   {
@@ -2099,23 +2101,23 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "e1b6d299fe8cbacc21f05b0460899fcccbe6e57bb63086f852912052eecd2d00",
-        "role": "Runs installed GUI readiness and screenshot evidence, launch, MCP/runtime, viewer, and packaged restart-worker acceptance outside the source checkout."
+        "sha256": "b20d80afbbbb8619dfb0f5e50cb3b7228bbd483c5e6bcbb4149a4e9fade97830",
+        "role": "Runs installed GUI readiness and screenshot evidence, launch, MCP/runtime, viewer, and packaged restart-worker acceptance outside the source checkout while deriving the outer GUI process ceiling from the probe's timing authority."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "bd1e852c8c58ed373cfbfb8b352cba0faf6cd5526206c236d62f429f863417a0",
-        "role": "Proves platform smoke orchestration passes the exact installed Python, isolated runtime, and evidence directory to the GUI and restart-worker verifiers."
+        "sha256": "4fe40048a3423f7d8a543da88d77bffee7fe5d7ff60e89fe078bc4560ba0cd47",
+        "role": "Proves platform smoke orchestration passes the exact installed Python, isolated runtime, evidence directory, and declaration-derived GUI timing to the installed verifiers."
       },
       {
         "path": "scripts/smoke_installed_gui.py",
-        "sha256": "b363c9ae396b1ce7a84386a343a4fad33016e08b7d2cea8426d9c07bcda241f5",
-        "role": "Constructs the installed application on declaration-allocated endpoints, proves the background function catalogue is usable, drives the GUI through packaged MCP, validates retained window snapshots, and cleans up exact owned resources outside the checkout."
+        "sha256": "f64816d7f61c1b92d9ce6a896918352bfd0a43c974d1776599d63becd4418dfe",
+        "role": "Owns the installed-GUI acceptance timing, constructs the application on declaration-allocated endpoints, proves the background function catalogue is usable, drives the GUI through packaged MCP, validates retained window snapshots, and cleans up exact owned resources outside the checkout."
       },
       {
         "path": "tests/unit/test_smoke_installed_gui.py",
-        "sha256": "9e2db54051918bf4600667ff2132c0f7ec9a8ec522d15c9055db3da02697ab4c",
-        "role": "Proves source-checkout rejection, declaration-owned endpoint allocation, function-catalogue readiness, snapshot CLI projection, and emitted PNG identity validation for the installed GUI/MCP probe."
+        "sha256": "0c3bef0dd15aa1b75a4e3109195071290ee6535984152921aef6e4175980f314",
+        "role": "Proves source-checkout rejection, one derived smoke timing policy, deadline-owner error preservation, declaration-owned endpoint allocation, function-catalogue readiness, snapshot CLI projection, and emitted PNG identity validation for the installed GUI/MCP probe."
       },
       {
         "path": "openhcs/pyqt_gui/config.py",
@@ -2197,7 +2199,8 @@
       "On 2026-08-26, GitHub rejected an expression embedded in the large Windows installer run block at its 21000-character hosted parser ceiling; candidate outputs now cross through step-level env, and the repository-wide ceiling regression passed.",
       "On 2026-08-26, applied the Diataxis testing how-to boundary and re-read the complete guide after native GUI evidence became retained; 54 focused contract tests and a live 0.7.27 GUI/MCP run validated two PNGs through their typed paths, sizes, dimensions, and SHA-256 values.",
       "On 2026-08-26, re-read the complete testing how-to after source-candidate root-wheel identity began deriving from the package version authority; the documented build order and publication-independent evidence lanes remain accurate.",
-      "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete guide after the installed GUI canary gained background function-catalogue readiness proof; a cold installed wheel completed launch, catalogue resolution, packaged MCP control, and retained screenshots within one 60-second deadline."
+      "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete guide after the installed GUI canary gained background function-catalogue readiness proof; a cold installed wheel completed launch, catalogue resolution, packaged MCP control, and retained screenshots within one end-to-end deadline.",
+      "On 2026-08-26, re-read the complete testing how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; one installed-GUI timing declaration now derives both operation and process limits, 106 focused release and installer tests passed, and a fresh 0.8.0 wheel produced two visually inspected native screenshots after resolving its 263-function catalogue."
     ]
   },
   {

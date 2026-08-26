@@ -10,6 +10,7 @@ from zmqruntime import (
     DataControlPortPair,
     DataControlPortPairAuthority,
     OperationDeadline,
+    OperationTimeoutError,
     TransportMode,
 )
 
@@ -19,6 +20,7 @@ from openhcs.agent.dto.ui_bridge import UiWindowSnapshotResult
 from openhcs.pyqt_gui.config import AgentUiBridgeConfig, UIConfig
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 from scripts.smoke_installed_gui import (
+    InstalledGuiSmokeTiming,
     InstalledGuiSnapshotEvidenceAuthority,
     assert_not_source_checkout_import,
     verify_installed_function_catalog,
@@ -63,6 +65,30 @@ class _FunctionCatalogService:
         return lambda: None
 
 
+def test_installed_gui_smoke_timing_derives_process_ceiling() -> None:
+    timing = InstalledGuiSmokeTiming(
+        operation_timeout_seconds=120.0,
+        process_exit_grace_seconds=15.0,
+    )
+
+    assert timing.subprocess_timeout_seconds == 135.0
+
+
+@pytest.mark.parametrize(
+    ("operation_timeout_seconds", "process_exit_grace_seconds"),
+    ((0.0, 15.0), (120.0, 0.0)),
+)
+def test_installed_gui_smoke_timing_requires_positive_budgets(
+    operation_timeout_seconds: float,
+    process_exit_grace_seconds: float,
+) -> None:
+    with pytest.raises(ValueError, match="must be positive"):
+        InstalledGuiSmokeTiming(
+            operation_timeout_seconds=operation_timeout_seconds,
+            process_exit_grace_seconds=process_exit_grace_seconds,
+        )
+
+
 def test_gui_smoke_rejects_source_package(tmp_path: Path) -> None:
     checkout = tmp_path / "checkout"
 
@@ -100,6 +126,47 @@ def test_gui_smoke_requires_prepared_catalog_and_resolvable_reference() -> None:
     assert result.revision == "catalog-revision"
     assert result.total == 1
     assert service.resolved_function_ids == [entry.function_id]
+
+
+def test_gui_smoke_reports_its_operation_when_catalog_wait_expires() -> None:
+    class PendingFunctionCatalogService:
+        @staticmethod
+        def prepare() -> Future[FunctionCatalogPage]:
+            return Future()
+
+    with pytest.raises(
+        OperationTimeoutError,
+        match="Timed out waiting for test installed function catalog",
+    ):
+        verify_installed_function_catalog(
+            PendingFunctionCatalogService(),
+            deadline=OperationDeadline.after_milliseconds(
+                1,
+                operation="test installed function catalog",
+            ),
+        )
+
+
+def test_gui_smoke_preserves_catalog_owner_timeout() -> None:
+    owner_error = TimeoutError("catalog owner timed out")
+
+    class FailedFunctionCatalogService:
+        @staticmethod
+        def prepare() -> Future[FunctionCatalogPage]:
+            future: Future[FunctionCatalogPage] = Future()
+            future.set_exception(owner_error)
+            return future
+
+    with pytest.raises(TimeoutError, match="catalog owner timed out") as caught:
+        verify_installed_function_catalog(
+            FailedFunctionCatalogService(),
+            deadline=OperationDeadline.after_milliseconds(
+                2_000,
+                operation="test installed function catalog",
+            ),
+        )
+
+    assert caught.value is owner_error
 
 
 def test_gui_smoke_allocates_topology_through_transport_authority(
