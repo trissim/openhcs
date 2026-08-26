@@ -406,14 +406,14 @@ def project_custom_function(
 
     registry = OpenHCSRegistry()
     if declaration_revision is not None:
-        vars(func)[FunctionContractAttribute.declaration_revision] = (
-            declaration_revision
-        )
+        vars(func)[
+            FunctionContractAttribute.declaration_revision
+        ] = declaration_revision
     wrapped = registry.apply_contract_wrapper(func, processing_contract)
     if declaration_revision is not None:
-        vars(wrapped)[FunctionContractAttribute.declaration_revision] = (
-            declaration_revision
-        )
+        vars(wrapped)[
+            FunctionContractAttribute.declaration_revision
+        ] = declaration_revision
     metadata = FunctionMetadata(
         name=func.__name__,
         func=wrapped,
