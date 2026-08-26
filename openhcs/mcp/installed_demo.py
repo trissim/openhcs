@@ -432,8 +432,6 @@ def _execute_pipeline(
             "tcp",
             "--non-persistent",
             "--no-wait",
-            "--submit-timeout-ms",
-            "15000",
             "--json",
         ),
         tool_name=agent_capabilities.submit_pipeline_execution.name,

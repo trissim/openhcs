@@ -487,7 +487,7 @@ class ZMQExecutionClient(
     ):
         return self._submit_submission(
             submission.to_task(),
-            timeout_ms=self._control_timeout_ms(timeout_ms),
+            timeout_ms=self._submission_timeout_ms(timeout_ms),
         )
 
     def submit_debug_pipeline(
@@ -502,7 +502,7 @@ class ZMQExecutionClient(
         ).with_updates(debug_config.to_config_params())
         return self._submit_submission(
             submission.with_config_params(config_params_boundary.params).to_task(),
-            timeout_ms=self._control_timeout_ms(timeout_ms),
+            timeout_ms=self._submission_timeout_ms(timeout_ms),
         )
 
     def submit_compile(
@@ -513,7 +513,7 @@ class ZMQExecutionClient(
     ):
         return self._submit_submission(
             submission.compile_request().to_task(),
-            timeout_ms=self._control_timeout_ms(timeout_ms),
+            timeout_ms=self._submission_timeout_ms(timeout_ms),
         )
 
     def execute_pipeline(
@@ -542,6 +542,13 @@ class ZMQExecutionClient(
 
     def _control_timeout_ms(self, timeout_ms: int | None) -> int:
         return self.config.control_timeout_ms if timeout_ms is None else timeout_ms
+
+    def _submission_timeout_ms(self, timeout_ms: int | None) -> int:
+        return (
+            self.config.execution_submission_timeout_ms
+            if timeout_ms is None
+            else timeout_ms
+        )
 
     def _submit_submission(
         self,

@@ -153,10 +153,13 @@ instead of blocking the development loop.
 Headless compile and execution submissions apply ``submit_timeout_ms`` as one
 budget across execution-server startup, progress registration, task
 serialisation, and the control request. Startup progress can refresh the
-server's inactivity deadline, but it cannot extend this submission budget. If
-the budget expires before the execute request is sent, the tool reports that
-known outcome. A timeout after the request is sent remains an unknown outcome;
-poll server status before retrying.
+server's inactivity deadline, but it cannot extend this submission budget. The
+default comes from
+``OpenHCSZMQConfig.execution_submission_timeout_ms`` and is intentionally longer
+than the short status/stop control budget. If the budget expires before the
+execute request is sent, the tool reports that known outcome. A timeout after
+the request is sent remains an unknown outcome; poll server status before
+retrying.
 
 For accepted non-blocking jobs, ``openhcs_get_execution_status`` returns the
 control-plane lifecycle status together with the submitting client's latest

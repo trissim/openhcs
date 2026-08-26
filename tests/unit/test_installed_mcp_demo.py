@@ -333,7 +333,7 @@ def test_execute_pipeline_submits_then_polls_declared_job_status(
     assert submission["client"] is client
     assert submission["tool_name"] == agent_capabilities.submit_pipeline_execution.name
     assert submission["timeout_seconds"] is None
-    assert "--submit-timeout-ms" in submission["argv"]
+    assert "--submit-timeout-ms" not in submission["argv"]
     assert "--no-wait" in submission["argv"]
     assert "--wait-timeout-ms" not in submission["argv"]
     assert observed["poll_client"] is client

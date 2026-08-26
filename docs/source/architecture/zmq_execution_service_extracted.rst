@@ -28,13 +28,15 @@ cancellation does not interrupt an unrelated running execution. OpenHCS extends
 the generic interruption hook with its exact orchestrator and worker ownership;
 inline and threaded work then stops at the next cooperative boundary.
 
-Headless OpenHCS submission reuses ZMQRuntime's monotonic
+OpenHCS execution submission reuses ZMQRuntime's monotonic
 ``OperationDeadline`` across endpoint startup, progress registration, task
-serialisation, and the execute request. Startup activity may refresh the
-endpoint inactivity deadline, but it cannot extend the caller's total submit
-budget. OpenHCS reports separately whether preparation expired before the
-execute request or the request was sent without a reply, so callers do not
-invent an execution identifier or retry an unknown outcome blindly.
+serialisation, and the execute request. ``OpenHCSZMQConfig`` owns this dedicated
+submission budget separately from the shorter budget for status, stop, and
+other control requests. Startup activity may refresh the endpoint inactivity
+deadline, but it cannot extend the caller's total submit budget. OpenHCS reports
+separately whether preparation expired before the execute request or the
+request was sent without a reply, so callers do not invent an execution
+identifier or retry an unknown outcome blindly.
 
 An accepted headless job retains the exact client that submitted it. Status
 polling reuses that client, projects its ZMQRuntime-owned latest progress

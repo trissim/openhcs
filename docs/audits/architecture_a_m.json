@@ -1709,7 +1709,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "496a7d402f98ca43ed7a9783c2ae22f6013820d7e8201b99d53a7446668d3e11",
+        "sha256": "34ad08a4e5059efe1bd00d6b8030ed7b65a6a572a1ecdc2ba153675b8bb4ffbe",
         "role": "Proves MCP registration, declaration-derived development-client surface preflight, and rejection of undeclared native capture."
       }
     ],
@@ -1752,7 +1752,8 @@
       "On 2026-08-26, re-read the complete explanation after MCP UI and viewer timeout bounds began deriving from their connection declarations; 285 MCP regressions and an isolated live desktop/MCP action probe passed.",
       "On 2026-08-26, re-read the complete distribution explanation against the changed capability, server, timeout-policy, client-registration, and regression-test authorities; 342 focused tests passed, and NRA no longer reports the former transport, timeout-profile, or Claude platform redispatch.",
       "On 2026-08-26, re-read the complete explanation after the stdio bootstrap regression isolated its spawned process from pytest-cov instrumentation; product transport, capability, and distribution semantics remain unchanged.",
-      "On 2026-08-26, re-read the complete distribution explanation after the platform authority began preserving declared temporary roots across the local MCP process boundary; focused regressions and a packaged macOS-style nonstandard TMPDIR GUI/MCP probe passed, and the documented transport and snapshot ownership remain accurate."
+      "On 2026-08-26, re-read the complete distribution explanation after the platform authority began preserving declared temporary roots across the local MCP process boundary; focused regressions and a packaged macOS-style nonstandard TMPDIR GUI/MCP probe passed, and the documented transport and snapshot ownership remain accurate.",
+      "On 2026-08-26, re-read the complete distribution explanation after the shared MCP regression began proving the declaration-owned execution submission default; capability, transport, packaging, and projection ownership remain accurate."
     ]
   },
   {

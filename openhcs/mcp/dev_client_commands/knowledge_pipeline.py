@@ -7,10 +7,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import ClassVar
 
-from openhcs.agent.capabilities import agent_capabilities
 from openhcs.agent.authoring_contexts import (
     AuthoringContextDeclaration,
 )
+from openhcs.agent.capabilities import agent_capabilities
 from openhcs.agent.dto.authoring import AuthoringContextRequest
 from openhcs.agent.dto.common import JsonObject, JsonValue
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
@@ -19,7 +19,6 @@ from openhcs.agent.dto.pipeline import (
     PipelineSourceRenderRequest,
     PipelineValidationRequest,
 )
-from openhcs.serialization.json import to_jsonable
 from openhcs.mcp.dev_client_commanding import McpDevCommandSpec, SingleToolCommandSpec
 from openhcs.mcp.dev_client_core import (
     DEFAULT_REGISTRY_DISCOVERY_TIMEOUT_SECONDS,
@@ -45,6 +44,8 @@ from openhcs.mcp.dev_client_rendering import (
     AuthoringContextRenderOptions,
     CatalogRenderOptions,
 )
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
+from openhcs.serialization.json import to_jsonable
 
 
 class KnowledgeCommandSpec(SingleToolCommandSpec):
@@ -516,7 +517,11 @@ class ExecuteSourceCommandSpec(McpDevCommandSpec):
             action="store_false",
             help="Return after submit and leave polling to runtime-status.",
         )
-        parser.add_argument("--submit-timeout-ms", type=int, default=5000)
+        parser.add_argument(
+            "--submit-timeout-ms",
+            type=int,
+            default=OPENHCS_ZMQ_CONFIG.execution_submission_timeout_ms,
+        )
         parser.add_argument("--wait-timeout-ms", type=int, default=60_000)
         parser.add_argument(
             "--json",

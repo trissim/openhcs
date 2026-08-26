@@ -1,9 +1,8 @@
+import time
 from dataclasses import replace
 from types import MethodType
-import time
 
 import pytest
-
 from zmqruntime.client import AttachedEndpointConnection
 from zmqruntime.execution import ExecutionClient
 from zmqruntime.messages import (
@@ -14,11 +13,11 @@ from zmqruntime.messages import (
 )
 from zmqruntime.timeouts import OperationDeadline
 
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from openhcs.runtime.zmq_execution_client import (
     ExecutionSubmissionPreparationTimeoutError,
     ZMQExecutionClient,
 )
-from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 
 class _Submission:
@@ -66,6 +65,27 @@ def test_submission_uses_declared_timeout_for_progress_registration():
         ControlMessageType.EXECUTE.value,
     ]
     assert 0 < observed[1][1] <= observed[0][1] <= 15000
+
+
+def test_submission_default_is_owned_separately_from_short_control_requests():
+    config = replace(
+        OPENHCS_ZMQ_CONFIG,
+        control_timeout_ms=17,
+        execution_submission_timeout_ms=23000,
+    )
+    client = ZMQExecutionClient(config=config)
+    observed: list[int] = []
+
+    def submit_submission(self, submission, *, timeout_ms: int):
+        del submission
+        observed.append(timeout_ms)
+        return {MessageFields.STATUS: "accepted"}
+
+    client._submit_submission = MethodType(submit_submission, client)
+
+    client.submit_pipeline(_Submission())
+
+    assert observed == [23000]
 
 
 def test_submission_uses_declared_client_connection_timeout() -> None:

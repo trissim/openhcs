@@ -287,7 +287,7 @@ class _FakeExecutionClient:
         self,
         submission,
         *,
-        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.execution_submission_timeout_ms,
     ):
         self.submit_timeout_requests.append(("compile", timeout_ms))
         self.compile_submissions.append(submission)
@@ -297,7 +297,7 @@ class _FakeExecutionClient:
         self,
         submission,
         *,
-        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.execution_submission_timeout_ms,
     ):
         self.submit_timeout_requests.append(("execute", timeout_ms))
         self.execution_submissions.append(submission)
@@ -425,7 +425,7 @@ class _TimeoutSubmitExecutionClient(_FakeExecutionClient):
         self,
         submission,
         *,
-        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.execution_submission_timeout_ms,
     ):
         self.submit_timeout_requests.append(("compile", timeout_ms))
         raise TimeoutError(f"submit timed out after {timeout_ms}ms")
@@ -436,7 +436,7 @@ class _PreparationTimeoutSubmitExecutionClient(_FakeExecutionClient):
         self,
         submission,
         *,
-        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.execution_submission_timeout_ms,
     ):
         self.submit_timeout_requests.append(("compile", timeout_ms))
         raise ExecutionSubmissionPreparationTimeoutError("No execute request was sent.")
@@ -447,7 +447,7 @@ class _SlowSubmitExecutionClient(_FakeExecutionClient):
         self,
         submission,
         *,
-        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.execution_submission_timeout_ms,
     ):
         self.submit_timeout_requests.append(("compile", timeout_ms))
         time.sleep(0.05)
@@ -2824,8 +2824,8 @@ def test_execution_session_service_submits_compile_and_execution_jobs(
     assert execute_ref.server_execution_id == _ExecutionTestId.EXECUTE
     assert compile_status.status == "complete"
     assert fake_client.submit_timeout_requests == [
-        ("compile", OPENHCS_ZMQ_CONFIG.control_timeout_ms),
-        ("execute", OPENHCS_ZMQ_CONFIG.control_timeout_ms),
+        ("compile", OPENHCS_ZMQ_CONFIG.execution_submission_timeout_ms),
+        ("execute", OPENHCS_ZMQ_CONFIG.execution_submission_timeout_ms),
     ]
     assert fake_client.compile_submissions[0].plate_id == str(tmp_path.resolve())
     assert (

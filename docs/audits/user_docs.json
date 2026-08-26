@@ -822,7 +822,7 @@
       },
       {
         "path": "openhcs/mcp/installed_demo.py",
-        "sha256": "c862882f4214440193a1b05f1dfd94827c5b2c614d6078777ca3783c0113d028",
+        "sha256": "5ae2b17747a219a180efd6d23dca51c92470d18a2d5b6189af9ebfb13858d21f",
         "role": "Implements the installed-package MCP demonstration used by the getting-started verification flow."
       },
       {
@@ -902,7 +902,7 @@
       },
       {
         "path": "tests/unit/test_installed_mcp_demo.py",
-        "sha256": "0a4bdd4d4fd6c2bb8d6822d1aefb9e00e582a698045647239907ff2b7d6bb009",
+        "sha256": "e09e5967204ec38d3dae4eea65548864a91aa502e91ef0dd79202856c9cd493e",
         "role": "Proves the documented installed MCP verification flow, including progress-aware stall detection."
       }
     ],
@@ -944,7 +944,8 @@
       "On 2026-08-26, re-read the installation how-to after source unit and documentation jobs stopped fetching release tags; installer-facing readiness remains a separate strict gate, so the user procedure is unchanged.",
       "On 2026-08-26, re-read the complete installation how-to after the integration workflow added a publication-independent Windows and dual-architecture macOS desktop candidate matrix; installation, update, and native-installer claims remain unchanged.",
       "On 2026-08-26, re-read the full installation how-to after native CI began constructing the complete current-source wheelhouse independently from published dependency readiness; the user-facing install, launch, verification, and update procedure remains unchanged.",
-      "On 2026-08-26, re-read the complete installation how-to after installed desktop verification began retaining native MCP window snapshots; the supported install, launch, verification, and update instructions remain unchanged."
+      "On 2026-08-26, re-read the complete installation how-to after installed desktop verification began retaining native MCP window snapshots; the supported install, launch, verification, and update instructions remain unchanged.",
+      "On 2026-08-26, re-read the complete installation how-to after the installed MCP demo stopped narrowing the declaration-owned execution submission deadline; the documented bounded verification command remains accurate."
     ]
   },
   {
@@ -1433,7 +1434,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/troubleshooting_FAQ.rst",
-    "source_sha256": "6814ebfe2d2e25879b3f25a7c169cda83d503ad6e90435337abd13a341934c33",
+    "source_sha256": "2669866e80e49756310067629dfd7087b0d4403258de785bd6b536a997667bc8",
     "audience": [
       "desktop operators diagnosing a failed workflow"
     ],
@@ -1462,7 +1463,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "5c061744351012cb6689e980596ca29b26572220b0432ec496bff921d81258d4",
+        "sha256": "0f07a33a669a59047a8fa6387b8bbd681a2786cbd7a6b1418ebb25f18afbe5c3",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       },
       {
@@ -1564,7 +1565,8 @@
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; revised its startup wording and confirmed the remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete troubleshooting how-to against the persisted desktop endpoint snapshot and shared catalogue lifecycle; focused tests and a fresh stdio MCP probe confirmed non-default endpoint use and restart guidance.",
-      "On 2026-08-26, re-read the complete troubleshooting how-to after the installed desktop smoke added retained native screenshots; endpoint, catalogue, viewer, and restart guidance remain current."
+      "On 2026-08-26, re-read the complete troubleshooting how-to after the installed desktop smoke added retained native screenshots; endpoint, catalogue, viewer, and restart guidance remain current.",
+      "On 2026-08-26, re-read and revised the complete troubleshooting how-to after a busy Windows runner exposed the former shared submission deadline; the recovery path now distinguishes the dedicated preparation budget from short control requests and preserves the known-versus-unknown dispatch outcome."
     ]
   },
   {
@@ -3143,7 +3145,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "5c061744351012cb6689e980596ca29b26572220b0432ec496bff921d81258d4",
+        "sha256": "0f07a33a669a59047a8fa6387b8bbd681a2786cbd7a6b1418ebb25f18afbe5c3",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       }
     ],
@@ -3158,7 +3160,8 @@
       "Re-reviewed the complete page after submission timeout ownership changed; its log-selection guidance remains accurate.",
       "The complete pyqt-reactive suite passed 320 tests, and a live MCP-driven desktop session selected the port 7777 server entry and displayed that server's corresponding log.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-26, re-read the complete how-to after its checkboxes adopted the shared leaf-owned themed control; discovery, filtering, process identity, and log-selection behaviour remain unchanged."
+      "On 2026-08-26, re-read the complete how-to after its checkboxes adopted the shared leaf-owned themed control; discovery, filtering, process identity, and log-selection behaviour remain unchanged.",
+      "On 2026-08-26, re-read the complete how-to after the execution client adopted a dedicated submission default; log discovery, process filtering, selection, and connection-state guidance remain unchanged."
     ]
   },
   {
@@ -3203,7 +3206,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "496a7d402f98ca43ed7a9783c2ae22f6013820d7e8201b99d53a7446668d3e11",
+        "sha256": "34ad08a4e5059efe1bd00d6b8030ed7b65a6a572a1ecdc2ba153675b8bb4ffbe",
         "role": "Proves MCP server tool registration, request handling, and lifecycle behaviour."
       }
     ],
@@ -3228,7 +3231,8 @@
       "On 2026-08-26, re-read the complete client how-to after UI and viewer MCP timeout regressions changed the shared server-test authority; installation, registration, path policy, and GUI attachment guidance remains accurate.",
       "On 2026-08-26, re-read the complete client how-to against the changed capability, registration, and regression-test authorities; registered platform leaves now own Claude Desktop paths, while supported clients, commands, configuration behavior, and reconnect guidance remain unchanged.",
       "On 2026-08-26, re-read the complete client how-to after the stdio bootstrap regression isolated its spawned process from pytest-cov instrumentation; installation, registration, reconnect, and GUI attachment guidance remains unchanged.",
-      "On 2026-08-26, re-read the complete client how-to against the regenerated 0.8.0 MCPB manifest and the child-process temporary-root regression; installation, path policy, registration, and GUI attachment guidance remain accurate."
+      "On 2026-08-26, re-read the complete client how-to against the regenerated 0.8.0 MCPB manifest and the child-process temporary-root regression; installation, path policy, registration, and GUI attachment guidance remain accurate.",
+      "On 2026-08-26, re-read the complete client how-to after the shared MCP regression began proving the declaration-owned submission default; installation, registration, reconnect, and GUI attachment guidance remain accurate."
     ]
   },
   {

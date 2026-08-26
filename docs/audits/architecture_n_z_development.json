@@ -834,17 +834,17 @@
       },
       {
         "path": "openhcs/agent/services/execution_session_service.py",
-        "sha256": "34c82f4ff6a90498489b5c2252d492deec5a2a62753e2f07e21e835bec1e486f",
+        "sha256": "dd1fd401b9971d8a008ab4597650c39b49552cb46c4948cb3b1e9899466edc09",
         "role": "Retains the exact submitting client and projects its authoritative progress observation."
       },
       {
         "path": "openhcs/agent/dto/execution.py",
-        "sha256": "2ad03fba6a0938257b0ef04e73f6ba0921691476f1db7df83f4ac81495b16b29",
+        "sha256": "ad316b9497d2d9b1cbae612fc80a129bfec789bb5f76cbe92a4e34bf11d01023",
         "role": "Declares the typed public job status and delegates terminal semantics to the generic lifecycle declaration."
       },
       {
         "path": "tests/unit/agent/test_agent_services.py",
-        "sha256": "0889cb68b50d33ce1da8e0a39aa7ae46428054b6add30f7371630902ff6fda26",
+        "sha256": "82b8e14abdc4a6b6e684786a2061422106236618ddd07122b257782aecd9eb0d",
         "role": "Proves same-client reuse, exact observation serialization, terminal caching, and one-time client release."
       }
     ],
@@ -858,7 +858,8 @@
       "tests/unit/progress/test_projection.py and tests/unit/progress/test_debug_projection.py passed; published owner URLs now replace checkout-local paths",
       "Sphinx linkcheck resolved both pinned zmqruntime owner-source links",
       "On 2026-08-23, re-read the complete page against ZMQRuntime 0.2.11 and the retained OpenHCS agent client boundary; 138 generic tests, 388 focused OpenHCS tests, and a live MCP/ZMQ rehearsal with 35 progress events passed.",
-      "On 2026-08-25, re-read the complete progress explanation after viewer regressions changed the shared agent-service test authority; those additions exercise viewer projection only and do not alter progress ownership or lifecycle claims."
+      "On 2026-08-25, re-read the complete progress explanation after viewer regressions changed the shared agent-service test authority; those additions exercise viewer projection only and do not alter progress ownership or lifecycle claims.",
+      "On 2026-08-26, re-read the complete explanation after execution submission gained its own declaration-owned default budget; retained-client progress observation and terminal-release semantics remain unchanged, and 98 focused submission and agent-service tests passed."
     ]
   },
   {
@@ -1614,7 +1615,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_config.py",
-        "sha256": "df541bf7c8a843d9ffd529979a97439d5d77ec6b2a6da82a66fc630a85d72cae",
+        "sha256": "a5b9e0a0a63309686cf2473b86431a2945659ffdbbc2bc3edf72483f474b67ee",
         "role": "OpenHCS-owned ZMQConfig subtype and process-level transport fields."
       },
       {
@@ -1653,7 +1654,8 @@
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
       "tests/unit/test_ui_zmq_config_authority.py passed; source inspection confirmed ScopeWindowRegistry routing and OpenHCSZMQConfig inheritance",
       "On 2026-08-22, re-read the complete explanation against UIConfig cache ownership and lifecycle tests; the focused OpenHCS documentation-drift suite passed 238 tests.",
-      "On 2026-08-25, re-read the complete explanation against OpenHCS config route registration and pyqt-reactive navigation ownership; focused config-window tests and live UI navigation proved declared scope routing, tab selection, and rejection of ambiguous fields."
+      "On 2026-08-25, re-read the complete explanation against OpenHCS config route registration and pyqt-reactive navigation ownership; focused config-window tests and live UI navigation proved declared scope routing, tab selection, and rejection of ambiguous fields.",
+      "On 2026-08-26, re-read the complete explanation after OpenHCSZMQConfig separated execution submission from short control deadlines; the field remains declaration-owned and 36 configuration, schema, and help-projection tests passed."
     ]
   },
   {
@@ -1688,7 +1690,7 @@
   },
   {
     "path": "docs/source/architecture/zmq_execution_service_extracted.rst",
-    "source_sha256": "b2e86d9db75a1db45b9520f059049695cbda72defdb6165fed3e6bf9bd0b3dca",
+    "source_sha256": "8243f26da3b7a0fa32434e6ee426ad66ee0c8dd957e4ccd6f9915ee799fd304b",
     "audience": [
       "OpenHCS contributors following the former local ZMQ execution-service URL"
     ],
@@ -1747,7 +1749,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "5c061744351012cb6689e980596ca29b26572220b0432ec496bff921d81258d4",
+        "sha256": "0f07a33a669a59047a8fa6387b8bbd681a2786cbd7a6b1418ebb25f18afbe5c3",
         "role": "Spawns the execution server with the ArrayBridge-projected child environment and carries typed execution transport."
       },
       {
@@ -1757,12 +1759,12 @@
       },
       {
         "path": "openhcs/agent/services/execution_session_service.py",
-        "sha256": "34c82f4ff6a90498489b5c2252d492deec5a2a62753e2f07e21e835bec1e486f",
+        "sha256": "dd1fd401b9971d8a008ab4597650c39b49552cb46c4948cb3b1e9899466edc09",
         "role": "Retains the exact submitting client, projects its authoritative progress, caches terminal status, and releases the client once."
       },
       {
         "path": "tests/unit/test_zmq_submission_timeout.py",
-        "sha256": "0882a2031a440447f9af97e04d479cc60cfe4162e1121c810884db494861ff14",
+        "sha256": "29dfd50fe0708e87efd90214a606079e73ee0faf9ece3fa5783ec7ca9db2eeee",
         "role": "Proves a total submit deadline prevents execute dispatch after slow startup and preserves the declared connection inactivity timeout."
       },
       {
@@ -1867,7 +1869,7 @@
       },
       {
         "path": "tests/unit/agent/test_agent_services.py",
-        "sha256": "0889cb68b50d33ce1da8e0a39aa7ae46428054b6add30f7371630902ff6fda26",
+        "sha256": "82b8e14abdc4a6b6e684786a2061422106236618ddd07122b257782aecd9eb0d",
         "role": "Proves same-client status reuse, progress serialization, terminal caching, and one-time client release."
       },
       {
@@ -1910,7 +1912,8 @@
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete transition reference against revision-checked catalogue transport and typed endpoint shutdown; 152 ZMQRuntime tests and an isolated non-default TCP endpoint probe confirmed exact transport preservation and process cleanup.",
       "On 2026-08-25, re-read the complete transition reference after formatting the custom-function runtime authority; the formatting-only change leaves its atomic catalogue projection and the documented ownership boundary unchanged.",
-      "On 2026-08-26, re-read the complete transition reference after the installed desktop verifier began retaining MCP window snapshots; its declaration-allocated endpoint, exact cleanup, and transport-ownership claims remain unchanged."
+      "On 2026-08-26, re-read the complete transition reference after the installed desktop verifier began retaining MCP window snapshots; its declaration-allocated endpoint, exact cleanup, and transport-ownership claims remain unchanged.",
+      "On 2026-08-26, re-read and revised the complete reference after a Windows boundary run exhausted the former shared five-second budget during request serialisation; the OpenHCS configuration declaration now owns a dedicated submission default, 98 focused tests passed, and the exact CometAssay ZMQ path passed in 93.82 seconds."
     ]
   },
   {
@@ -2021,7 +2024,7 @@
       },
       {
         "path": "tests/unit/test_installed_mcp_demo.py",
-        "sha256": "0a4bdd4d4fd6c2bb8d6822d1aefb9e00e582a698045647239907ff2b7d6bb009",
+        "sha256": "e09e5967204ec38d3dae4eea65548864a91aa502e91ef0dd79202856c9cd493e",
         "role": "Proves the installed MCP workflow, progress-aware inactivity watchdog, hard ceiling, and terminal completion."
       },
       {
@@ -2031,7 +2034,7 @@
       },
       {
         "path": "openhcs/mcp/installed_demo.py",
-        "sha256": "c862882f4214440193a1b05f1dfd94827c5b2c614d6078777ca3783c0113d028",
+        "sha256": "5ae2b17747a219a180efd6d23dca51c92470d18a2d5b6189af9ebfb13858d21f",
         "role": "Implements the installed workflow rehearsal and derives activity from exact execution progress observations."
       }
     ],
@@ -2047,7 +2050,8 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-23, re-read the complete workflow page against the progress-aware installed-demo watchdog; focused tests and a live MCP/ZMQ rehearsal with 35 progress events completed successfully.",
       "On 2026-08-24, re-read the complete protocol after stdout containment moved from the synthetic service to the MCP transport; fixture generation and workflow acceptance semantics remain unchanged.",
-      "On 2026-08-26, re-read the complete workflow reference against the changed client-registration authority; registered platform leaves now own Claude Desktop paths without changing target identity, supported clients, commands, or acceptance semantics."
+      "On 2026-08-26, re-read the complete workflow reference against the changed client-registration authority; registered platform leaves now own Claude Desktop paths without changing target identity, supported clients, commands, or acceptance semantics.",
+      "On 2026-08-26, re-read the complete workflow reference after the installed demo stopped overriding the declaration-owned submission deadline; fixture, evidence, and acceptance semantics remain unchanged."
     ]
   },
   {
@@ -2514,7 +2518,7 @@
   },
   {
     "path": "docs/source/development/mcp_development.rst",
-    "source_sha256": "53401edaae71b38d6d8cf69ef8caf7c8561018ae308ffdd29cb587a818415bcc",
+    "source_sha256": "843ef50b3b2dae29048e7c9e890a85f77965605acea503bce1f7ecf184b73de6",
     "audience": [
       "OpenHCS MCP developers"
     ],
@@ -2535,6 +2539,16 @@
         "path": "openhcs/mcp/dev_client_core.py",
         "sha256": "a1f5a3b1fadf8bd283eaf6a20ce79bbc9ad24cac03c542f6b0f254f036f35d52",
         "role": "MCP dev-client session, declaration-derived command surface validation, receipt decoding, skip-reason-owned summary status, timeout, and workflow-owned terminal-state criteria."
+      },
+      {
+        "path": "openhcs/runtime/zmq_config.py",
+        "sha256": "a5b9e0a0a63309686cf2473b86431a2945659ffdbbc2bc3edf72483f474b67ee",
+        "role": "Declares the execution-submission deadline separately from short execution control deadlines."
+      },
+      {
+        "path": "openhcs/mcp/dev_client_commands/knowledge_pipeline.py",
+        "sha256": "7dfe86435e02a8814e2357a9cc89878c0e9609df7e9b02e232f111e1751a004f",
+        "role": "Projects the declaration-owned execution submission deadline into the execute-source development command."
       },
       {
         "path": "openhcs/mcp/control_timeout.py",
@@ -2563,7 +2577,7 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "496a7d402f98ca43ed7a9783c2ae22f6013820d7e8201b99d53a7446668d3e11",
+        "sha256": "34ad08a4e5059efe1bd00d6b8030ed7b65a6a572a1ecdc2ba153675b8bb4ffbe",
         "role": "Regression proof for selected-surface preflight, stale-row rejection, idempotent initialization, and every declared or malformed bridge-receipt continuation outcome."
       },
       {
@@ -2588,17 +2602,17 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "5c061744351012cb6689e980596ca29b26572220b0432ec496bff921d81258d4",
+        "sha256": "0f07a33a669a59047a8fa6387b8bbd681a2786cbd7a6b1418ebb25f18afbe5c3",
         "role": "Owns the total headless submission budget and the pre-dispatch timeout boundary documented for MCP developers."
       },
       {
         "path": "openhcs/agent/services/execution_session_service.py",
-        "sha256": "34c82f4ff6a90498489b5c2252d492deec5a2a62753e2f07e21e835bec1e486f",
+        "sha256": "dd1fd401b9971d8a008ab4597650c39b49552cb46c4948cb3b1e9899466edc09",
         "role": "Retains the submitting execution client, distinguishes dispatch outcomes, and projects its exact progress observation."
       },
       {
         "path": "tests/unit/test_zmq_submission_timeout.py",
-        "sha256": "0882a2031a440447f9af97e04d479cc60cfe4162e1121c810884db494861ff14",
+        "sha256": "29dfd50fe0708e87efd90214a606079e73ee0faf9ece3fa5783ec7ca9db2eeee",
         "role": "Regression proof that deadline expiry after slow connection prevents execute dispatch."
       },
       {
@@ -2623,12 +2637,12 @@
       },
       {
         "path": "openhcs/agent/dto/execution.py",
-        "sha256": "2ad03fba6a0938257b0ef04e73f6ba0921691476f1db7df83f4ac81495b16b29",
+        "sha256": "ad316b9497d2d9b1cbae612fc80a129bfec789bb5f76cbe92a4e34bf11d01023",
         "role": "Declares the public typed execution status and progress observation result."
       },
       {
         "path": "tests/unit/agent/test_agent_services.py",
-        "sha256": "0889cb68b50d33ce1da8e0a39aa7ae46428054b6add30f7371630902ff6fda26",
+        "sha256": "82b8e14abdc4a6b6e684786a2061422106236618ddd07122b257782aecd9eb0d",
         "role": "Proves exact progress projection from the submitting client and one-time release at terminal status."
       }
     ],
@@ -2668,7 +2682,9 @@
       "On 2026-08-26, re-read the complete how-to after duplicate UI and viewer command-profile subclasses were removed; both commands still derive the same five-second maximum from their connection contracts, so documented invocations and timeout behavior remain unchanged.",
       "On 2026-08-26, re-read the complete how-to after the stdio bootstrap regression isolated its spawned process from pytest-cov instrumentation; current-checkout commands, timeout ownership, and restart guidance remain unchanged.",
       "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete page after the UI snapshot CLI gained its declaration-derived output directory; the focused smoke and command tests passed and a live MCP capture produced validated PNG evidence.",
-      "On 2026-08-26, re-read the complete development how-to after child MCP processes began retaining the platform authority's declared temporary root; the current-checkout commands, path-policy guidance, and snapshot workflow remain accurate."
+      "On 2026-08-26, re-read the complete development how-to after child MCP processes began retaining the platform authority's declared temporary root; the current-checkout commands, path-policy guidance, and snapshot workflow remain accurate.",
+      "On 2026-08-26, re-read and revised the complete how-to after execution submissions gained a declaration-owned budget distinct from status and stop controls; explicit submit_timeout_ms overrides and known pre-dispatch timeout guidance remain accurate.",
+      "On 2026-08-26, re-read the complete how-to after execute-source and the installed demo began deriving the submission deadline from OpenHCSZMQConfig; the page now names that authority and the documented timeout boundary remains accurate."
     ]
   },
   {

@@ -52,9 +52,16 @@ class OpenHCSZMQConfig(ZMQConfig):
     """
 
     control_timeout_ms: PositiveInteger = 5000
-    """Default deadline for execution control requests such as ping, submit, and stop.
+    """Default deadline for short execution control requests such as status and stop.
 
     Individual agent or client requests may supply a narrower or wider timeout.
+    """
+
+    execution_submission_timeout_ms: PositiveInteger = 30000
+    """Total deadline for preparing and sending one execution submission.
+
+    This spans endpoint connection, progress registration, pipeline and configuration
+    serialisation, and the execute request. It does not limit the submitted execution.
     """
 
     server_info_timeout_ms: PositiveInteger = 500

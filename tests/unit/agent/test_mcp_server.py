@@ -101,6 +101,7 @@ from openhcs.agent.services.ui_bridge_service import (
 from openhcs.agent.services.viewer_window_service import ViewerWindowService
 from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.mcp.context import OpenHCSAgentContext
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 
 def _direct_tool_text(result) -> str:
@@ -5168,6 +5169,10 @@ def test_mcp_dev_client_execute_source_composes_session_and_submit(monkeypatch):
     assert calls[0].arguments["transport_mode"] == "ipc"
     assert calls[1].arguments["session_id"] == "session-1"
     assert calls[1].arguments["wait"] is True
+    assert (
+        calls[1].arguments["submit_timeout_ms"]
+        == OPENHCS_ZMQ_CONFIG.execution_submission_timeout_ms
+    )
     assert calls[1].arguments["wait_timeout_ms"] == 12000
     assert timeouts[1] >= 22
 

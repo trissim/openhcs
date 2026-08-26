@@ -49,10 +49,11 @@ another checkout or version are intentionally rejected before they can change
 the running UI.
 
 For a headless MCP submission timeout, read the reported outcome before
-retrying. If preparation expired before the execute request was sent, increase
-``submit_timeout_ms`` for the first server start. If the request was sent but
-no reply arrived, poll execution status first because the server may have
-accepted it.
+retrying. Submission preparation has its own longer deadline because a cold
+start can include connection, progress registration, and pipeline
+serialisation. If that preparation expired before the execute request was sent,
+increase ``submit_timeout_ms``. If the request was sent but no reply arrived,
+poll execution status first because the server may have accepted it.
 
 Function selector is still loading
 ----------------------------------

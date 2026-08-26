@@ -346,7 +346,7 @@ class ExecutionJobRef(ExecutionJobIdentity):
 @dataclass(frozen=True, slots=True)
 class CompileSubmissionRequest(OrchestratorSessionIdentity):
     wait: bool = False
-    submit_timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms
+    submit_timeout_ms: int = OPENHCS_ZMQ_CONFIG.execution_submission_timeout_ms
     wait_timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms
 
 
@@ -354,7 +354,7 @@ class CompileSubmissionRequest(OrchestratorSessionIdentity):
 class PipelineExecutionSubmissionRequest(OrchestratorSessionIdentity):
     compile_artifact_id: str | None = None
     wait: bool = False
-    submit_timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms
+    submit_timeout_ms: int = OPENHCS_ZMQ_CONFIG.execution_submission_timeout_ms
     wait_timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms
 
 

@@ -198,7 +198,7 @@ class ExecutionClientABC(ABC):
         self,
         submission: OpenHCSExecutionSubmission,
         *,
-        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.execution_submission_timeout_ms,
     ) -> JsonObject:
         raise NotImplementedError
 
@@ -207,7 +207,7 @@ class ExecutionClientABC(ABC):
         self,
         submission: OpenHCSExecutionSubmission,
         *,
-        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.execution_submission_timeout_ms,
     ) -> JsonObject:
         raise NotImplementedError
 
@@ -297,7 +297,7 @@ class ZMQExecutionClientAdapter(ExecutionClientABC):
         self,
         submission: OpenHCSExecutionSubmission,
         *,
-        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.execution_submission_timeout_ms,
     ) -> JsonObject:
         return dict(self.client.submit_compile(submission, timeout_ms=timeout_ms))
 
@@ -305,7 +305,7 @@ class ZMQExecutionClientAdapter(ExecutionClientABC):
         self,
         submission: OpenHCSExecutionSubmission,
         *,
-        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.execution_submission_timeout_ms,
     ) -> JsonObject:
         return dict(self.client.submit_pipeline(submission, timeout_ms=timeout_ms))
 
@@ -637,7 +637,7 @@ class ExecutionClientGateway:
         kind: ExecutionJobKind,
         compile_artifact_id: str | None = None,
         *,
-        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.execution_submission_timeout_ms,
     ) -> ExecutionJobSubmission:
         client = self.factory.create_client(record.session.connection)
         execution_request = record.submission(compile_artifact_id)
@@ -918,7 +918,7 @@ class ExecutionSessionService:
         session_id: str,
         *,
         wait: bool = False,
-        submit_timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
+        submit_timeout_ms: int = OPENHCS_ZMQ_CONFIG.execution_submission_timeout_ms,
         wait_timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> ExecutionJobRef | ExecutionJobStatus:
         return self._submit_job(
@@ -935,7 +935,7 @@ class ExecutionSessionService:
         *,
         compile_artifact_id: str | None = None,
         wait: bool = False,
-        submit_timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
+        submit_timeout_ms: int = OPENHCS_ZMQ_CONFIG.execution_submission_timeout_ms,
         wait_timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> ExecutionJobRef | ExecutionJobStatus:
         return self._submit_job(
