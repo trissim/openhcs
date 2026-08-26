@@ -12,7 +12,17 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Self,
+    Tuple,
+    TypeVar,
+)
 
 from objectstate.object_state import ObjectState, ObjectStateRegistry
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -158,11 +168,39 @@ def pipeline_editor_external_editor_enabled() -> bool:
     )
 
 
-class PipelineEditorActionTargetMode(str, Enum):
-    """ObjectState target mode for PipelineEditor action summaries."""
+PipelineEditorActionTargetT = TypeVar("PipelineEditorActionTargetT")
 
-    CURRENT_PIPELINE = "current_pipeline"
-    SELECTED_STEPS = "selected_steps"
+
+class PipelineEditorActionTargetMode(str, Enum):
+    """ObjectState target mode carrying its target-selection behavior."""
+
+    CURRENT_PIPELINE = (
+        "current_pipeline",
+        lambda current_pipeline, _selected_steps: current_pipeline,
+    )
+    SELECTED_STEPS = (
+        "selected_steps",
+        lambda _current_pipeline, selected_steps: selected_steps,
+    )
+
+    def __new__(
+        cls,
+        value: str,
+        selector: Callable[[object, object], object],
+    ) -> Self:
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member._selector = selector
+        return member
+
+    def select(
+        self,
+        *,
+        current_pipeline: PipelineEditorActionTargetT,
+        selected_steps: PipelineEditorActionTargetT,
+    ) -> PipelineEditorActionTargetT:
+        """Select the action target through this member's leaf."""
+        return self._selector(current_pipeline, selected_steps)
 
 
 class PipelineEditorAction(ManagerButtonPresentationMixin, str, Enum):

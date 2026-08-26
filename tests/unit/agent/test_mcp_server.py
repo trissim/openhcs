@@ -15236,19 +15236,6 @@ def test_mcp_ui_bridge_timeout_policy_derives_from_bridge_contract():
         raise AssertionError("large UI bridge MCP timeout was accepted")
 
 
-def test_mcp_ui_bridge_command_timeout_policy_derives_from_bridge_contract():
-    declared_timeout_ms = DEFAULT_UI_BRIDGE_CONNECTION_SPEC.timeout_ms
-    assert server.McpUiBridgeCommandTimeoutPolicy.resolve(None) == declared_timeout_ms
-    assert server.McpUiBridgeCommandTimeoutPolicy.resolve(750) == 750
-
-    try:
-        server.McpUiBridgeCommandTimeoutPolicy.resolve(declared_timeout_ms + 1)
-    except ValueError as exc:
-        assert "must not exceed" in str(exc)
-    else:
-        raise AssertionError("large UI bridge command MCP timeout was accepted")
-
-
 def test_mcp_dev_client_ui_connection_timeout_fails_before_mcp_call():
     if importlib.util.find_spec("mcp") is None:
         return
@@ -15323,22 +15310,6 @@ def test_mcp_dev_client_viewer_payload_timeout_fails_before_mcp_call():
         dev_client._calls_from_args(invalid_args)
 
 
-def test_mcp_viewer_command_timeout_policy_derives_from_viewer_contract():
-    assert server.McpViewerCommandTimeoutPolicy.resolve(None) == (
-        VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT
-    )
-    assert server.McpViewerCommandTimeoutPolicy.resolve(750) == 750
-
-    try:
-        server.McpViewerCommandTimeoutPolicy.resolve(
-            VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT + 1
-        )
-    except ValueError as exc:
-        assert "must not exceed" in str(exc)
-    else:
-        raise AssertionError("large viewer command MCP timeout was accepted")
-
-
 def test_mcp_viewer_connection_fields_project_timeout_policy():
     fields = server.McpViewerConnectionToolFields(
         port=5555,
@@ -15349,10 +15320,6 @@ def test_mcp_viewer_connection_fields_project_timeout_policy():
 
     assert (
         fields.to_control_args().timeout_ms == VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT
-    )
-    assert (
-        fields.to_control_args(server.McpViewerCommandTimeoutPolicy).timeout_ms
-        == VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT
     )
 
 
@@ -15365,7 +15332,7 @@ def test_mcp_viewer_connection_tool_fields_parse_nominal_transport_from_wire():
             "timeout_ms": 2000,
             "route_key": "image-layer",
         },
-        server.McpViewerCommandTimeoutPolicy,
+        server.McpViewerTimeoutPolicy,
     )
 
     assert control_args.connection.transport_mode is TransportMode.TCP
@@ -15373,7 +15340,7 @@ def test_mcp_viewer_connection_tool_fields_parse_nominal_transport_from_wire():
     assert control_args.timeout_ms == 2000
 
 
-def test_mcp_viewer_mutation_tools_default_to_command_timeout():
+def test_mcp_viewer_mutation_tools_use_declared_viewer_timeout():
     if importlib.util.find_spec("mcp") is None:
         return
 

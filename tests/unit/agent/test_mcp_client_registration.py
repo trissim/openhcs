@@ -71,8 +71,7 @@ def test_registered_client_targets_are_the_client_semantic_authority() -> None:
         "vscode": VsCodeClientRegistrationTarget,
     }
     assert (
-        CodexClientRegistrationTarget.display_name
-        == "ChatGPT desktop and OpenAI Codex"
+        CodexClientRegistrationTarget.display_name == "ChatGPT desktop and OpenAI Codex"
     )
 
 
@@ -419,8 +418,7 @@ def test_detected_failure_preserves_success_and_does_not_fail_required_contract(
     assert not report.ok
     assert report.required_ok
     assert [
-        (result.target_id, result.status, result.required)
-        for result in report.results
+        (result.target_id, result.status, result.required) for result in report.results
     ] == [
         ("codex", ClientRegistrationStatus.REGISTERED.value, True),
         ("cursor", ClientRegistrationStatus.FAILED.value, False),
@@ -456,9 +454,46 @@ def test_claude_config_path_is_owned_by_platform_specific_leaf_hook(
         environ=environ,
     )
 
-    assert ClaudeDesktopClientRegistrationTarget.config_path(
-        environment
-    ) == tmp_path / expected_relative
+    assert (
+        ClaudeDesktopClientRegistrationTarget.config_path(environment)
+        == tmp_path / expected_relative
+    )
+
+
+def test_claude_windows_leaf_owns_desktop_installation_forms(
+    tmp_path: Path,
+) -> None:
+    local_app_data = tmp_path / "LocalAppData"
+    program_files = tmp_path / "ProgramFiles"
+    environment = _environment(
+        tmp_path,
+        platform_key=AgentRuntimePlatformKey.WINDOWS,
+        environ={
+            "LOCALAPPDATA": str(local_app_data),
+            "PROGRAMFILES": str(program_files),
+        },
+    )
+
+    assert ClaudeDesktopClientRegistrationTarget.installation_paths(environment) == (
+        local_app_data / "AnthropicClaude" / "Claude.exe",
+        local_app_data / "Programs" / "Claude" / "Claude.exe",
+        program_files / "Claude" / "Claude.exe",
+    )
+
+    msix_package = local_app_data / "Packages" / "Claude_test"
+    msix_package.mkdir(parents=True)
+    assert ClaudeDesktopClientRegistrationTarget.desktop_app_installed(environment)
+
+
+def test_claude_desktop_is_explicitly_unsupported_on_linux(tmp_path: Path) -> None:
+    environment = _environment(
+        tmp_path,
+        platform_key=AgentRuntimePlatformKey.LINUX,
+    )
+
+    assert ClaudeDesktopClientRegistrationTarget.config_path(environment) is None
+    assert ClaudeDesktopClientRegistrationTarget.installation_paths(environment) == ()
+    assert not ClaudeDesktopClientRegistrationTarget.desktop_app_installed(environment)
 
 
 def test_claude_code_cli_alone_does_not_detect_claude_desktop(

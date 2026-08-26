@@ -58,19 +58,9 @@ class McpUiBridgeTimeoutPolicy(McpControlTimeoutPolicy):
     max_ms = DEFAULT_UI_BRIDGE_TIMEOUT_MS
 
 
-class McpUiBridgeCommandTimeoutPolicy(McpUiBridgeTimeoutPolicy):
-    """UI bridge command profile with the bridge-owned timeout bounds."""
-
-    label = "UI bridge command"
-
-
 class McpViewerTimeoutPolicy(McpControlTimeoutPolicy):
     """MCP projection of the viewer control timeout contract."""
 
     label = "Viewer"
     default_ms = VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT
     max_ms = VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT
-
-
-class McpViewerCommandTimeoutPolicy(McpViewerTimeoutPolicy):
-    """Viewer command profile with the viewer-owned timeout bounds."""

@@ -42,7 +42,6 @@ from python_introspect import dataclass_from_mapping
 from zmqruntime.config import TransportMode
 
 import openhcs as openhcs_package
-from openhcs.agent.authoring_contexts import AuthoringContextDeclaration
 from openhcs.agent.capabilities import (
     AgentCapabilityDeclaration,
     AgentCapabilityRegistry,
@@ -60,8 +59,6 @@ from openhcs.agent.capabilities import (
     AgentViewerWindowRequestServiceInvocation,
     CapabilityKind,
     CapabilityTransport,
-    CapabilityUiBridgeTimeoutProfile,
-    CapabilityViewerControlTimeoutProfile,
     FullLocalCapabilitySurfaceProfile,
     LocalCapabilitySurfaceProfile,
     agent_capabilities,
@@ -105,9 +102,7 @@ from openhcs.mcp.context import (
 )
 from openhcs.mcp.control_timeout import (
     McpControlTimeoutPolicy,
-    McpUiBridgeCommandTimeoutPolicy,
     McpUiBridgeTimeoutPolicy,
-    McpViewerCommandTimeoutPolicy,
     McpViewerTimeoutPolicy,
 )
 from openhcs.mcp.lifecycle import (
@@ -124,39 +119,7 @@ from openhcs.serialization.json import to_jsonable
 
 RequestT = TypeVar("RequestT")
 
-_AUTHORING_CONTEXT_KINDS = ", ".join(AuthoringContextDeclaration.allowed_values())
-MCP_SERVER_INSTRUCTIONS = (
-    "OpenHCS tools inspect, author, compile, execute, and validate high-content "
-    "microscopy workflows. "
-    f"Call {agent_capabilities.health_check.name} first. If OpenHCS is unfamiliar, call "
-    f"{agent_capabilities.get_authoring_context.name} with kind='first_use' before choosing "
-    "tools. That context is a compact orientation and intent router: follow it with the one "
-    "task-specific context relevant to the request instead of loading every guide. Then call "
-    f"{agent_capabilities.search_capabilities.name} with task-relevant workflow, target, "
-    "or text filters; its registry-owned workflow groups, target contexts, side effects, "
-    "and security metadata are the authority for selecting the safe tool for that route. "
-    f"Use {agent_capabilities.list_capabilities.name} only when the complete selected "
-    "surface is required. Registered context "
-    f"kinds are: {_AUTHORING_CONTEXT_KINDS}. "
-    "Start read-only. Inspect the source model and take bounded representative samples "
-    "before authoring or loading image data. Keep ingestion and semantic selection "
-    "separate: recognized HCS layouts retain their native handler; CZI, OME-TIFF, and "
-    "other supported rich containers retain Bio-Formats/store decoding. "
-    "SourceBindingsConfig may name or select the planes emitted after discovery; "
-    "SourceBindingsHandler is the fallback ingestion owner only for an otherwise "
-    "unrecognized arbitrary-file folder. "
-    "Choose the state owner from user intent. A UI-visible request uses capabilities for "
-    "the already-running OpenHCS GUI; use a headless route only when UI visibility is not "
-    "required. Both routes project the same typed declarations. One pipeline is a "
-    "PipelineDocument containing PipelineConfig and an ordered list[FunctionStep]. Use "
-    f"{agent_capabilities.describe_config_schema.name} to obtain authoritative nested "
-    "configuration fields and valid values. Search/read focused knowledge with "
-    f"{agent_capabilities.search_knowledge.name} and "
-    f"{agent_capabilities.get_knowledge_document.name} before inventing pipeline "
-    "structure. Review the target mutation, refresh revision/request tokens, compile "
-    "before running, then validate structured execution results and bounded viewer "
-    "evidence. Local file access remains restricted by AgentPathPolicy."
-)
+MCP_SERVER_INSTRUCTIONS = CapabilityTransport.LOCAL_STDIO.server_instructions()
 
 
 def _request_parameter_annotation(
@@ -235,14 +198,7 @@ _McpUiBridgeTimeoutParameter = _timeout_parameter_annotation(McpUiBridgeTimeoutP
 
 
 MCP_HOSTED_SERVER_INSTRUCTIONS = (
-    "OpenHCS hosted tools expose only the capability declarations audited for "
-    "server-side use. Call "
-    f"{agent_capabilities.search_capabilities.name} with task-relevant filters before "
-    f"choosing a tool; use {agent_capabilities.list_capabilities.name} only for the "
-    "complete selected surface. This "
-    "surface provides read-only packaged knowledge, architecture, processing-function, "
-    "and configuration-schema discovery. It cannot access client-local files, GUI "
-    "bridges, viewer windows, runtime processes, draft state, or execution sessions."
+    CapabilityTransport.HOSTED_STREAMABLE_HTTP.server_instructions()
 )
 
 
@@ -445,14 +401,6 @@ def _mcp_tool_meta(capability: AgentCapabilitySpec) -> dict[str, str]:
     """Advertise the nominal result owner alongside the JSON object schema."""
     output_contract = require_agent_type_contract(capability.output_contract)
     return {"openhcs/outputContract": output_contract.__name__}
-
-
-def _mcp_server_instructions(transport: CapabilityTransport) -> str:
-    if transport is CapabilityTransport.LOCAL_STDIO:
-        return MCP_SERVER_INSTRUCTIONS
-    if transport is CapabilityTransport.HOSTED_STREAMABLE_HTTP:
-        return MCP_HOSTED_SERVER_INSTRUCTIONS
-    raise ValueError(f"Unsupported MCP capability transport: {transport!r}")
 
 
 def _mcp_exposed_binding_types(
@@ -1117,13 +1065,7 @@ class GeneratedMcpUiRequestToolBinding:
             raise TypeError(
                 f"{declaration.__name__} requires AgentConnectionRequestServiceInvocation."
             )
-        if invocation.timeout_profile is CapabilityUiBridgeTimeoutProfile.COMMAND:
-            return McpUiBridgeCommandTimeoutPolicy
-        if invocation.timeout_profile is CapabilityUiBridgeTimeoutProfile.DEFAULT:
-            return McpUiBridgeTimeoutPolicy
-        raise TypeError(
-            f"Unsupported UI bridge timeout profile: {invocation.timeout_profile!r}"
-        )
+        return McpUiBridgeTimeoutPolicy
 
 
 def generated_ui_request_capability_declarations() -> (
@@ -2139,13 +2081,7 @@ class GeneratedMcpViewerRequestToolBinding:
             raise TypeError(
                 f"{declaration.__name__} requires AgentViewerWindowRequestServiceInvocation."
             )
-        if invocation.timeout_profile is CapabilityViewerControlTimeoutProfile.COMMAND:
-            return McpViewerCommandTimeoutPolicy
-        if invocation.timeout_profile is CapabilityViewerControlTimeoutProfile.DEFAULT:
-            return McpViewerTimeoutPolicy
-        raise TypeError(
-            f"Unsupported viewer timeout profile: {invocation.timeout_profile!r}"
-        )
+        return McpViewerTimeoutPolicy
 
 
 def generated_viewer_request_capability_declarations() -> (
@@ -2227,7 +2163,7 @@ def build_server(
     )
     server = fastmcp_factory(
         "OpenHCS",
-        instructions=_mcp_server_instructions(capability_transport),
+        instructions=capability_transport.server_instructions(),
     )
 
     def observe_invocation(

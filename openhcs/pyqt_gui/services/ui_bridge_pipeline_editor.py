@@ -60,7 +60,6 @@ from openhcs.pyqt_gui.services.ui_bridge_registry import (
 )
 from openhcs.pyqt_gui.widgets.pipeline_editor import (
     PipelineEditorAction,
-    PipelineEditorActionTargetMode,
     PipelineEditorWidget,
 )
 from openhcs.pyqt_gui.widgets.debug_toolbar import DebugToolbarWidget
@@ -344,18 +343,18 @@ class PipelineEditorActionProvider(ManagerWidgetActionProviderABC):
         return PipelineEditorAction
 
     def _target_scope_ids(self, action: PipelineEditorAction) -> tuple[str, ...]:
-        if action.target_mode is PipelineEditorActionTargetMode.CURRENT_PIPELINE:
-            if not self._manager.current_plate:
-                return ()
-            return (
-                PipelineScopeIdentity.from_plate_scope(
-                    self._manager.current_plate
-                ).scope_id,
-            )
-        if action.target_mode is PipelineEditorActionTargetMode.SELECTED_STEPS:
-            return self._selected_step_scope_ids()
-        raise ValueError(
-            f"Unsupported PipelineEditor target mode: {action.target_mode}"
+        return action.target_mode.select(
+            current_pipeline=self._current_pipeline_scope_ids(),
+            selected_steps=self._selected_step_scope_ids(),
+        )
+
+    def _current_pipeline_scope_ids(self) -> tuple[str, ...]:
+        if not self._manager.current_plate:
+            return ()
+        return (
+            PipelineScopeIdentity.from_plate_scope(
+                self._manager.current_plate
+            ).scope_id,
         )
 
     def _side_effects(self, action: PipelineEditorAction) -> tuple[str, ...]:
@@ -368,9 +367,10 @@ class PipelineEditorActionProvider(ManagerWidgetActionProviderABC):
         return action.target_mode.value
 
     def _disabled_hint(self, action: PipelineEditorAction) -> str:
-        if action.target_mode is PipelineEditorActionTargetMode.SELECTED_STEPS:
-            return self.selected_steps_disabled_hint
-        return self.current_pipeline_disabled_hint
+        return action.target_mode.select(
+            current_pipeline=self.current_pipeline_disabled_hint,
+            selected_steps=self.selected_steps_disabled_hint,
+        )
 
     def _selected_step_scope_ids(self) -> tuple[str, ...]:
         return self._manager.selected_step_scope_ids()

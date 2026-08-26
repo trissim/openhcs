@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from abc import ABC
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from dataclasses import fields as dataclass_fields
 from enum import Enum
 from math import isfinite
-from typing import ClassVar, Generic, TypeAlias, TypeVar
+from typing import ClassVar, Generic, Self, TypeAlias, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -178,11 +178,96 @@ class CapabilityKind(Enum):
     PROMPT = "prompt"
 
 
-class CapabilityTransport(Enum):
-    """MCP exposure boundary on which a capability may be registered."""
+class CapabilityTransportSemanticsABC(ABC):
+    """Nominal owner of one MCP transport's server-facing semantics."""
 
-    LOCAL_STDIO = "local_stdio"
-    HOSTED_STREAMABLE_HTTP = "hosted_streamable_http"
+    @abstractmethod
+    def server_instructions(self) -> str:
+        """Render instructions for the capability surface exposed here."""
+        raise NotImplementedError
+
+
+class LocalStdioCapabilityTransportSemantics(CapabilityTransportSemanticsABC):
+    """Instructions for a local agent controlling the desktop and local runtime."""
+
+    def server_instructions(self) -> str:
+        from openhcs.agent.authoring_contexts import AuthoringContextDeclaration
+
+        authoring_context_kinds = ", ".join(
+            AuthoringContextDeclaration.allowed_values()
+        )
+        return (
+            "OpenHCS tools inspect, author, compile, execute, and validate high-content "
+            "microscopy workflows. "
+            f"Call {agent_capabilities.health_check.name} first. If OpenHCS is unfamiliar, call "
+            f"{agent_capabilities.get_authoring_context.name} with kind='first_use' before choosing "
+            "tools. That context is a compact orientation and intent router: follow it with the one "
+            "task-specific context relevant to the request instead of loading every guide. Then call "
+            f"{agent_capabilities.search_capabilities.name} with task-relevant workflow, target, "
+            "or text filters; its registry-owned workflow groups, target contexts, side effects, "
+            "and security metadata are the authority for selecting the safe tool for that route. "
+            f"Use {agent_capabilities.list_capabilities.name} only when the complete selected "
+            "surface is required. Registered context "
+            f"kinds are: {authoring_context_kinds}. "
+            "Start read-only. Inspect the source model and take bounded representative samples "
+            "before authoring or loading image data. Keep ingestion and semantic selection "
+            "separate: recognized HCS layouts retain their native handler; CZI, OME-TIFF, and "
+            "other supported rich containers retain Bio-Formats/store decoding. "
+            "SourceBindingsConfig may name or select the planes emitted after discovery; "
+            "SourceBindingsHandler is the fallback ingestion owner only for an otherwise "
+            "unrecognized arbitrary-file folder. "
+            "Choose the state owner from user intent. A UI-visible request uses capabilities for "
+            "the already-running OpenHCS GUI; use a headless route only when UI visibility is not "
+            "required. Both routes project the same typed declarations. One pipeline is a "
+            "PipelineDocument containing PipelineConfig and an ordered list[FunctionStep]. Use "
+            f"{agent_capabilities.describe_config_schema.name} to obtain authoritative nested "
+            "configuration fields and valid values. Search/read focused knowledge with "
+            f"{agent_capabilities.search_knowledge.name} and "
+            f"{agent_capabilities.get_knowledge_document.name} before inventing pipeline "
+            "structure. Review the target mutation, refresh revision/request tokens, compile "
+            "before running, then validate structured execution results and bounded viewer "
+            "evidence. Local file access remains restricted by AgentPathPolicy."
+        )
+
+
+class HostedHttpCapabilityTransportSemantics(CapabilityTransportSemanticsABC):
+    """Instructions for the audited read-only hosted capability surface."""
+
+    def server_instructions(self) -> str:
+        return (
+            "OpenHCS hosted tools expose only the capability declarations audited for "
+            "server-side use. Call "
+            f"{agent_capabilities.search_capabilities.name} with task-relevant filters before "
+            f"choosing a tool; use {agent_capabilities.list_capabilities.name} only for the "
+            "complete selected surface. This "
+            "surface provides read-only packaged knowledge, architecture, processing-function, "
+            "and configuration-schema discovery. It cannot access client-local files, GUI "
+            "bridges, viewer windows, runtime processes, draft state, or execution sessions."
+        )
+
+
+class CapabilityTransport(Enum):
+    """MCP exposure boundary carrying its nominal server semantics."""
+
+    LOCAL_STDIO = ("local_stdio", LocalStdioCapabilityTransportSemantics)
+    HOSTED_STREAMABLE_HTTP = (
+        "hosted_streamable_http",
+        HostedHttpCapabilityTransportSemantics,
+    )
+
+    def __new__(
+        cls,
+        wire_value: str,
+        semantics_type: type[CapabilityTransportSemanticsABC],
+    ) -> Self:
+        member = object.__new__(cls)
+        member._value_ = wire_value
+        member._semantics_type = semantics_type
+        return member
+
+    def server_instructions(self) -> str:
+        """Render instructions through this member's nominal leaf."""
+        return self._semantics_type().server_instructions()
 
 
 class CapabilityCliConnectionProfile(Enum):
@@ -467,20 +552,6 @@ class AgentCapabilityExposition:
         )
 
 
-class CapabilityViewerControlTimeoutProfile(Enum):
-    """Viewer-window control timeout profile required by a capability."""
-
-    DEFAULT = "default"
-    COMMAND = "command"
-
-
-class CapabilityUiBridgeTimeoutProfile(Enum):
-    """UI-bridge timeout profile required by a capability."""
-
-    DEFAULT = "default"
-    COMMAND = "command"
-
-
 @dataclass(frozen=True, slots=True)
 class AgentScalarInputContract:
     """Nominal contract for a scalar transport field without a request DTO."""
@@ -671,9 +742,6 @@ class AgentConnectionRequestServiceInvocation(
 
     service: Callable[[AgentContextT], AgentServiceT]
     method: Callable[[AgentServiceT, AgentRequestT, AgentConnectionT], AgentResultT]
-    timeout_profile: CapabilityUiBridgeTimeoutProfile = (
-        CapabilityUiBridgeTimeoutProfile.DEFAULT
-    )
 
     def execute(
         self,
@@ -815,10 +883,6 @@ class AgentViewerWindowRequestServiceInvocation(
     Generic[AgentContextT, AgentServiceT, AgentRequestT, AgentResultT],
 ):
     """Marker for viewer-window request DTOs exposed through control options."""
-
-    timeout_profile: CapabilityViewerControlTimeoutProfile = (
-        CapabilityViewerControlTimeoutProfile.DEFAULT
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -2765,7 +2829,6 @@ class NavigateViewerWindowCapability(ViewerWindowCliConnectionCapability):
     request_invocation = AgentViewerWindowRequestServiceInvocation(
         service=lambda context: context.viewer_window_service,
         method=lambda service, request: service.navigate_window(request),
-        timeout_profile=CapabilityViewerControlTimeoutProfile.COMMAND,
     )
 
 
@@ -2788,7 +2851,6 @@ class IsolateViewerWindowLayersCapability(ViewerWindowCliConnectionCapability):
     request_invocation = AgentViewerWindowRequestServiceInvocation(
         service=lambda context: context.viewer_window_service,
         method=lambda service, request: service.isolate_layers(request),
-        timeout_profile=CapabilityViewerControlTimeoutProfile.COMMAND,
     )
 
 
@@ -2972,7 +3034,6 @@ class UiInvokeActionCapability(UiSemanticActionCapability):
             request,
             connection,
         ),
-        timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
 
@@ -3003,7 +3064,6 @@ class UiSelectedPlateWorkflowCapability(UiSelectedPlateCapability):
             request,
             connection,
         ),
-        timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
 
@@ -3037,7 +3097,6 @@ class UiFocusWindowCapability(UiWindowCapability):
             request,
             connection,
         ),
-        timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
 
@@ -3059,7 +3118,6 @@ class UiNavigateWindowCapability(UiWindowCapability):
             request,
             connection,
         ),
-        timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
 
@@ -3083,7 +3141,6 @@ class UiCloseWindowCapability(UiWindowCapability):
             request,
             connection,
         ),
-        timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
 
@@ -3107,7 +3164,6 @@ class UiSnapshotWindowCapability(UiWindowCapability):
             request,
             connection,
         ),
-        timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
 
@@ -3158,7 +3214,6 @@ class UiInvokeWidgetActionCapability(UiWidgetFallbackCapability):
             request,
             connection,
         ),
-        timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
 
@@ -3284,7 +3339,6 @@ class UiMutateObjectStateFieldCapability(UiObjectStateCapability):
             request,
             connection,
         ),
-        timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
 
@@ -3364,7 +3418,6 @@ class UiApplyCodeDocumentCapability(UiCodeDocumentCapability):
             request,
             connection,
         ),
-        timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
 
@@ -3408,7 +3461,6 @@ class UiRestoreSnapshotCapability(UiSnapshotCapability):
             request,
             connection,
         ),
-        timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
 
@@ -3430,7 +3482,6 @@ class UiTimeTravelHeadCapability(UiSnapshotCapability):
             request,
             connection,
         ),
-        timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
 
@@ -3469,7 +3520,6 @@ class UiSwitchBranchCapability(UiSnapshotCapability):
             request,
             connection,
         ),
-        timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
 
@@ -3522,7 +3572,6 @@ class UiWaitForOperationReceiptCapability(UiBridgeCliConnectionCapability):
             request,
             connection,
         ),
-        timeout_profile=CapabilityUiBridgeTimeoutProfile.COMMAND,
     )
 
 

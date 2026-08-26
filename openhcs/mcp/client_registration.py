@@ -8,25 +8,25 @@ surface without exposing the installer's versioned environment layout.
 from __future__ import annotations
 
 import argparse
-from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
-from enum import Enum
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
+from abc import ABC, abstractmethod
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import asdict, dataclass
+from enum import Enum
+from pathlib import Path
 from typing import Any, ClassVar
 
-from metaclass_registry import AutoRegisterMeta
 import tomlkit
+from metaclass_registry import AutoRegisterMeta
 from tomlkit.items import InlineTable
 
 from openhcs.agent.runtime_platform import AgentRuntimePlatformKey
-
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 
 CLIENT_REGISTRATION_SCHEMA_VERSION = "openhcs.mcp.client-registration.v1"
 OPENHCS_MCP_SERVER_NAME = "openhcs"
@@ -97,6 +97,115 @@ class ClientRegistrationEnvironment:
             if resolved:
                 return resolved
         return None
+
+
+class ClaudeDesktopPlatformSemanticsABC(
+    EnumKeyedStrategyMixin[AgentRuntimePlatformKey],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered owner of Claude Desktop paths for one supported platform."""
+
+    __enum_member_attr__ = "platform_key"
+    platform_key: ClassVar[AgentRuntimePlatformKey]
+
+    @abstractmethod
+    def config_path(self, environment: ClientRegistrationEnvironment) -> Path:
+        """Return the documented per-user Claude Desktop configuration path."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def installation_paths(
+        self,
+        environment: ClientRegistrationEnvironment,
+    ) -> tuple[Path, ...]:
+        """Return stable desktop-app paths, excluding Claude Code CLI paths."""
+        raise NotImplementedError
+
+    def desktop_app_installed(
+        self,
+        environment: ClientRegistrationEnvironment,
+    ) -> bool:
+        """Return whether a declared desktop application path exists."""
+        return any(path.exists() for path in self.installation_paths(environment))
+
+
+class WindowsClaudeDesktopPlatformSemantics(ClaudeDesktopPlatformSemanticsABC):
+    """Claude Desktop configuration and installation paths on Windows."""
+
+    platform_key = AgentRuntimePlatformKey.WINDOWS
+
+    def config_path(self, environment: ClientRegistrationEnvironment) -> Path:
+        app_data = environment.environ.get("APPDATA")
+        if app_data:
+            return Path(app_data) / "Claude" / "claude_desktop_config.json"
+        return (
+            environment.home
+            / "AppData"
+            / "Roaming"
+            / "Claude"
+            / "claude_desktop_config.json"
+        )
+
+    def installation_paths(
+        self,
+        environment: ClientRegistrationEnvironment,
+    ) -> tuple[Path, ...]:
+        candidates: list[Path] = []
+        local_app_data = environment.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            local_root = Path(local_app_data)
+            candidates.extend(
+                (
+                    local_root / "AnthropicClaude" / "Claude.exe",
+                    local_root / "Programs" / "Claude" / "Claude.exe",
+                )
+            )
+        program_files = environment.environ.get("PROGRAMFILES")
+        if program_files:
+            candidates.append(Path(program_files) / "Claude" / "Claude.exe")
+        program_files_x86 = environment.environ.get("PROGRAMFILES(X86)")
+        if program_files_x86:
+            candidates.append(Path(program_files_x86) / "Claude" / "Claude.exe")
+        return tuple(candidates)
+
+    def desktop_app_installed(
+        self,
+        environment: ClientRegistrationEnvironment,
+    ) -> bool:
+        if super().desktop_app_installed(environment):
+            return True
+        local_app_data = environment.environ.get("LOCALAPPDATA")
+        if not local_app_data:
+            return False
+        packages_root = Path(local_app_data) / "Packages"
+        return packages_root.is_dir() and any(
+            package_path.is_dir() for package_path in packages_root.glob("Claude_*")
+        )
+
+
+class MacOSClaudeDesktopPlatformSemantics(ClaudeDesktopPlatformSemanticsABC):
+    """Claude Desktop configuration and installation paths on macOS."""
+
+    platform_key = AgentRuntimePlatformKey.MACOS
+
+    def config_path(self, environment: ClientRegistrationEnvironment) -> Path:
+        return (
+            environment.home
+            / "Library"
+            / "Application Support"
+            / "Claude"
+            / "claude_desktop_config.json"
+        )
+
+    def installation_paths(
+        self,
+        environment: ClientRegistrationEnvironment,
+    ) -> tuple[Path, ...]:
+        return (
+            Path("/Applications/Claude.app"),
+            environment.home / "Applications" / "Claude.app",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,9 +321,7 @@ class ClientConfigFormatError(ValueError):
 class McpClientRegistrationTarget(ABC, metaclass=AutoRegisterMeta):
     """True owner for local MCP client detection and configuration."""
 
-    __registry__: ClassVar[
-        dict[str, type["McpClientRegistrationTarget"]]
-    ] = {}
+    __registry__: ClassVar[dict[str, type["McpClientRegistrationTarget"]]] = {}
     __registry_key__ = "target_id"
     __skip_if_no_key__ = True
     __registry_name__ = "MCP client registration target"
@@ -317,32 +424,25 @@ class ClaudeDesktopClientRegistrationTarget(McpClientRegistrationTarget):
     target_id = "claude-desktop"
     display_name = "Claude Desktop"
 
+    @staticmethod
+    def _platform_semantics(
+        environment: ClientRegistrationEnvironment,
+    ) -> ClaudeDesktopPlatformSemanticsABC | None:
+        try:
+            return ClaudeDesktopPlatformSemanticsABC.for_enum_member(
+                environment.platform_key
+            )
+        except KeyError:
+            return None
+
     @classmethod
     def config_path(
         cls,
         environment: ClientRegistrationEnvironment,
     ) -> Path | None:
         """Return the documented per-user Claude Desktop configuration."""
-        if environment.platform_key is AgentRuntimePlatformKey.WINDOWS:
-            app_data = environment.environ.get("APPDATA")
-            if app_data:
-                return Path(app_data) / "Claude" / "claude_desktop_config.json"
-            return (
-                environment.home
-                / "AppData"
-                / "Roaming"
-                / "Claude"
-                / "claude_desktop_config.json"
-            )
-        if environment.platform_key is AgentRuntimePlatformKey.MACOS:
-            return (
-                environment.home
-                / "Library"
-                / "Application Support"
-                / "Claude"
-                / "claude_desktop_config.json"
-            )
-        return None
+        semantics = cls._platform_semantics(environment)
+        return None if semantics is None else semantics.config_path(environment)
 
     @classmethod
     def diagnostic_config_path(
@@ -357,32 +457,8 @@ class ClaudeDesktopClientRegistrationTarget(McpClientRegistrationTarget):
         environment: ClientRegistrationEnvironment,
     ) -> tuple[Path, ...]:
         """Return stable desktop-app paths, never Claude Code CLI paths."""
-        if environment.platform_key is AgentRuntimePlatformKey.WINDOWS:
-            local_app_data = environment.environ.get("LOCALAPPDATA")
-            program_files = environment.environ.get("PROGRAMFILES")
-            program_files_x86 = environment.environ.get("PROGRAMFILES(X86)")
-            candidates: list[Path] = []
-            if local_app_data:
-                local_root = Path(local_app_data)
-                candidates.extend(
-                    (
-                        local_root / "AnthropicClaude" / "Claude.exe",
-                        local_root / "Programs" / "Claude" / "Claude.exe",
-                    )
-                )
-            if program_files:
-                candidates.append(Path(program_files) / "Claude" / "Claude.exe")
-            if program_files_x86:
-                candidates.append(
-                    Path(program_files_x86) / "Claude" / "Claude.exe"
-                )
-            return tuple(candidates)
-        if environment.platform_key is AgentRuntimePlatformKey.MACOS:
-            return (
-                Path("/Applications/Claude.app"),
-                environment.home / "Applications" / "Claude.app",
-            )
-        return ()
+        semantics = cls._platform_semantics(environment)
+        return () if semantics is None else semantics.installation_paths(environment)
 
     @classmethod
     def desktop_app_installed(
@@ -390,25 +466,16 @@ class ClaudeDesktopClientRegistrationTarget(McpClientRegistrationTarget):
         environment: ClientRegistrationEnvironment,
     ) -> bool:
         """Detect a desktop app, including the documented Windows MSIX form."""
-        if any(path.exists() for path in cls.installation_paths(environment)):
-            return True
-        if environment.platform_key is not AgentRuntimePlatformKey.WINDOWS:
-            return False
-        local_app_data = environment.environ.get("LOCALAPPDATA")
-        if not local_app_data:
-            return False
-        packages_root = Path(local_app_data) / "Packages"
-        return packages_root.is_dir() and any(
-            package_path.is_dir()
-            for package_path in packages_root.glob("Claude_*")
+        semantics = cls._platform_semantics(environment)
+        return (
+            False if semantics is None else semantics.desktop_app_installed(environment)
         )
 
     @classmethod
     def detected(cls, environment: ClientRegistrationEnvironment) -> bool:
         config_path = cls.config_path(environment)
         return (
-            config_path is not None
-            and config_path.exists()
+            config_path is not None and config_path.exists()
         ) or cls.desktop_app_installed(environment)
 
     @classmethod
@@ -641,9 +708,7 @@ def _update_codex_toml(
         )
 
     server = (
-        tomlkit.inline_table()
-        if isinstance(servers, InlineTable)
-        else tomlkit.table()
+        tomlkit.inline_table() if isinstance(servers, InlineTable) else tomlkit.table()
     )
     server.add("command", launcher.command)
     server.add("args", list(launcher.arguments))
