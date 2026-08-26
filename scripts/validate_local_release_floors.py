@@ -18,12 +18,13 @@ import json
 import subprocess
 import time
 import tomllib
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 from packaging.requirements import Requirement
-from packaging.utils import canonicalize_name
+from packaging.utils import NormalizedName, canonicalize_name
 from packaging.version import Version
 
 from scripts.wait_for_pypi_release import (
@@ -45,7 +46,7 @@ class ProjectMetadata:
     path: Path
 
     @property
-    def canonical_name(self) -> str:
+    def canonical_name(self) -> NormalizedName:
         return canonicalize_name(self.name)
 
 
@@ -142,6 +143,16 @@ class CandidatePublication:
                 "available release probe returned no wheel URL"
             )
         return self.probe.wheel_url
+
+
+@dataclass(frozen=True)
+class LocalCandidateInventory:
+    """One metadata-derived topology shared by source and release proofs."""
+
+    root_project: ProjectMetadata
+    projects: tuple[ReleaseCandidate, ...]
+    projects_by_name: Mapping[NormalizedName, ReleaseCandidate]
+    errors: tuple[str, ...]
 
 
 def read_project(path: Path) -> ProjectMetadata:
@@ -282,22 +293,26 @@ def _release_source_error(project: ReleaseCandidate) -> str | None:
     return None
 
 
-def validate(repo_root: Path = REPO_ROOT) -> tuple[str, ...]:
-    """Return release-floor errors, leaving all project metadata untouched."""
+def _candidate_inventory(
+    repo_root: Path,
+) -> LocalCandidateInventory:
+    """Discover one metadata-owned local candidate topology."""
+
     root_project = read_project(repo_root / "pyproject.toml")
     local_projects = discover_local_projects(repo_root)
     if not local_projects:
-        return ("No local candidate projects found under external/*/pyproject.toml",)
+        return LocalCandidateInventory(
+            root_project=root_project,
+            projects=(),
+            projects_by_name=MappingProxyType({}),
+            errors=(
+                "No local candidate projects found under external/*/pyproject.toml",
+            ),
+        )
 
-    candidates: dict[str, ReleaseCandidate] = {}
+    candidates: dict[NormalizedName, ReleaseCandidate] = {}
     errors: list[str] = []
     for project in local_projects:
-        if project.version.is_prerelease:
-            errors.append(
-                f"Local release candidate {project.name}=={project.version} is a "
-                "prerelease; installer-facing dependency floors must use stable "
-                "published versions"
-            )
         existing = candidates.get(project.canonical_name)
         if existing is not None:
             errors.append(
@@ -307,11 +322,25 @@ def validate(repo_root: Path = REPO_ROOT) -> tuple[str, ...]:
             continue
         candidates[project.canonical_name] = project
 
+    return LocalCandidateInventory(
+        root_project=root_project,
+        projects=local_projects,
+        projects_by_name=MappingProxyType(candidates),
+        errors=tuple(errors),
+    )
+
+
+def _candidate_compatibility_errors(
+    inventory: LocalCandidateInventory,
+) -> tuple[str, ...]:
+    """Validate that current package declarations can resolve together."""
+
     root_requirements = {
         canonicalize_name(requirement.name): requirement
-        for requirement in root_project.dependencies
+        for requirement in inventory.root_project.dependencies
     }
-    for candidate_name, candidate in sorted(candidates.items()):
+    errors: list[str] = []
+    for candidate_name, candidate in sorted(inventory.projects_by_name.items()):
         requirement = root_requirements.get(candidate_name)
         if requirement is None:
             errors.append(
@@ -325,7 +354,59 @@ def validate(repo_root: Path = REPO_ROOT) -> tuple[str, ...]:
                 f"OpenHCS requirement {requirement} excludes available local candidate "
                 f"{candidate.name}=={candidate.version}"
             )
-        elif not compatibility.requires_candidate_floor:
+
+    for project in inventory.projects:
+        for requirement in project.dependencies:
+            dependency = inventory.projects_by_name.get(
+                canonicalize_name(requirement.name)
+            )
+            if dependency is None:
+                continue
+            compatibility = CandidateRequirementCompatibility(requirement, dependency)
+            if not compatibility.accepts_candidate:
+                errors.append(
+                    f"{project.name}=={project.version} requirement {requirement} "
+                    f"excludes available local candidate "
+                    f"{dependency.name}=={dependency.version}"
+                )
+
+    return tuple(errors)
+
+
+def validate_local_candidate_compatibility(
+    repo_root: Path = REPO_ROOT,
+) -> tuple[str, ...]:
+    """Return errors that prevent current local package snapshots coexisting."""
+
+    inventory = _candidate_inventory(repo_root)
+    return inventory.errors + _candidate_compatibility_errors(inventory)
+
+
+def validate(repo_root: Path = REPO_ROOT) -> tuple[str, ...]:
+    """Return installer-facing release-floor errors without mutating metadata."""
+
+    inventory = _candidate_inventory(repo_root)
+    errors = list(inventory.errors)
+    errors.extend(_candidate_compatibility_errors(inventory))
+
+    root_requirements = {
+        canonicalize_name(requirement.name): requirement
+        for requirement in inventory.root_project.dependencies
+    }
+    for candidate_name, candidate in sorted(inventory.projects_by_name.items()):
+        if candidate.version.is_prerelease:
+            errors.append(
+                f"Local release candidate {candidate.name}=={candidate.version} is a "
+                "prerelease; installer-facing dependency floors must use stable "
+                "published versions"
+            )
+        requirement = root_requirements.get(candidate_name)
+        if requirement is None:
+            continue
+        compatibility = CandidateRequirementCompatibility(requirement, candidate)
+        if not compatibility.accepts_candidate:
+            continue
+        if not compatibility.requires_candidate_floor:
             errors.append(
                 f"OpenHCS requirement {requirement} does not require local candidate "
                 f"floor {candidate.name}>={candidate.version}"
@@ -339,21 +420,10 @@ def validate(repo_root: Path = REPO_ROOT) -> tuple[str, ...]:
                 f"{compatibility.breaking_release_boundary}"
             )
 
-    for project in local_projects:
+    for project in inventory.projects:
         source_error = _release_source_error(project)
         if source_error is not None:
             errors.append(source_error)
-        for requirement in project.dependencies:
-            dependency = candidates.get(canonicalize_name(requirement.name))
-            if dependency is None:
-                continue
-            compatibility = CandidateRequirementCompatibility(requirement, dependency)
-            if not compatibility.accepts_candidate:
-                errors.append(
-                    f"{project.name}=={project.version} requirement {requirement} "
-                    f"excludes available local candidate "
-                    f"{dependency.name}=={dependency.version}"
-                )
 
     return tuple(errors)
 

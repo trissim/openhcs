@@ -73,17 +73,6 @@ on:
         options:
         - cpu-only
         - full-coverage
-      dependency_source:
-        description: 'Dependency source for external modules'
-        required: true
-        default: 'pypi'
-        type: choice
-        options:
-        - submodules
-        - pypi
-
-env:
-  OPENHCS_CI_DEP_SOURCE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dependency_source || 'pypi' }}
 
 permissions:
   actions: read
@@ -92,7 +81,6 @@ permissions:
 jobs:
   # Foundational unit-test gate, including GUI-backed tests under tests/unit.
   unit-tests:
-    needs: pypi-dependency-readiness
     runs-on: ubuntu-latest
     timeout-minutes: 45
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -137,8 +125,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip build
           python -m scripts.install_ci_candidate \
-            --dependency-source "$OPENHCS_CI_DEP_SOURCE" \
-            --published-wheel-requirements-json '${{ needs.pypi-dependency-readiness.outputs.published_wheel_requirements }}' \
+            --dependency-source submodules \
             --wheel-directory "$RUNNER_TEMP/openhcs-candidate-wheels" \
             --extras dev,dev-gui,gui,cellprofiler-compat,fiji,mcp-http,napari
 
@@ -171,7 +158,6 @@ jobs:
   # candidate. PyPI-facing jobs continue to prove the published dependency
   # boundary independently.
   gui-tests:
-    needs: pypi-dependency-readiness
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -196,15 +182,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip build
           python -m scripts.install_ci_candidate \
-            --dependency-source "$OPENHCS_CI_DEP_SOURCE" \
-            --published-wheel-requirements-json '${{ needs.pypi-dependency-readiness.outputs.published_wheel_requirements }}' \
+            --dependency-source submodules \
             --wheel-directory "$RUNNER_TEMP/openhcs-candidate-wheels" \
             --extras dev,dev-gui,gui
-          python -m build --wheel \
-            --outdir "$RUNNER_TEMP/pyqt-reactive-candidate" \
-            external/pyqt-reactive
-          python -m pip install --no-deps --force-reinstall \
-            "$RUNNER_TEMP"/pyqt-reactive-candidate/pyqt_reactive-*.whl
 
       - name: Run PyQt GUI tests
         env:
@@ -229,7 +209,6 @@ jobs:
   # Test oldest (3.11) and newest (3.13) Python on all 3 OSes
   # Python 3.14 excluded: no pre-built NumPy wheels yet (builds from source stall on Windows)
   python-boundary-tests:
-    needs: pypi-dependency-readiness
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -249,7 +228,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: ${{ env.OPENHCS_CI_DEP_SOURCE == 'submodules' && 'recursive' || 'false' }}
+          submodules: recursive
 
       - name: Setup Python ${{ matrix.python-version }}
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -271,8 +250,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip build
           python -m scripts.install_ci_candidate \
-            --dependency-source "$OPENHCS_CI_DEP_SOURCE" \
-            --published-wheel-requirements-json '${{ needs.pypi-dependency-readiness.outputs.published_wheel_requirements }}' \
+            --dependency-source submodules \
             --wheel-directory "$RUNNER_TEMP/openhcs-candidate-wheels" \
             --extras dev,cellprofiler-compat \
             --requirement pytest-split==0.11.0
@@ -374,7 +352,6 @@ jobs:
   # Group 2: Backend and microscope coverage (12 jobs)
   # Test all backend/microscope combinations on all 3 OSes with Python 3.12
   backend-microscope-tests:
-    needs: pypi-dependency-readiness
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -394,7 +371,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: ${{ env.OPENHCS_CI_DEP_SOURCE == 'submodules' && 'recursive' || 'false' }}
+          submodules: recursive
 
       - name: Setup Python 3.12
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -416,8 +393,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip build
           python -m scripts.install_ci_candidate \
-            --dependency-source "$OPENHCS_CI_DEP_SOURCE" \
-            --published-wheel-requirements-json '${{ needs.pypi-dependency-readiness.outputs.published_wheel_requirements }}' \
+            --dependency-source submodules \
             --wheel-directory "$RUNNER_TEMP/openhcs-candidate-wheels" \
             --extras dev,cellprofiler-compat
 
@@ -506,7 +482,6 @@ jobs:
   # Python 3.13+ not supported yet - zeroc-ice pre-built wheels only available up to Python 3.12
   # See: https://github.com/glencoesoftware/zeroc-ice-py-linux-x86_64/releases/tag/20240202
   omero-tests-linux:
-    needs: pypi-dependency-readiness
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     strategy:
@@ -523,7 +498,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: ${{ env.OPENHCS_CI_DEP_SOURCE == 'submodules' && 'recursive' || 'false' }}
+          submodules: recursive
 
       - name: Setup Python ${{ matrix.python-version }}
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -546,8 +521,7 @@ jobs:
           # Building from source fails on Python 3.11+ due to setuptools compatibility issues
           pip install ${{ matrix.ice-wheel }}
           python -m scripts.install_ci_candidate \
-            --dependency-source "$OPENHCS_CI_DEP_SOURCE" \
-            --published-wheel-requirements-json '${{ needs.pypi-dependency-readiness.outputs.published_wheel_requirements }}' \
+            --dependency-source submodules \
             --wheel-directory "$RUNNER_TEMP/openhcs-candidate-wheels" \
             --extras dev,omero,cellprofiler-compat
 
@@ -612,7 +586,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          submodules: ${{ env.OPENHCS_CI_DEP_SOURCE == 'submodules' && 'recursive' || 'false' }}
 
       - name: Setup Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -623,10 +596,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r scripts/requirements-quality.txt
-
-      - name: Validate local dependency release floors
-        if: env.OPENHCS_CI_DEP_SOURCE == 'submodules'
-        run: python -m scripts.validate_local_release_floors
 
       - name: Run correctness-only Ruff gate
         run: |
@@ -1569,8 +1538,6 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          submodules: ${{ env.OPENHCS_CI_DEP_SOURCE == 'submodules' && 'recursive' || 'false' }}
 
       - name: Setup Python ${{ matrix.python-version }}
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -1712,7 +1679,6 @@ jobs:
   # above owns generated public-boundary coverage; this lane owns semantic
   # parity against committed native CellProfiler outputs.
   official30-headless-parity:
-    needs: pypi-dependency-readiness
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 90
@@ -1744,8 +1710,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip build
           python -m scripts.install_ci_candidate \
-            --dependency-source "$OPENHCS_CI_DEP_SOURCE" \
-            --published-wheel-requirements-json '${{ needs.pypi-dependency-readiness.outputs.published_wheel_requirements }}' \
+            --dependency-source submodules \
             --wheel-directory "$RUNNER_TEMP/openhcs-candidate-wheels" \
             --extras dev,cellprofiler-compat
 
@@ -1839,7 +1804,6 @@ jobs:
   # manifest-owned Official30 case. Java 26 is intentional: the process owner
   # must select its compatible managed runtime instead of accepting this JVM.
   official30-real-viewer-smoke:
-    needs: pypi-dependency-readiness
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 60
@@ -1918,8 +1882,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip build
           python -m scripts.install_ci_candidate \
-            --dependency-source "$OPENHCS_CI_DEP_SOURCE" \
-            --published-wheel-requirements-json '${{ needs.pypi-dependency-readiness.outputs.published_wheel_requirements }}' \
+            --dependency-source submodules \
             --wheel-directory "$RUNNER_TEMP/openhcs-candidate-wheels" \
             --extras dev,gui,viz,cellprofiler-compat
 
@@ -2085,7 +2048,6 @@ jobs:
 
   # Run integration tests against wheel installation
   wheel-integration-test:
-    needs: pypi-dependency-readiness
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     env:
@@ -2097,7 +2059,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: ${{ env.OPENHCS_CI_DEP_SOURCE == 'submodules' && 'recursive' || 'false' }}
+          submodules: recursive
 
       - name: Setup Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -2118,8 +2080,7 @@ jobs:
           source test_wheel/bin/activate
           python -m pip install --upgrade pip build
           python -m scripts.install_ci_candidate \
-            --dependency-source pypi \
-            --published-wheel-requirements-json '${{ needs.pypi-dependency-readiness.outputs.published_wheel_requirements }}' \
+            --dependency-source submodules \
             --wheel-directory "$RUNNER_TEMP/openhcs-candidate-wheels" \
             --extras dev,dev-gui,gui,cellprofiler-compat \
             --requirement pytest-split==0.11.0

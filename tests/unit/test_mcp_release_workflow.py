@@ -349,6 +349,36 @@ def test_pypi_wheel_smoke_uses_the_canonical_pipeline_document_boundary():
     )
 
 
+def test_source_candidate_jobs_run_independently_from_publication_readiness():
+    workflow = yaml.safe_load(INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+    source_candidate_jobs = {
+        "unit-tests",
+        "gui-tests",
+        "python-boundary-tests",
+        "backend-microscope-tests",
+        "omero-tests-linux",
+        "official30-headless-parity",
+        "official30-real-viewer-smoke",
+        "wheel-integration-test",
+    }
+
+    for job_name in source_candidate_jobs:
+        job = jobs[job_name]
+        assert "needs" not in job
+        checkout = next(
+            step for step in job["steps"] if _uses_action(step, "actions/checkout")
+        )
+        assert checkout["with"]["submodules"] == "recursive"
+        install = next(
+            step
+            for step in job["steps"]
+            if "scripts.install_ci_candidate" in step.get("run", "")
+        )["run"]
+        assert "--dependency-source submodules" in install
+        assert "--published-wheel-requirements-json" not in install
+
+
 def test_pypi_consumers_wait_once_for_metadata_declared_dependencies():
     workflow = yaml.safe_load(INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8"))
     jobs = workflow["jobs"]
@@ -358,21 +388,7 @@ def test_pypi_consumers_wait_once_for_metadata_declared_dependencies():
         for step in readiness["steps"]
         if step.get("name") == "Wait for installer-visible dependency releases"
     )
-    candidate_install_markers = (
-        "scripts.install_ci_candidate",
-        "python -m build --wheel",
-    )
-    consumers = {
-        job_name
-        for job_name, job in jobs.items()
-        if any(
-            marker in step.get("run", "")
-            for marker in candidate_install_markers
-            for step in job.get("steps", ())
-        )
-    }
-
-    assert consumers
+    consumers = {"desktop-installer-source-test", "pypi-installation-test"}
     assert all(
         jobs[job_name]["needs"] == "pypi-dependency-readiness" for job_name in consumers
     )
@@ -380,19 +396,11 @@ def test_pypi_consumers_wait_once_for_metadata_declared_dependencies():
     assert "--wait-for-pypi" in wait_step["run"]
     assert "--wheel-requirements-output" in wait_step["run"]
     assert readiness["outputs"]["published_wheel_requirements"]
-    helper_consumers = {
-        job_name
-        for job_name, job in jobs.items()
-        if any(
-            "scripts.install_ci_candidate" in step.get("run", "")
-            for step in job.get("steps", ())
-        )
-    }
-    assert all(
-        "--published-wheel-requirements-json"
-        in "\n".join(step.get("run", "") for step in jobs[job_name]["steps"])
-        for job_name in helper_consumers
+    pypi_install = "\n".join(
+        step.get("run", "") for step in jobs["pypi-installation-test"]["steps"]
     )
+    assert "--dependency-source pypi" in pypi_install
+    assert "--published-wheel-requirements-json" in pypi_install
     assert "pyqt-reactive" not in wait_step["run"]
 
 

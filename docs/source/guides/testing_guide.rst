@@ -58,6 +58,14 @@ and wheel integration. A dedicated source job runs ``tests/pyqt_gui`` with
 offscreen Qt against the exact pinned pyqt-reactive wheel. Dedicated Linux jobs
 run OMERO on supported Python versions with an explicit ZeroC Ice wheel.
 
+The source, GUI, OMERO, parity, viewer, and wheel-candidate jobs build the
+recursively recorded first-party submodule snapshots and run independently of
+dependency publication. A separate release-readiness job requires exact
+dependency floors, matching release tags, and PyPI-visible wheels before the
+PyPI-style installation and native installer jobs can run. An unpublished
+first-party change therefore keeps release readiness red without hiding the
+current-source test results.
+
 The foundational unit/core job and maintained PyQt GUI job emit fail-closed
 coverage artifacts. The dependent Combined Coverage Artifact workflow combines
 them with the instrumented Python-boundary, backend/microscope, OMERO, and

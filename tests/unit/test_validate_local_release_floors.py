@@ -71,8 +71,8 @@ def _git(path: Path, *args: str) -> None:
     subprocess.run(("git", "-C", str(path), *args), check=True, capture_output=True)
 
 
-def test_checked_in_local_candidate_versions_satisfy_declared_floors():
-    assert floors.validate() == ()
+def test_checked_in_local_candidate_snapshots_are_mutually_compatible():
+    assert floors.validate_local_candidate_compatibility() == ()
 
 
 def test_dynamic_hatch_version_path_is_the_candidate_authority(tmp_path):
@@ -180,6 +180,7 @@ def test_rejects_openhcs_floor_below_available_candidate(tmp_path):
         version="1.1.0",
     )
 
+    assert floors.validate_local_candidate_compatibility(tmp_path) == ()
     assert floors.validate(tmp_path) == (
         "OpenHCS requirement example-package>=1.0.0 does not require local "
         "candidate floor example-package>=1.1.0",
@@ -294,6 +295,7 @@ def test_rejects_published_source_drift_without_a_version_change(tmp_path):
     _git(project_root, "tag", "v1.2.3")
     source_path.write_text("VALUE = 2\n", encoding="utf-8")
 
+    assert floors.validate_local_candidate_compatibility(tmp_path) == ()
     assert floors.validate(tmp_path) == (
         "Local release candidate example-package==1.2.3 differs from v1.2.3 "
         "in published inputs: src/example_package/__init__.py",

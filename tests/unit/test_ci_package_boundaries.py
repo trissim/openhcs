@@ -145,16 +145,26 @@ def test_acceptance_workflows_never_install_editable_packages() -> None:
     assert violations == {}
 
 
-def test_installed_acceptance_uses_public_dependencies_and_wheels() -> None:
-    workflow = (WORKFLOW_ROOT / "integration-tests.yml").read_text(encoding="utf-8")
+def test_installed_acceptance_separates_source_and_public_dependency_proofs() -> None:
+    workflow_path = WORKFLOW_ROOT / "integration-tests.yml"
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    workflow = yaml.safe_load(workflow_text)
+    jobs = workflow["jobs"]
 
-    assert "default: 'pypi'" in workflow
-    assert "|| 'pypi'" in workflow
-    assert "scripts.install_ci_candidate" in workflow
-    assert "scripts/run_installed_tests.py" in workflow
-    assert "scripts/run_installed_tests.py --coverage" in workflow
-    assert "tests/unit/pyqt_gui/test_progress_tree_aggregation.py" in workflow
-    assert "pip','install','-e" not in workflow
+    assert jobs["pypi-installation-test"]["needs"] == "pypi-dependency-readiness"
+    pypi_steps = "\n".join(
+        step.get("run", "") for step in jobs["pypi-installation-test"]["steps"]
+    )
+    source_steps = "\n".join(
+        step.get("run", "") for step in jobs["wheel-integration-test"]["steps"]
+    )
+    assert "--dependency-source pypi" in pypi_steps
+    assert "--dependency-source submodules" in source_steps
+    assert "scripts.install_ci_candidate" in workflow_text
+    assert "scripts/run_installed_tests.py" in workflow_text
+    assert "scripts/run_installed_tests.py --coverage" in workflow_text
+    assert "tests/unit/pyqt_gui/test_progress_tree_aggregation.py" in workflow_text
+    assert "pip','install','-e" not in workflow_text
 
 
 def test_published_release_canary_owns_post_release_dependency_drift() -> None:

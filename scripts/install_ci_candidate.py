@@ -17,8 +17,9 @@ from packaging.utils import (
 
 from scripts.validate_local_release_floors import (
     REPO_ROOT,
+    ReleaseCandidate,
     discover_local_projects,
-    validate,
+    validate_local_candidate_compatibility,
 )
 from scripts.validate_wheel_deployment import validate_wheel_deployment
 
@@ -78,11 +79,11 @@ def build_and_install_candidate(
     """Install the root wheel against either public or locally built wheels."""
 
     wheel_directory.mkdir(parents=True, exist_ok=True)
-    local_projects = ()
+    local_projects: tuple[ReleaseCandidate, ...] = ()
     dependency_requirements: tuple[str, ...] = ()
     if dependency_source == "submodules":
         local_projects = discover_local_projects()
-        errors = validate()
+        errors = validate_local_candidate_compatibility()
         if errors:
             raise RuntimeError("\n".join(errors))
         for project in local_projects:

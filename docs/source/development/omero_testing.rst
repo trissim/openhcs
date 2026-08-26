@@ -54,6 +54,12 @@ test side effect. On CI failure, preserve the OMERO component diagnostics and
 the table service log so an independently starting ``Tables-0`` process can be
 distinguished from a generic container failure.
 
+The CI OMERO lane builds the recursively recorded first-party submodule wheels
+and runs independently of dependency publication readiness. It therefore tests
+the current storage and transport snapshots before their public package
+releases, while the separate installer-facing lane proves the published
+dependency set.
+
 Deployment tests for packaging, credentials, and server lifecycle belong in
 OpenHCS; generic storage behavior belongs in PolyStore. Panel behavior belongs
 in ``omero_openhcs``. The panel is not enabled by the default deployment and is

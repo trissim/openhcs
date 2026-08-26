@@ -1845,7 +1845,7 @@
       },
       {
         "path": "openhcs/processing/custom_functions/runtime_registry.py",
-        "sha256": "6315d2134a8f2e13561cc9d755872f9a25512496c77971fc5219586edc67213b",
+        "sha256": "ee935ccc09f3a967d84c9ebd08511ad729d53e73d5bceb52074b39a1cd6ead9c",
         "role": "Atomic process-local projection of persisted custom-function declarations without a copied global catalogue."
       },
       {
@@ -1906,7 +1906,8 @@
       "On 2026-08-24, re-read the complete transition reference against ZMQRuntime 0.2.18 after pair cleanup and forced release moved to TransportEndpoint; 151 generic tests, 123 focused OpenHCS tests, and a 164-second live GUI, MCP, ZMQ, and Napari rehearsal passed all nine objective-evidence requirements.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete transition reference against revision-checked catalogue transport and typed endpoint shutdown; 152 ZMQRuntime tests and an isolated non-default TCP endpoint probe confirmed exact transport preservation and process cleanup."
+      "On 2026-08-25, re-read the complete transition reference against revision-checked catalogue transport and typed endpoint shutdown; 152 ZMQRuntime tests and an isolated non-default TCP endpoint probe confirmed exact transport preservation and process cleanup.",
+      "On 2026-08-25, re-read the complete transition reference after formatting the custom-function runtime authority; the formatting-only change leaves its atomic catalogue projection and the documented ownership boundary unchanged."
     ]
   },
   {
@@ -2683,7 +2684,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "f8469aadcba80764efa31fea32a41d116f0ab376e5c211453b9f212de5faf947",
+    "source_sha256": "c405046753ba1a575a16582ee6b7ae70a0a182336004a4abee541fcff2655c64",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2712,12 +2713,17 @@
       },
       {
         "path": "scripts/validate_local_release_floors.py",
-        "sha256": "2d8e6f72c89278c4e6944e72ffc7fd25b27322e09366964364f639f41a472601",
-        "role": "Derives local first-party candidates from package metadata and proves candidate floors, breaking-series ceilings, release tags, source agreement, and installer-index wheel availability."
+        "sha256": "790b521d6fc60dc38fb4a55ba2d56f4d91a1eb956f28477e98b29313194cf6e6",
+        "role": "Derives one local first-party candidate inventory and exposes separate current-source compatibility and installer-facing publication proofs."
+      },
+      {
+        "path": "scripts/install_ci_candidate.py",
+        "sha256": "04f5f7a7b102ae330f9b7ba72d32a815da68d30cd567a0f5aed3766c72011485",
+        "role": "Builds and installs metadata-discovered current submodule wheels after source-compatibility validation, independently from published-wheel projection."
       },
       {
         "path": "tests/unit/test_validate_local_release_floors.py",
-        "sha256": "68acd8510391a986c88e728fee9bbf7cea655a429093848278fe6646c003f071",
+        "sha256": "c9016348d86f7585ee08a4e1432e10c8071c612736aaf171dcd7e495efe14ff1",
         "role": "Proves metadata discovery and nominal requirement-to-candidate compatibility across stable and pre-1.0 release series."
       },
       {
@@ -2727,7 +2733,7 @@
       },
       {
         "path": "tests/unit/test_mcp_release_workflow.py",
-        "sha256": "dc54810605c2ac3e7f29d14b3d57f412b05ff5a2fc7eabdbe72b49244198a9a8",
+        "sha256": "03fe23f8d000a438697f8c16611379bf44e7b7d60793f8092b6bf7bf18536bd7",
         "role": "Proves immutable tag resolution, exact-SHA checkout, publication ordering, recovery, and Registry policy."
       },
       {
@@ -2737,7 +2743,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "0e8c201d53f858a921291a4299ddb2d128c3c4e59795e14fbe38fdea7d384d6f",
+        "sha256": "acb5b13603403a7ab5bc8e44ebd27dec5b488922bd9fbdcec2820b23af076fd5",
         "role": "Cross-platform release-candidate dependency-readiness, installed-wheel GUI startup, installer, signing-helper parse, and staged-update validation matrix."
       },
       {
@@ -2787,7 +2793,7 @@
       },
       {
         "path": "tests/unit/test_ci_package_boundaries.py",
-        "sha256": "e0977188ac265dde6c0a99655443f5acdf4917f5fc95d16ac967859b429279d4",
+        "sha256": "55f0e8147b23484914e0bbdc28861fd7d5b7ff9cf0136574ed1ab4f895cd682a",
         "role": "Proves publication consumes the central release requirements instead of a copied workflow package list."
       }
     ],
@@ -2810,7 +2816,7 @@
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/development/mcp_release.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/__init__.py; scripts/sync_mcp_release_metadata.py; scripts/release.py; scripts/release_readiness.py; .github/workflows/publish.yml; tests/unit/test_mcp_release_workflow.py; tests/unit/test_release_readiness.py; .github/workflows/integration-tests.yml; .github/dependabot.yml; tests/unit/test_ci_action_pinning.py; packaging/installers/windows/Sign-Installer.ps1; packaging/installers/macos/Sign-Installer.sh; tests/installer/test_installer_signing.py.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/__init__.py; scripts/sync_mcp_release_metadata.py; scripts/release.py; scripts/release_readiness.py; scripts/validate_local_release_floors.py; scripts/install_ci_candidate.py; .github/workflows/publish.yml; tests/unit/test_mcp_release_workflow.py; tests/unit/test_release_readiness.py; .github/workflows/integration-tests.yml; .github/dependabot.yml; tests/unit/test_ci_action_pinning.py; packaging/installers/windows/Sign-Installer.ps1; packaging/installers/macos/Sign-Installer.sh; tests/installer/test_installer_signing.py.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
@@ -2829,12 +2835,13 @@
       "On 2026-08-25, the installer and detached-update regression boundary passed 88 tests; documentation validation passed 154 files, 24 Python blocks, and 153 audited sources; Sphinx rendered all 152 included sources with warnings treated as errors.",
       "On 2026-08-25, re-read the complete page against the integration workflow after OMERO selection became fail-closed and component diagnostics exposed table-service startup; all remaining CI claims remain accurate.",
       "On 2026-08-25, re-read the complete release how-to against the installed GUI probe, release workflow, cross-platform wheel matrix, and published-package canary after issue 105 exposed post-release dependency drift; the page now distinguishes candidate, publication, and post-release startup evidence.",
-      "On 2026-08-25, re-read every documentation source whose package-metadata authority changed after all first-party requirements gained breaking-series ceilings; installation, ownership, package surface, and runtime claims remain accurate, and 15 focused validator tests prove the metadata-derived policy."
+      "On 2026-08-25, re-read every documentation source whose package-metadata authority changed after all first-party requirements gained breaking-series ceilings; installation, ownership, package surface, and runtime claims remain accurate, and 15 focused validator tests prove the metadata-derived policy.",
+      "On 2026-08-25, re-read and revised the complete release how-to after source-candidate compatibility and installer-facing publication readiness became independent proofs; 55 focused policy tests and a real eight-submodule wheel installation confirmed that unreleased source is tested without weakening exact-floor, tag, or PyPI gates."
     ]
   },
   {
     "path": "docs/source/development/omero_testing.rst",
-    "source_sha256": "c6fbc813f547c0617a43af7f3102ee367d4c144f8790807f8eebce871918552b",
+    "source_sha256": "8ce6c8004822735ac9539d03761caf1e4f25b1ec5a9799f8327c6490dedfe4de",
     "audience": [
       "OpenHCS and OMERO integration testers"
     ],
@@ -2888,7 +2895,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "0e8c201d53f858a921291a4299ddb2d128c3c4e59795e14fbe38fdea7d384d6f",
+        "sha256": "acb5b13603403a7ab5bc8e44ebd27dec5b488922bd9fbdcec2820b23af076fd5",
         "role": "Runs explicitly selected live OMERO variants and preserves component and table-service diagnostics on failure."
       }
     ],
@@ -2912,7 +2919,8 @@
       "On 2026-08-25, verified the no-daemon-side-effect contract and documented that live tests require Docker to be running before selection.",
       "On 2026-08-25, re-read the complete page against the integration workflow after OMERO selection became fail-closed and component diagnostics exposed table-service startup; all remaining CI claims remain accurate.",
       "On 2026-08-25, re-read the complete how-to against PolyStore's separate exact-address and symbolic-template declarations and their owner tests.",
-      "On 2026-08-25, re-read the complete how-to after live Python 3.11 CI proved a cold Docker daemon race; documented the bounded wait without moving daemon startup into OpenHCS and verified rejected gateways are not retained."
+      "On 2026-08-25, re-read the complete how-to after live Python 3.11 CI proved a cold Docker daemon race; documented the bounded wait without moving daemon startup into OpenHCS and verified rejected gateways are not retained.",
+      "On 2026-08-25, re-read and revised the complete OMERO testing how-to after its source lane became independent of dependency publication readiness; current submodule wheels remain the behavior proof and the public installer lane remains the publication proof."
     ]
   },
   {

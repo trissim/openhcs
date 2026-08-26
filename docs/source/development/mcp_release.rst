@@ -111,8 +111,14 @@ manual recovery path, not as the normal release procedure.
 CI and publication gates
 ------------------------
 
-The cross-platform and cross-Python matrix is the release-candidate gate. Each
-matrix installation runs outside the checkout and tests the installed wheel.
+The cross-platform and cross-Python matrix separates current-source evidence
+from publication evidence. Source-candidate jobs recursively check out the
+recorded submodules, build every metadata-discovered first-party wheel, verify
+that their declared version ranges can coexist, and test those installed
+wheels outside the checkout. These jobs run even when a changed dependency has
+not been released yet, so the publication gate cannot suppress feedback about
+the code that is actually on ``main``.
+
 Before publication begins, the tag workflow resolves one annotated tag to its
 exact commit and requires successful Integration Tests and Documentation push
 runs for that commit. Every installer, package, recovery, and Registry job then
@@ -126,14 +132,18 @@ updates to those pins. Review each update as release-infrastructure code and
 require the ordinary Integration Tests and Documentation gates before merging
 it; do not replace an immutable pin with a movable version tag.
 
-The matrix has one dependency-readiness gate. It fetches the recorded submodule
-release tags, validates the local dependency floors and breaking-series
-ceilings, waits until the exact wheels are visible through PyPI's
-installer-facing index, and projects those exact requirements into downstream
-candidate installs. This gate prevents a green source checkout from standing
-in for unpublished dependency releases.
-The source gates also run the maintained PyQt workflow suite against the exact
-pinned pyqt-reactive candidate. Published-dependency and installed-wheel jobs
+The independent dependency-readiness job fetches the recorded submodule release
+tags, validates exact OpenHCS dependency floors and breaking-series ceilings,
+rejects published-input drift from those tags, waits until the exact wheels are
+visible through PyPI's installer-facing index, and projects hash-pinned wheel
+URLs into the public-package jobs. It gates PyPI-style installation and native
+installer tests without gating the source-candidate matrix. The overall
+workflow therefore remains red while a required dependency is unpublished,
+but all source, GUI, OMERO, parity, viewer, and wheel-candidate evidence still
+runs.
+
+The maintained PyQt workflow suite consequently runs against the exact recorded
+pyqt-reactive source snapshot. Published-dependency and installed-wheel jobs
 remain the proof for the public package boundary. The Python quality gate
 retains every change since the most recent successful Integration Tests head,
 so an unrelated follow-up commit cannot bypass a failed formatter or
