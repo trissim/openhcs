@@ -82,8 +82,11 @@ Strategy selection mixins
 
 ``AgentCapabilityDeclaration``
   MCP tool identity, contracts, effects, security facts, and surface
-  availability belong to the capability declaration registry. Transport and
-  packaging artifacts are projections, not independent tool catalogues.
+  availability belong to the capability declaration registry.
+  ``CapabilityTransport`` members carry their transport-specific server
+  instruction strategies, so the generic MCP builder does not restate the
+  closed transport set. Packaging artifacts are projections, not independent
+  tool catalogues.
 
 Worked boundaries
 -----------------

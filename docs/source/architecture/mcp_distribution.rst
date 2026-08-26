@@ -11,6 +11,9 @@ Authority and projections
 identity, input type, service binding, side effects, security requirements,
 data exposure, and transport availability. Generic MCP binders iterate the
 nominal registry and project those declarations into protocol tools.
+``CapabilityTransport`` members carry the nominal strategy that renders their
+initialization instructions, so server construction asks the selected member
+instead of redispatching the closed transport set.
 
 Standard MCP annotations are derived from the same declaration metadata. Client
 plugins, MCPB manifests, Registry metadata, tests, and documentation must not
@@ -104,13 +107,14 @@ Local client registration
 
 Native desktop installers publish one platform-stable launcher before they
 touch agent-client configuration. ``McpClientRegistrationTarget`` is the nominal
-owner for the supported local-client projections: each registered leaf owns its
-client's detection, configuration path, and format, while generic orchestration
-iterates the root registry. Codex TOML and strict JSON clients are updated
-atomically with recoverable backups. The shared registered JSON projection owns
-Cursor, Gemini CLI, and Windsurf user configuration; Visual Studio Code is
-registered through its documented command-line interface rather than a guessed
-profile path.
+owner for supported client identity, detection, and configuration format, while
+generic orchestration iterates the root registry. Claude Desktop delegates its
+configuration and application paths to registered Windows and macOS platform
+leaves instead of redispatching platform cases inside the client target. Codex
+TOML and strict JSON clients are updated atomically with recoverable backups.
+The shared registered JSON projection owns Cursor, Gemini CLI, and Windsurf
+user configuration; Visual Studio Code is registered through its documented
+command-line interface rather than a guessed profile path.
 
 ``DesktopDeploymentAuthority`` owns the native launcher, shortcut, and
 application-icon projection. Its registered Windows and macOS leaves read the

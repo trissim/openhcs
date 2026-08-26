@@ -973,7 +973,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/pipeline_editor.py",
-        "sha256": "4194406e559f4a708e8d38973ae9a9fcb16a10ee89589c51d1823e1a7ea77710",
+        "sha256": "14724bd91f6690ac1be92f2c5cd8d19aed7edbb55b2befcf50891a94dba47b27",
         "role": "Implements step editing, pipeline compilation controls, and declaration feedback in the main UI."
       },
       {
@@ -1034,7 +1034,8 @@
       "On 2026-08-25, re-read the complete reference against the current UI bridge and config-window navigation owners; focused tests and a fresh desktop MCP probe proved that field requests select their declared tab and unsupported targets are not reported as navigated.",
       "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; revised its startup wording and confirmed the remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete interface reference against the shared endpoint catalogue service; a live dark-themed Function Selector remained responsive during loading and resolved the exact selected callable.",
-      "On 2026-08-26, re-read the complete interface reference after the UI bridge service default became a projection of its connection declaration; desktop workspace, editing, and navigation guidance remains accurate."
+      "On 2026-08-26, re-read the complete interface reference after the UI bridge service default became a projection of its connection declaration; desktop workspace, editing, and navigation guidance remains accurate.",
+      "On 2026-08-26, re-read the complete interface reference after PipelineEditorActionTargetMode members took ownership of their target selection; user-visible actions and selection scopes remain unchanged."
     ]
   },
   {
@@ -1126,7 +1127,7 @@
     "authority": [
       {
         "path": "openhcs/agent/capabilities.py",
-        "sha256": "8415208f9e116367b9698843d7b08b7d8bf33ec85cc50da4f9c4f596ecc3b2c3",
+        "sha256": "8e98fa89a89b5373b52761ff314faf6854d2db7ec76c841b4f20866af3acf7cd",
         "role": "Declares the agent capability catalogue and safety metadata exposed through MCP self-description."
       },
       {
@@ -1158,7 +1159,8 @@
       "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guide_for_biologists`: documentation validation passed: 10 files, 2 Python blocks.",
       "On 2026-08-23, re-reviewed the capability declaration after execution status began exposing the retained generic progress observation; the documented registry, surface, and safety ownership claims remain accurate.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
-      "On 2026-08-25, re-read the complete onboarding how-to after capability surfaces gained declaration-derived development-client preflight; its scientist-facing discovery and authoring route remains accurate."
+      "On 2026-08-25, re-read the complete onboarding how-to after capability surfaces gained declaration-derived development-client preflight; its scientist-facing discovery and authoring route remains accurate.",
+      "On 2026-08-26, re-read the complete onboarding how-to against the changed capability declaration; transport instructions now belong to CapabilityTransport members without changing the exposed discovery, authoring, execution, or safety surface."
     ]
   },
   {
@@ -3170,7 +3172,7 @@
       },
       {
         "path": "openhcs/mcp/client_registration.py",
-        "sha256": "c3279141815e345c58819298202c2b0311325264ea961431345879151e9d77d8",
+        "sha256": "28459b95d3b155778ce178f36302cb830958b74f2603980641ec492d81c41a9a",
         "role": "Owns discovery and registration of the OpenHCS MCP server in supported desktop clients."
       },
       {
@@ -3180,7 +3182,7 @@
       },
       {
         "path": "openhcs/agent/capabilities.py",
-        "sha256": "8415208f9e116367b9698843d7b08b7d8bf33ec85cc50da4f9c4f596ecc3b2c3",
+        "sha256": "8e98fa89a89b5373b52761ff314faf6854d2db7ec76c841b4f20866af3acf7cd",
         "role": "Declares the agent capability catalogue and safety metadata exposed through MCP self-description."
       },
       {
@@ -3190,12 +3192,12 @@
       },
       {
         "path": "tests/unit/agent/test_mcp_client_registration.py",
-        "sha256": "3d2a40a84b63f980afe665ec57af11ad935a8eb852ae437d4871fd483f3d27c2",
+        "sha256": "0763752fc04c32d2812f509845886f10c366e1a67ec290d50e433096a8d4debe",
         "role": "Proves supported-client discovery, registration commands, and resulting MCP configuration."
       },
       {
         "path": "tests/unit/agent/test_mcp_server.py",
-        "sha256": "521690e64d30c750675cb4d338ac673be381ec3a572ec944685eed643bd9bf28",
+        "sha256": "bd226013c840132d901b46b2cabf6cb4aecf3b98eaf6f1a8dc3ab58c6a15f472",
         "role": "Proves MCP server tool registration, request handling, and lifecycle behaviour."
       }
     ],
@@ -3217,7 +3219,8 @@
       "On 2026-08-24, re-read the complete client how-to after stdio output containment moved to a dedicated transport owner; installation, registration, path-policy, and reconnect guidance remain accurate.",
       "On 2026-08-25, re-read the complete client how-to after viewer-only MCP regressions changed the shared server test authority; installation, registration, path-policy, and reconnect guidance remain unchanged.",
       "On 2026-08-25, re-read the complete client how-to after declaration-derived development-client surface preflight changed shared capability and test authorities; installed-server surface selection and user-client guidance remain accurate.",
-      "On 2026-08-26, re-read the complete client how-to after UI and viewer MCP timeout regressions changed the shared server-test authority; installation, registration, path policy, and GUI attachment guidance remains accurate."
+      "On 2026-08-26, re-read the complete client how-to after UI and viewer MCP timeout regressions changed the shared server-test authority; installation, registration, path policy, and GUI attachment guidance remains accurate.",
+      "On 2026-08-26, re-read the complete client how-to against the changed capability, registration, and regression-test authorities; registered platform leaves now own Claude Desktop paths, while supported clients, commands, configuration behavior, and reconnect guidance remain unchanged."
     ]
   },
   {

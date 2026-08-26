@@ -57,12 +57,12 @@
       },
       {
         "path": "openhcs/agent/capabilities.py",
-        "sha256": "8415208f9e116367b9698843d7b08b7d8bf33ec85cc50da4f9c4f596ecc3b2c3",
+        "sha256": "8e98fa89a89b5373b52761ff314faf6854d2db7ec76c841b4f20866af3acf7cd",
         "role": "Declares the MCP discovery, authoring, execution, UI, and viewer-review capabilities and their surface policies."
       },
       {
         "path": "openhcs/mcp/client_registration.py",
-        "sha256": "c3279141815e345c58819298202c2b0311325264ea961431345879151e9d77d8",
+        "sha256": "28459b95d3b155778ce178f36302cb830958b74f2603980641ec492d81c41a9a",
         "role": "Declares supported local MCP client targets and stable-launcher registration behaviour."
       },
       {
@@ -88,7 +88,8 @@
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete project overview after capability surfaces gained declaration-derived development-client preflight; the public product, installation, and agent-workflow claims remain accurate.",
-      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
+      "On 2026-08-26, re-read the complete project overview against the changed capability and client-registration owners; transport instruction and platform-path extraction are internal ownership changes, so the public feature, client, installation, and safety claims remain accurate."
     ]
   }
 ]
