@@ -644,8 +644,8 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
     assert "[IO.FileShare]::Read" in smoke_step
     assert "scripts/smoke_staged_desktop_update.py" in smoke_step
     assert "--latest-version $releaseVersion" in smoke_step
-    assert "scripts/stage_ci_candidate_version.py" in smoke_step
-    assert "$env:GITHUB_RUN_ID" in smoke_step
+    assert "steps.source_candidate.outputs.release_version" in smoke_step
+    assert "$env:OPENHCS_INSTALLER_CANDIDATE_WHEELHOUSE" in smoke_step
     assert "$env:OPENHCS_MCP_INSTALLATION_POINTER" in smoke_step
     assert "import tkinter as tk" in smoke_step
     assert "Managed base Python could not load the copied updater worker." in smoke_step

@@ -127,6 +127,10 @@ desktop candidate matrix builds the same recursively recorded first-party
 wheels and runs that probe on Windows and both macOS architectures. It has no
 dependency on the PyPI readiness job, so every supported desktop release
 boundary proves the candidate before the first dependency is published.
+The native Windows and dual-architecture macOS installer matrix is independent
+of publication for the same reason: it stages a CI-only OpenHCS version, builds
+one metadata-discovered wheelhouse from the recorded submodules, and supplies
+that wheelhouse to the real bootstrap installers and staged updater.
 
 Before publication begins, the tag workflow resolves one annotated tag to its
 exact commit and requires successful Integration Tests and Documentation push
@@ -145,11 +149,11 @@ The independent dependency-readiness job fetches the recorded submodule release
 tags, validates exact OpenHCS dependency floors and breaking-series ceilings,
 rejects published-input drift from those tags, waits until the exact wheels are
 visible through PyPI's installer-facing index, and projects hash-pinned wheel
-URLs into the public-package jobs. It gates PyPI-style installation and native
-installer tests without gating the source-candidate matrix. The overall
-workflow therefore remains red while a required dependency is unpublished,
-but all source, GUI, OMERO, parity, viewer, and wheel-candidate evidence still
-runs.
+URLs into the public-package jobs. It gates PyPI-style installation without
+gating the source-candidate or native-installer matrices. The overall workflow
+therefore remains red while a required dependency is unpublished, but all
+source, GUI, OMERO, parity, viewer, wheel-candidate, and native-installer
+evidence still runs.
 
 The maintained PyQt workflow suite consequently runs against the exact recorded
 pyqt-reactive source snapshot. Published-dependency and installed-wheel jobs
@@ -164,11 +168,12 @@ probe. It detects dependency drift that occurs after a release, while the
 release-candidate and publication gates prevent known drift from being
 published.
 
-The native installer lanes inject an unreachable workstation pip
-configuration and unreachable primary and extra index overrides. The Windows
-installation, reinstall, and staged-update paths and the macOS installation
-must complete without contacting that index, proving that release behaviour
-does not depend on a runner's package-index settings.
+The native installer lanes resolve the prepared first-party candidates from
+their metadata-discovered local wheelhouse while injecting an unreachable
+workstation pip configuration and unreachable primary and extra index
+overrides. The Windows installation, reinstall, and staged-update paths and the
+macOS installation must complete without contacting that index, proving that
+release behaviour does not depend on a runner's package-index settings.
 
 Tag and publish
 ---------------

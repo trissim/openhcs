@@ -361,6 +361,7 @@ def test_source_candidate_jobs_run_independently_from_publication_readiness():
         "official30-headless-parity",
         "official30-real-viewer-smoke",
         "wheel-integration-test",
+        "desktop-installer-source-test",
     }
 
     for job_name in source_candidate_jobs:
@@ -388,7 +389,7 @@ def test_pypi_consumers_wait_once_for_metadata_declared_dependencies():
         for step in readiness["steps"]
         if step.get("name") == "Wait for installer-visible dependency releases"
     )
-    consumers = {"desktop-installer-source-test", "pypi-installation-test"}
+    consumers = {"pypi-installation-test"}
     assert all(
         jobs[job_name]["needs"] == "pypi-dependency-readiness" for job_name in consumers
     )
@@ -511,6 +512,15 @@ def test_native_macos_installer_uses_native_qt_smoke_harness():
         if step.get("name") == "Verify macOS installer architecture"
     )
     assert "uname -m" in architecture_step["run"]
+    candidate_step = next(
+        step
+        for step in steps
+        if step.get("name") == "Build native installer candidate wheelhouse"
+    )
+    assert "scripts/stage_ci_candidate_version.py" in candidate_step["run"]
+    assert "--dependency-source submodules" in candidate_step["run"]
+    assert "--build-only" in candidate_step["run"]
+    assert "GITHUB_RUN_ID" in candidate_step["run"]
     smoke_step = next(
         step
         for step in steps
@@ -521,8 +531,8 @@ def test_native_macos_installer_uses_native_qt_smoke_harness():
     assert "scripts/smoke_staged_desktop_update.py" in smoke_step["run"]
     assert '--latest-version "$release_version"' in smoke_step["run"]
     assert "OPENHCS_MCP_INSTALLATION_POINTER" in smoke_step["run"]
-    assert "scripts/stage_ci_candidate_version.py" in smoke_step["run"]
-    assert "GITHUB_RUN_ID" in smoke_step["run"]
+    assert "steps.source_candidate.outputs.release_version" in smoke_step["run"]
+    assert "OPENHCS_INSTALLER_CANDIDATE_WHEELHOUSE" in smoke_step["run"]
     assert "import tkinter as tk" in smoke_step["run"]
     assert '"$managed_python" -I "$installed_worker" --help' in smoke_step["run"]
     assert "macOS staged updater did not switch environments" in smoke_step["run"]

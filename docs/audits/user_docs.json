@@ -897,7 +897,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "e3a65db3512ace7b8bfc115d2c2908158cf6e238dcec1393c2e82095d68df782",
+        "sha256": "cee01739a55022087911b4d6f749a7290bc4cc9e41f322e05cc08ba34998189f",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -942,7 +942,8 @@
       "On 2026-08-25, re-read the complete install and update how-to against declaration-owned updater progress events and enum-backed Tk progress modes; the user workflow remains accurate.",
       "On 2026-08-25, re-read the complete installation how-to after source-candidate CI was separated from public dependency readiness; the user-facing installer, manual install, verification, and update instructions remain unchanged and accurate.",
       "On 2026-08-26, re-read the installation how-to after source unit and documentation jobs stopped fetching release tags; installer-facing readiness remains a separate strict gate, so the user procedure is unchanged.",
-      "On 2026-08-26, re-read the complete installation how-to after the integration workflow added a publication-independent Windows and dual-architecture macOS desktop candidate matrix; installation, update, and native-installer claims remain unchanged."
+      "On 2026-08-26, re-read the complete installation how-to after the integration workflow added a publication-independent Windows and dual-architecture macOS desktop candidate matrix; installation, update, and native-installer claims remain unchanged.",
+      "On 2026-08-26, re-read the full installation how-to after native CI began constructing the complete current-source wheelhouse independently from published dependency readiness; the user-facing install, launch, verification, and update procedure remains unchanged."
     ]
   },
   {
@@ -2031,7 +2032,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "e83bd0d80dd675eed75302d48d4438b9bd249f8557b604559869d8075a78687e",
+    "source_sha256": "522547be1a3d79c596c866d6931b2ba4ab41da803ae7a1405b88bbdc5332d68a",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -2051,13 +2052,18 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "e3a65db3512ace7b8bfc115d2c2908158cf6e238dcec1393c2e82095d68df782",
+        "sha256": "cee01739a55022087911b4d6f749a7290bc4cc9e41f322e05cc08ba34998189f",
         "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
         "path": "scripts/install_ci_candidate.py",
-        "sha256": "04f5f7a7b102ae330f9b7ba72d32a815da68d30cd567a0f5aed3766c72011485",
-        "role": "Builds the metadata-discovered first-party source wheels or installs the hash-pinned public dependency projection selected by each CI evidence lane."
+        "sha256": "cc9ac7b2a75ac05b6398cb42d01691d31b80de75d55130779b72216a57896e42",
+        "role": "Builds the metadata-discovered first-party source wheelhouse or installs the hash-pinned public dependency projection selected by each CI evidence lane."
+      },
+      {
+        "path": "tests/unit/test_install_ci_candidate.py",
+        "sha256": "e6ab5825a1ca3187767babdc0d9130a355f9969ccbef0d73c000052bc3015986",
+        "role": "Proves source wheelhouse discovery, build ordering, root-wheel validation, and the build-only command boundary."
       },
       {
         "path": ".github/workflows/published-release-canary.yml",
@@ -2139,7 +2145,8 @@
       "The OMERO failure guide did not describe the cold repository race exposed by Python 3.12 CI or the boundary that prevents OpenHCS from restarting externally managed components.",
       "The installed-GUI probe reused the default execution endpoint, allowing an existing desktop server to influence an otherwise isolated package canary; it now allocates the endpoint through the selected transport declaration.",
       "Installed GUI and MCP package checks terminated before either operated the other; the source-wheel, publication, native-installer, and scheduled canaries now keep the packaged GUI live while the packaged desktop MCP discovers it and invokes a declared UI action.",
-      "The fixed desktop candidate was operated before publication only on Linux, while Windows and macOS evidence remained behind the unpublished-dependency gate; a complementary source-candidate matrix now proves Windows and both macOS architectures alongside the Linux wheel lane."
+      "The fixed desktop candidate was operated before publication only on Linux, while Windows and macOS evidence remained behind the unpublished-dependency gate; a complementary source-candidate matrix now proves Windows and both macOS architectures alongside the Linux wheel lane.",
+      "The native installer source job still depended on public first-party release tags and therefore skipped the real Windows and macOS installer paths while dependency candidates were unpublished; it now builds the complete metadata-discovered source wheelhouse independently, while the PyPI installation lane remains publication-gated."
     ],
     "disposition": "revise",
     "validation": [
@@ -2165,7 +2172,8 @@
       "On 2026-08-26, re-read and revised the OMERO diagnosis section against PolyStore repository readiness and packaged-only component recovery; external deployment lifecycle remains operator-owned.",
       "On 2026-08-26, re-read the complete testing how-to against scripts/smoke_installed_gui.py and tests/unit/test_smoke_installed_gui.py after an exact-wheel probe contacted an existing desktop endpoint; the revised probe derives a free pair from UIConfig.zmq through DataControlPortPairAuthority without adding transport-specific dispatch.",
       "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete guide against the exact-wheel live GUI/MCP probe, source candidate workflow, native installer acceptance, and scheduled published-package canary; the probe passed with matching 0.7.27 identities and exact endpoint cleanup.",
-      "On 2026-08-26, re-read the complete guide against the metadata-derived desktop extras, candidate-wheel installer, complementary Windows and dual-architecture macOS candidate matrix, and focused workflow ownership tests."
+      "On 2026-08-26, re-read the complete guide against the metadata-derived desktop extras, candidate-wheel installer, complementary Windows and dual-architecture macOS candidate matrix, and focused workflow ownership tests.",
+      "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete guide after native source candidates became independent from published dependency readiness; a real metadata-discovered nine-wheel build-only wheelhouse and focused workflow and installer tests passed, while public-package evidence remained a separate strict lane."
     ]
   },
   {

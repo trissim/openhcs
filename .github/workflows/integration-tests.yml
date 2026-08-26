@@ -713,9 +713,10 @@ jobs:
 
   # Execute native bootstrap installers before tag-only release packaging.
   desktop-installer-source-test:
-    needs: pypi-dependency-readiness
     runs-on: ${{ matrix.os }}
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    env:
+      OPENHCS_INSTALLER_CANDIDATE_WHEELHOUSE: ${{ runner.temp }}/openhcs-installer-candidate-wheels
     strategy:
       fail-fast: false
       matrix:
@@ -737,6 +738,8 @@ jobs:
         run: git config --global core.longpaths true
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
 
       - name: Verify macOS installer architecture
         if: matrix.platform == 'macos'
@@ -788,6 +791,18 @@ jobs:
           python -m pip install build packaging pytest
           python -m pytest -q -c tests/installer/pytest.ini tests/installer
 
+      - name: Build native installer candidate wheelhouse
+        id: source_candidate
+        shell: bash
+        run: |
+          release_version=$(python scripts/stage_ci_candidate_version.py \
+            --run-id "$GITHUB_RUN_ID")
+          python -m scripts.install_ci_candidate \
+            --dependency-source submodules \
+            --wheel-directory "$OPENHCS_INSTALLER_CANDIDATE_WHEELHOUSE" \
+            --build-only
+          printf 'release_version=%s\n' "$release_version" >> "$GITHUB_OUTPUT"
+
       - name: Parse Windows PowerShell installer sources
         if: matrix.platform == 'windows'
         shell: pwsh
@@ -805,10 +820,7 @@ jobs:
         shell: pwsh
         timeout-minutes: 30
         run: |
-          $releaseVersion = python scripts/stage_ci_candidate_version.py `
-            --run-id $env:GITHUB_RUN_ID
-          $releaseVersion = $releaseVersion.Trim()
-          python -m build --wheel
+          $releaseVersion = "${{ steps.source_candidate.outputs.release_version }}"
           $stage = Join-Path $env:RUNNER_TEMP "OpenHCS-Windows-Smoke"
           $installRoot = Join-Path `
             ([Environment]::GetFolderPath("LocalApplicationData")) `
@@ -869,7 +881,9 @@ jobs:
             $expectedInstallerIcon.Dispose()
           }
 
-          $env:UV_FIND_LINKS = (Resolve-Path "dist").Path
+          $env:UV_FIND_LINKS = (
+            Resolve-Path $env:OPENHCS_INSTALLER_CANDIDATE_WHEELHOUSE
+          ).Path
           $env:PIP_FIND_LINKS = $env:UV_FIND_LINKS
           $hostilePipIndex = "http://127.0.0.1:9/simple"
           $hostilePipConfig = Join-Path $env:RUNNER_TEMP "hostile-pip.ini"
@@ -1412,9 +1426,7 @@ jobs:
       - name: Execute and verify macOS installer
         if: matrix.platform == 'macos'
         run: |
-          release_version=$(python scripts/stage_ci_candidate_version.py \
-            --run-id "$GITHUB_RUN_ID")
-          python -m build --wheel
+          release_version='${{ steps.source_candidate.outputs.release_version }}'
           staged_contract="$RUNNER_TEMP/installer_contract.json"
           installer_app="$RUNNER_TEMP/OpenHCS Release Installer.app"
           smoke_home="$RUNNER_TEMP/openhcs-installer-home"
@@ -1454,7 +1466,7 @@ jobs:
 
           mkdir -p "$smoke_home"
           export HOME="$smoke_home"
-          export UV_FIND_LINKS="$GITHUB_WORKSPACE/dist"
+          export UV_FIND_LINKS="$OPENHCS_INSTALLER_CANDIDATE_WHEELHOUSE"
           export PIP_FIND_LINKS="$UV_FIND_LINKS"
           hostile_pip_index='http://127.0.0.1:9/simple'
           hostile_pip_config="$RUNNER_TEMP/hostile-pip.ini"

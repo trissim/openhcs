@@ -2686,7 +2686,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "2016844972c53f6452299df2e59ce8a8dfb16755d666672ae38851e163653059",
+    "source_sha256": "7c3cae362c70c3896879d6301ffbb472516444add6c44464c6b39436ff61c713",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2720,8 +2720,13 @@
       },
       {
         "path": "scripts/install_ci_candidate.py",
-        "sha256": "04f5f7a7b102ae330f9b7ba72d32a815da68d30cd567a0f5aed3766c72011485",
-        "role": "Builds and installs metadata-discovered current submodule wheels after source-compatibility validation, independently from published-wheel projection."
+        "sha256": "cc9ac7b2a75ac05b6398cb42d01691d31b80de75d55130779b72216a57896e42",
+        "role": "Builds a metadata-discovered current-source wheelhouse after compatibility validation and optionally installs it, independently from published-wheel projection."
+      },
+      {
+        "path": "tests/unit/test_install_ci_candidate.py",
+        "sha256": "e6ab5825a1ca3187767babdc0d9130a355f9969ccbef0d73c000052bc3015986",
+        "role": "Proves source wheelhouse discovery, build ordering, root-wheel validation, and the build-only command boundary."
       },
       {
         "path": "tests/unit/test_validate_local_release_floors.py",
@@ -2735,8 +2740,8 @@
       },
       {
         "path": "tests/unit/test_mcp_release_workflow.py",
-        "sha256": "a442e3b4b2f1c7c40fc85c9c444b86e1a4df0bf088092840150d6c9efda12a55",
-        "role": "Proves immutable tag resolution, exact-SHA checkout, publication ordering, recovery, and Registry policy."
+        "sha256": "c50b5ff9498df267c0ce5400565c958cc73dd40e6c2edbb70da9ab69347e59a6",
+        "role": "Proves immutable tag resolution, exact-SHA checkout, publication ordering, recovery, Registry policy, and publication-independent native candidate ownership."
       },
       {
         "path": "tests/unit/test_release_readiness.py",
@@ -2745,8 +2750,8 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "e3a65db3512ace7b8bfc115d2c2908158cf6e238dcec1393c2e82095d68df782",
-        "role": "Cross-platform release-candidate dependency-readiness, installed-wheel live GUI/MCP operation, installer, signing-helper parse, and staged-update validation matrix."
+        "sha256": "cee01739a55022087911b4d6f749a7290bc4cc9e41f322e05cc08ba34998189f",
+        "role": "Cross-platform source-candidate and published-dependency readiness, installed-wheel live GUI/MCP operation, native installer, signing-helper parse, and staged-update validation matrix."
       },
       {
         "path": ".github/workflows/published-release-canary.yml",
@@ -2816,7 +2821,8 @@
       "Six first-party requirements had no breaking-series ceiling; the package metadata now bounds every extracted dependency, and the metadata-derived release validator rejects an unbounded future candidate.",
       "The installed-GUI probe reused the default execution endpoint, allowing an existing desktop server to influence an otherwise isolated package canary; it now allocates the endpoint through the selected transport declaration.",
       "Installed GUI and MCP package checks terminated before either operated the other; the source-wheel, publication, and scheduled canaries now keep the packaged GUI live while the packaged desktop MCP discovers it and invokes a declared UI action.",
-      "The fixed desktop candidate was operated before publication only on Linux, while Windows and macOS evidence remained behind the unpublished-dependency gate; a complementary source-candidate matrix now proves Windows and both macOS architectures alongside the Linux wheel lane."
+      "The fixed desktop candidate was operated before publication only on Linux, while Windows and macOS evidence remained behind the unpublished-dependency gate; a complementary source-candidate matrix now proves Windows and both macOS architectures alongside the Linux wheel lane.",
+      "The native source-candidate matrix still depended on published first-party tags, so the real installer and staged-update jobs were skipped exactly while those dependency releases were being prepared; the native lane now builds its complete wheelhouse from metadata-discovered submodules while the separate PyPI lane remains fail-closed on publication readiness."
     ],
     "disposition": "revise",
     "validation": [
@@ -2845,12 +2851,13 @@
       "On 2026-08-25, re-read and revised the complete release how-to after source-candidate compatibility and installer-facing publication readiness became independent proofs; 55 focused policy tests and a real eight-submodule wheel installation confirmed that unreleased source is tested without weakening exact-floor, tag, or PyPI gates.",
       "On 2026-08-26, re-read the CI and publication section after release-tag fetches were removed from source unit and documentation jobs; only dependency-readiness and publication gates now require tag history.",
       "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete page against the exact-wheel live GUI/MCP probe, source candidate workflow, tag workflow, and scheduled published-package canary; the probe passed with matching 0.7.27 identities and exact endpoint cleanup.",
-      "On 2026-08-26, re-read the complete page against the metadata-derived desktop extras, candidate-wheel installer, complementary Windows and dual-architecture macOS candidate matrix, and focused workflow ownership tests."
+      "On 2026-08-26, re-read the complete page against the metadata-derived desktop extras, candidate-wheel installer, complementary Windows and dual-architecture macOS candidate matrix, and focused workflow ownership tests.",
+      "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete page after separating native source-candidate evidence from published-wheel readiness; a real metadata-discovered nine-wheel build-only wheelhouse and focused installer/workflow regressions passed while the public PyPI installation lane remained gated."
     ]
   },
   {
     "path": "docs/source/development/omero_testing.rst",
-    "source_sha256": "9441f99ede10ea2532d3b4bdb3a8d240cce00c1f737157da0f46a733c4633cd3",
+    "source_sha256": "2316f94fc1745319e710ea52f48276eac864c7c8070bbb7e0c2f67affabbe595",
     "audience": [
       "OpenHCS and OMERO integration testers"
     ],
@@ -2904,7 +2911,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "e3a65db3512ace7b8bfc115d2c2908158cf6e238dcec1393c2e82095d68df782",
+        "sha256": "cee01739a55022087911b4d6f749a7290bc4cc9e41f322e05cc08ba34998189f",
         "role": "Runs explicitly selected live OMERO variants and preserves component and table-service diagnostics on failure."
       }
     ],
@@ -2932,7 +2939,8 @@
       "On 2026-08-25, re-read the complete how-to after live Python 3.11 CI proved a cold Docker daemon race; documented the bounded wait without moving daemon startup into OpenHCS and verified rejected gateways are not retained.",
       "On 2026-08-25, re-read and revised the complete OMERO testing how-to after its source lane became independent of dependency publication readiness; current submodule wheels remain the behavior proof and the public installer lane remains the publication proof.",
       "On 2026-08-26, re-read and revised the how-to against PolyStore's managed-repository wait and OpenHCS's packaged-only Tables-0 recovery; the full PolyStore suite and focused manager tests cover both ownership boundaries.",
-      "On 2026-08-26, re-read the complete page after the integration workflow added an independent desktop candidate matrix; the OMERO source lane, publication independence, diagnostics, and lifecycle claims remain unchanged."
+      "On 2026-08-26, re-read the complete page after the integration workflow added an independent desktop candidate matrix; the OMERO source lane, publication independence, diagnostics, and lifecycle claims remain unchanged.",
+      "On 2026-08-26, re-read the full how-to after the native installer matrix began building current-source wheels independently; clarified that OMERO source evidence remains separate from the PyPI installation lane without changing its test selection or lifecycle ownership."
     ]
   },
   {

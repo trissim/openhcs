@@ -48,7 +48,7 @@ def test_pypi_install_uses_metadata_discovered_hash_pinned_wheels(
 
     installer.build_and_install_candidate(
         extras=("dev",),
-        dependency_source="pypi",
+        dependency_source=installer.CandidateDependencySource.PYPI,
         wheel_directory=tmp_path / "wheels",
         additional_requirements=("pytest-split==0.11.0",),
         local_project_extras=(),
@@ -88,7 +88,7 @@ def test_existing_candidate_wheel_reuses_hash_pinned_dependency_projection(
 
     installer.build_and_install_candidate(
         extras=("gui",),
-        dependency_source="pypi",
+        dependency_source=installer.CandidateDependencySource.PYPI,
         wheel_directory=tmp_path / "wheel-links",
         additional_requirements=(),
         local_project_extras=(),
@@ -107,3 +107,66 @@ def test_existing_candidate_rejects_a_non_openhcs_wheel(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="Candidate wheel is not OpenHCS"):
         installer._existing_root_wheel(wheel)
+
+
+def test_source_candidate_wheelhouse_builds_metadata_discovered_projects(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    candidate = ReleaseCandidate(
+        name="example-package",
+        version=Version("1.2.3"),
+        dependencies=(),
+        path=tmp_path / "external" / "example" / "pyproject.toml",
+    )
+    wheel_directory = tmp_path / "wheelhouse"
+    built_projects: list[Path] = []
+
+    monkeypatch.setattr(installer, "discover_local_projects", lambda: (candidate,))
+    monkeypatch.setattr(installer, "validate_local_candidate_compatibility", lambda: ())
+    monkeypatch.setattr(installer, "validate_wheel_deployment", lambda _wheel: ())
+
+    def build_wheel(project_root: Path, destination: Path) -> None:
+        built_projects.append(project_root)
+        destination.mkdir(parents=True, exist_ok=True)
+        wheel_name = (
+            "openhcs-0.7.27-py3-none-any.whl"
+            if project_root == installer.REPO_ROOT
+            else "example_package-1.2.3-py3-none-any.whl"
+        )
+        destination.joinpath(wheel_name).touch()
+
+    monkeypatch.setattr(installer, "_build_wheel", build_wheel)
+
+    wheelhouse = installer.build_source_candidate_wheelhouse(
+        wheel_directory=wheel_directory
+    )
+
+    assert wheelhouse.local_projects == (candidate,)
+    assert wheelhouse.root_wheel == (
+        wheel_directory / "openhcs-0.7.27-py3-none-any.whl"
+    )
+    assert built_projects == [candidate.path.parent, installer.REPO_ROOT]
+
+
+def test_build_only_cli_rejects_installation_requirements(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        installer.sys,
+        "argv",
+        [
+            "install_ci_candidate",
+            "--dependency-source",
+            "submodules",
+            "--wheel-directory",
+            str(tmp_path / "wheelhouse"),
+            "--build-only",
+            "--extras",
+            "gui",
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        installer.main()

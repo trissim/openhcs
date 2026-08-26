@@ -6,6 +6,8 @@ import argparse
 import json
 import subprocess
 import sys
+from dataclasses import dataclass
+from enum import Enum
 from importlib.metadata import version as installed_version
 from pathlib import Path
 
@@ -22,6 +24,13 @@ from scripts.validate_local_release_floors import (
     validate_local_candidate_compatibility,
 )
 from scripts.validate_wheel_deployment import validate_wheel_deployment
+
+
+class CandidateDependencySource(str, Enum):
+    """Dependency authority used to assemble an OpenHCS CI candidate."""
+
+    PYPI = "pypi"
+    SUBMODULES = "submodules"
 
 
 def _build_wheel(project_root: Path, wheel_directory: Path) -> None:
@@ -66,10 +75,59 @@ def _existing_root_wheel(candidate_wheel: Path) -> Path:
     return root_wheel
 
 
+def _validated_root_wheel(
+    wheel_directory: Path,
+    *,
+    candidate_wheel: Path | None,
+) -> Path:
+    """Build or select the root wheel and validate its deployment boundary."""
+
+    if candidate_wheel is None:
+        _build_wheel(REPO_ROOT, wheel_directory)
+        root_wheel = _root_wheel(wheel_directory)
+    else:
+        root_wheel = _existing_root_wheel(candidate_wheel)
+    deployment_errors = validate_wheel_deployment(root_wheel)
+    if deployment_errors:
+        raise RuntimeError("\n".join(deployment_errors))
+    return root_wheel
+
+
+@dataclass(frozen=True, slots=True)
+class SourceCandidateWheelhouse:
+    """Metadata-discovered first-party wheels for one source candidate."""
+
+    local_projects: tuple[ReleaseCandidate, ...]
+    root_wheel: Path
+
+
+def build_source_candidate_wheelhouse(
+    *,
+    wheel_directory: Path,
+    candidate_wheel: Path | None = None,
+) -> SourceCandidateWheelhouse:
+    """Build the compatible local dependency graph and validated root wheel."""
+
+    wheel_directory.mkdir(parents=True, exist_ok=True)
+    local_projects = discover_local_projects()
+    errors = validate_local_candidate_compatibility()
+    if errors:
+        raise RuntimeError("\n".join(errors))
+    for project in local_projects:
+        _build_wheel(project.path.parent, wheel_directory)
+    return SourceCandidateWheelhouse(
+        local_projects=local_projects,
+        root_wheel=_validated_root_wheel(
+            wheel_directory,
+            candidate_wheel=candidate_wheel,
+        ),
+    )
+
+
 def build_and_install_candidate(
     *,
     extras: tuple[str, ...],
-    dependency_source: str,
+    dependency_source: CandidateDependencySource,
     wheel_directory: Path,
     additional_requirements: tuple[str, ...],
     local_project_extras: tuple[str, ...],
@@ -81,13 +139,13 @@ def build_and_install_candidate(
     wheel_directory.mkdir(parents=True, exist_ok=True)
     local_projects: tuple[ReleaseCandidate, ...] = ()
     dependency_requirements: tuple[str, ...] = ()
-    if dependency_source == "submodules":
-        local_projects = discover_local_projects()
-        errors = validate_local_candidate_compatibility()
-        if errors:
-            raise RuntimeError("\n".join(errors))
-        for project in local_projects:
-            _build_wheel(project.path.parent, wheel_directory)
+    if dependency_source is CandidateDependencySource.SUBMODULES:
+        wheelhouse = build_source_candidate_wheelhouse(
+            wheel_directory=wheel_directory,
+            candidate_wheel=candidate_wheel,
+        )
+        local_projects = wheelhouse.local_projects
+        root_wheel = wheelhouse.root_wheel
     elif not published_wheel_requirements:
         raise RuntimeError(
             "PyPI candidate installation requires the readiness job's "
@@ -95,15 +153,10 @@ def build_and_install_candidate(
         )
     else:
         dependency_requirements = published_wheel_requirements
-
-    if candidate_wheel is None:
-        _build_wheel(REPO_ROOT, wheel_directory)
-        root_wheel = _root_wheel(wheel_directory)
-    else:
-        root_wheel = _existing_root_wheel(candidate_wheel)
-    deployment_errors = validate_wheel_deployment(root_wheel)
-    if deployment_errors:
-        raise RuntimeError("\n".join(deployment_errors))
+        root_wheel = _validated_root_wheel(
+            wheel_directory,
+            candidate_wheel=candidate_wheel,
+        )
     extras_suffix = f"[{','.join(extras)}]" if extras else ""
     subprocess.run(
         (
@@ -134,7 +187,7 @@ def build_and_install_candidate(
         cwd=wheel_directory,
     )
 
-    if dependency_source == "submodules":
+    if dependency_source is CandidateDependencySource.SUBMODULES:
         if local_project_extras:
             extras_suffix = f"[{','.join(local_project_extras)}]"
             subprocess.run(
@@ -175,8 +228,17 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--dependency-source",
-        choices=("pypi", "submodules"),
-        default="pypi",
+        type=CandidateDependencySource,
+        choices=tuple(CandidateDependencySource),
+        default=CandidateDependencySource.PYPI,
+    )
+    parser.add_argument(
+        "--build-only",
+        action="store_true",
+        help=(
+            "Build and validate the metadata-discovered source wheelhouse "
+            "without installing it. Requires --dependency-source submodules."
+        ),
     )
     parser.add_argument("--wheel-directory", type=Path, required=True)
     parser.add_argument(
@@ -223,7 +285,24 @@ def _published_wheel_requirements(value: str) -> tuple[str, ...]:
 
 
 def main() -> int:
-    args = _parser().parse_args()
+    parser = _parser()
+    args = parser.parse_args()
+    if args.build_only:
+        if args.dependency_source is not CandidateDependencySource.SUBMODULES:
+            parser.error("--build-only requires --dependency-source submodules")
+        if (
+            args.extras
+            or args.requirement
+            or args.local_project_extra
+            or args.published_wheel_requirements_json != "[]"
+        ):
+            parser.error("--build-only does not accept installation requirements")
+        wheelhouse = build_source_candidate_wheelhouse(
+            wheel_directory=args.wheel_directory.resolve(),
+            candidate_wheel=args.candidate_wheel,
+        )
+        print(wheelhouse.root_wheel)
+        return 0
     build_and_install_candidate(
         extras=tuple(part for part in args.extras.split(",") if part),
         dependency_source=args.dependency_source,

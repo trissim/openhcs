@@ -60,11 +60,13 @@ run OMERO on supported Python versions with an explicit ZeroC Ice wheel.
 
 The source, GUI, OMERO, parity, viewer, and wheel-candidate jobs build the
 recursively recorded first-party submodule snapshots and run independently of
-dependency publication. A separate release-readiness job requires exact
-dependency floors, matching release tags, and PyPI-visible wheels before the
-PyPI-style installation and native installer jobs can run. An unpublished
-first-party change therefore keeps release readiness red without hiding the
-current-source test results.
+dependency publication. The native installer matrix does the same before
+running the real Windows and dual-architecture macOS bootstrap installers and
+staged updater. A separate release-readiness job requires exact dependency
+floors, matching release tags, and PyPI-visible wheels before PyPI-style
+installation can run. An unpublished first-party change therefore keeps
+release readiness red without hiding current-source or native-installer test
+results.
 
 The foundational unit/core job and maintained PyQt GUI job emit fail-closed
 coverage artifacts. The dependent Combined Coverage Artifact workflow combines
@@ -93,18 +95,20 @@ The Linux wheel job runs this operation before its installed integration suite.
 A complementary desktop candidate matrix runs it on Windows and both macOS
 architectures using wheels built from the recursively recorded first-party
 submodules. These jobs run independently of dependency publication, providing
-cross-platform evidence for an unreleased dependency graph before the PyPI and
-native-installer lanes become eligible.
+cross-platform evidence for an unreleased dependency graph before the PyPI
+lanes become eligible.
 
 The daily Published Release Canary installs the latest stable desktop package
 from PyPI on Linux, Windows, and macOS and repeats that live GUI/MCP probe. It is
 the post-release signal for a dependency update that leaves package resolution
 valid but breaks application startup or desktop-agent operation.
 
-The native installer jobs deliberately provide an unreachable pip
+The native installer jobs build one metadata-discovered wheelhouse from the
+recorded first-party submodules, then deliberately provide an unreachable pip
 configuration file and unreachable primary and extra index overrides. Windows
 installation and reinstall, macOS installation, and the staged-update worker
-must complete without contacting that injected index. This proves that a
+must resolve the prepared candidates from that wheelhouse without contacting
+the injected index. This proves both the unreleased dependency graph and that a
 workstation's package-index settings cannot redirect a managed desktop
 installation.
 

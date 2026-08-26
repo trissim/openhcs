@@ -61,7 +61,7 @@ distinguished from a generic container failure.
 The CI OMERO lane builds the recursively recorded first-party submodule wheels
 and runs independently of dependency publication readiness. It therefore tests
 the current storage and transport snapshots before their public package
-releases, while the separate installer-facing lane proves the published
+releases, while the separate PyPI installation lane proves the published
 dependency set.
 
 Deployment tests for packaging, credentials, and server lifecycle belong in

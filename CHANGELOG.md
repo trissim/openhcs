@@ -46,7 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the painted main window on transport-declaration-allocated execution and
   UI-bridge endpoints, then uses the packaged desktop MCP to discover the live
   UI and invoke a declared action instead of treating dependency resolution
-  alone as proof of desktop compatibility or reusing an existing server.
+  alone as proof of desktop compatibility or reusing an existing server. The
+  native installer lane builds its metadata-discovered wheelhouse directly
+  from the candidate checkout, so unpublished dependency tags cannot suppress
+  Windows or macOS installer and update evidence.
 - An explicitly selected UI bridge descriptor now owns both targeted bridge
   resolution and bridge-catalog discovery, including on macOS and Windows
   where Linux process-environment discovery is unavailable.
