@@ -154,7 +154,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "09ba50a8d5b02d5a5aa14b8d6853ae5b13ee3cd5951d20b85dd29b466cd9b497",
+        "sha256": "9f5329c99dffa140048490ae372702b77780cb38360471f1a195fe3c3fe99c32",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -626,7 +626,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "09ba50a8d5b02d5a5aa14b8d6853ae5b13ee3cd5951d20b85dd29b466cd9b497",
+        "sha256": "9f5329c99dffa140048490ae372702b77780cb38360471f1a195fe3c3fe99c32",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -812,7 +812,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "09ba50a8d5b02d5a5aa14b8d6853ae5b13ee3cd5951d20b85dd29b466cd9b497",
+        "sha256": "9f5329c99dffa140048490ae372702b77780cb38360471f1a195fe3c3fe99c32",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1303,7 +1303,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "09ba50a8d5b02d5a5aa14b8d6853ae5b13ee3cd5951d20b85dd29b466cd9b497",
+        "sha256": "9f5329c99dffa140048490ae372702b77780cb38360471f1a195fe3c3fe99c32",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1916,7 +1916,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "09ba50a8d5b02d5a5aa14b8d6853ae5b13ee3cd5951d20b85dd29b466cd9b497",
+        "sha256": "9f5329c99dffa140048490ae372702b77780cb38360471f1a195fe3c3fe99c32",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -2295,7 +2295,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "09ba50a8d5b02d5a5aa14b8d6853ae5b13ee3cd5951d20b85dd29b466cd9b497",
+        "sha256": "9f5329c99dffa140048490ae372702b77780cb38360471f1a195fe3c3fe99c32",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2765,7 +2765,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "09ba50a8d5b02d5a5aa14b8d6853ae5b13ee3cd5951d20b85dd29b466cd9b497",
+        "sha256": "9f5329c99dffa140048490ae372702b77780cb38360471f1a195fe3c3fe99c32",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -3155,7 +3155,7 @@
       },
       {
         "path": "packaging/mcpb/openhcs/manifest.json",
-        "sha256": "91dc5afd28f1fbc30251c05fca23f3966c06d94bb5df00c53c93760b2a9c65e2",
+        "sha256": "4c4167d8603e452a75fdc321c1b0804f25b1b493b66c84f06fbc1835ce05ee09",
         "role": "Declares the packaged MCP server command, arguments, compatibility, and client-visible metadata."
       },
       {

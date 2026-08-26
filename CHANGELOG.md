@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.27] - 2026-08-26
+
 ### Changed
 
 - Desktop and local MCP function discovery now share the execution endpoint's
@@ -498,10 +500,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 See git history for changes in versions 0.3.14 and earlier.
 
-[Unreleased]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.26...HEAD
+[Unreleased]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.27...HEAD
 [0.4.0]: https://github.com/trissim/openhcs/compare/v0.3.15...v0.4.0
 [0.3.15]: https://github.com/trissim/openhcs/releases/tag/v0.3.15
 [0.7.0]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.6.17...v0.7.0
 [0.7.24]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.23...v0.7.24
 [0.7.25]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.24...v0.7.25
 [0.7.26]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.25...v0.7.26
+[0.7.27]: https://github.com/OpenHCSDev/OpenHCS/compare/v0.7.26...v0.7.27
