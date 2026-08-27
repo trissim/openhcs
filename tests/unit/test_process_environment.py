@@ -1,3 +1,7 @@
+from pathlib import PureWindowsPath
+
+from openhcs.agent.runtime_platform import WindowsAgentRuntimePlatformAuthority
+from openhcs.resources.brand import BRAND_PRODUCT_NAME
 from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 
@@ -10,11 +14,41 @@ def test_process_environment_owns_inherited_mode_selectors() -> None:
     )
 
 
-def test_process_environment_owns_numba_cache_location(tmp_path) -> None:
-    assert (
-        OpenHCSProcessEnvironment.numba_cache_path(tmp_path)
-        == (tmp_path / "cache" / "numba").resolve()
+def test_process_environment_owns_numba_cache_location(monkeypatch, tmp_path) -> None:
+    local_data = tmp_path / "local-data"
+    monkeypatch.setenv("LOCALAPPDATA", str(local_data))
+
+    cache_path = OpenHCSProcessEnvironment.numba_cache_path(
+        WindowsAgentRuntimePlatformAuthority()
     )
+
+    assert cache_path == (local_data / BRAND_PRODUCT_NAME / "numba").resolve()
+
+
+def test_windows_numba_cache_preserves_legacy_path_budget(
+    monkeypatch, tmp_path
+) -> None:
+    local_data = tmp_path / "local-data"
+    monkeypatch.setenv("LOCALAPPDATA", str(local_data))
+    cache_path = OpenHCSProcessEnvironment.numba_cache_path(
+        WindowsAgentRuntimePlatformAuthority()
+    )
+    relative_cache = cache_path.relative_to(local_data.resolve())
+    windows_cache = PureWindowsPath(
+        r"C:\Users\runneradmin\AppData\Local",
+        *relative_cache.parts,
+    )
+    generated_cache_path = (
+        windows_cache
+        / ("cellprofiler_926ba2ac16708c16c48cca82b797fbb54b5840a7")
+        / (
+            "thresholding_threshold_numba_diagnostics_quantized."
+            "_threshold_diagnostics_unmasked_finite_quantized_numba-187."
+            "py312.nbi.tmp.e379105096cf4ba9"
+        )
+    )
+
+    assert len(str(generated_cache_path)) < 260
 
 
 def test_process_environment_resolves_boolean_modes() -> None:

@@ -335,7 +335,7 @@ def _smoke_installed_mcp(
     environment["OPENHCS_CPU_ONLY"] = "true"
     environment["XDG_CACHE_HOME"] = str((install_root / "mcp-cache").resolve())
     environment[OpenHCSProcessEnvironment.numba_cache_key] = str(
-        OpenHCSProcessEnvironment.numba_cache_path(install_root)
+        OpenHCSProcessEnvironment.current_numba_cache_path()
     )
     completed = _run_checked(
         [
@@ -367,7 +367,7 @@ def _smoke_installed_gui(
     environment["XDG_CONFIG_HOME"] = str((install_root / "gui-config").resolve())
     environment["XDG_DATA_HOME"] = str((install_root / "gui-data").resolve())
     environment[OpenHCSProcessEnvironment.numba_cache_key] = str(
-        OpenHCSProcessEnvironment.numba_cache_path(install_root)
+        OpenHCSProcessEnvironment.current_numba_cache_path()
     )
     resolved_evidence_directory = (
         (install_root / "gui-evidence").resolve()
@@ -419,7 +419,7 @@ def _smoke_installed_demo(
     environment["OPENHCS_AGENT_WRITE_ROOTS"] = str(demo_root)
     environment["XDG_CACHE_HOME"] = str((install_root / "mcp-cache").resolve())
     environment[OpenHCSProcessEnvironment.numba_cache_key] = str(
-        OpenHCSProcessEnvironment.numba_cache_path(install_root)
+        OpenHCSProcessEnvironment.current_numba_cache_path()
     )
     command = [
         str(python_executable),

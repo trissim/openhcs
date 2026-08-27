@@ -1857,12 +1857,12 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "3b3d411aa3700411b61dae36888f4e8b2db5d91b353d3b7e7bc278db1b401310",
+        "sha256": "f745f93e245e5c1b02f6e0ece3a4a0e2af086c3cab77282e3907a167f5ce0a7f",
         "role": "Executes the GUI acceptance probe and packaged restart worker from the installed environment while deriving the outer process ceiling from the probe's timing authority."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "7e64b4d02e3d916d08c9309478686535421f52d97d9d6fba42b3920f76cc41b3",
+        "sha256": "5ac9f0e9e0e2ffe73cbab940da132421424e355c354b7476a8a072090c5aad00",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, environment, and declaration-derived GUI operation and process-exit budgets to the installed verifiers."
       },
       {
@@ -1937,7 +1937,8 @@
       "On 2026-08-26, re-read and revised the complete catalogue boundary after a 6,336-test parallel run exposed cross-profile cache replacement; 20 focused registry tests passed with admission-context-owned persistent paths.",
       "On 2026-08-26, re-read and revised the complete page after one caller-owned cancellation authority began spanning function-catalog endpoint startup and request polling; the updated text matches ZMQRuntime and the OpenHCS execution client.",
       "On 2026-08-27, re-read the complete transition reference against the changed installed-desktop evidence authority; its ZMQ ownership and lifecycle claims remain accurate.",
-      "On 2026-08-27, rechecked the complete transition reference after installed-desktop acceptance advanced the installer schema; its ZMQ ownership and lifecycle claims remain accurate."
+      "On 2026-08-27, rechecked the complete transition reference after installed-desktop acceptance advanced the installer schema; its ZMQ ownership and lifecycle claims remain accurate.",
+      "On 2026-08-27, re-read the complete transition explanation after Windows installed-demo execution exposed the Numba cache path budget; the execution and catalogue ownership claims remain unchanged, and the native harness now consumes the declaration-owned current-platform cache path."
     ]
   },
   {

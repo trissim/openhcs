@@ -9,8 +9,8 @@ import os
 import plistlib
 import shlex
 import shutil
-import subprocess
 import struct
+import subprocess
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
@@ -24,7 +24,10 @@ from metaclass_registry import AutoRegisterMeta
 from packaging.utils import canonicalize_name
 
 from openhcs import __version__ as OPENHCS_VERSION
-from openhcs.agent.runtime_platform import AgentRuntimePlatformKey
+from openhcs.agent.runtime_platform import (
+    AgentRuntimePlatformAuthority,
+    AgentRuntimePlatformKey,
+)
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.mcp.bootstrap import (
     MCP_INSTALLATION_POINTER_ENVIRONMENT_VARIABLE,
@@ -36,7 +39,6 @@ from openhcs.resources.brand import (
     brand_asset_path,
 )
 from openhcs.utils.environment import OpenHCSProcessEnvironment
-
 
 _UV_EXECUTABLE_ENVIRONMENT_VARIABLE = "OPENHCS_UV_EXECUTABLE"
 DESKTOP_RESTART_EXECUTABLE_ENVIRONMENT_VARIABLE = (
@@ -97,12 +99,6 @@ class DesktopDeploymentContext:
     home: Path
     uv_executable: Path
     application: DesktopApplicationIdentity
-
-    @property
-    def numba_cache_path(self) -> Path:
-        """Return the compiled-code cache owned by this desktop installation."""
-
-        return OpenHCSProcessEnvironment.numba_cache_path(self.install_root)
 
     @classmethod
     def from_runtime(
@@ -315,6 +311,15 @@ class DesktopDeploymentAuthority(
                 "Windows and macOS installers."
             ) from exc
 
+    @classmethod
+    def numba_cache_path(cls) -> Path:
+        """Return this platform's user-local compiled-code cache."""
+
+        platform_authority = AgentRuntimePlatformAuthority.for_enum_member(
+            cls.platform_key
+        )
+        return OpenHCSProcessEnvironment.numba_cache_path(platform_authority)
+
     @abstractmethod
     def refresh(
         self,
@@ -392,22 +397,20 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
             separators=(",", ":"),
         )
 
-    @staticmethod
+    @classmethod
     def mcp_launcher_source(
+        cls,
         context: DesktopDeploymentContext,
         *,
         powershell_executable: Path,
     ) -> str:
         """Render the stable MCP launcher from the current pointer authority."""
 
-        stable_command = WindowsDesktopDeployment._stable_mcp_command(
+        stable_command = cls._stable_mcp_command(
             context,
             powershell_executable=powershell_executable,
         )
-        current_pointer = (
-            context.install_root
-            / WindowsDesktopDeployment._current_environment_pointer_name
-        )
+        current_pointer = context.install_root / cls._current_environment_pointer_name
         return "\n".join(
             (
                 '$ErrorActionPreference = "Stop"',
@@ -452,7 +455,7 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
                 f'$env:{OpenHCSProcessEnvironment.cpu_only_key} = "true"',
                 (
                     f"$env:{OpenHCSProcessEnvironment.numba_cache_key} = "
-                    f"{_powershell_literal(str(context.numba_cache_path))}"
+                    f"{_powershell_literal(str(cls.numba_cache_path()))}"
                 ),
                 (
                     f"$env:{_UV_EXECUTABLE_ENVIRONMENT_VARIABLE} = "
@@ -509,7 +512,7 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
             "__OPENHCS_NUMBA_CACHE_ENVIRONMENT__": (
                 OpenHCSProcessEnvironment.numba_cache_key
             ),
-            "__OPENHCS_NUMBA_CACHE_PATH__": str(context.numba_cache_path),
+            "__OPENHCS_NUMBA_CACHE_PATH__": str(cls.numba_cache_path()),
             "__OPENHCS_UV_ENVIRONMENT__": _UV_EXECUTABLE_ENVIRONMENT_VARIABLE,
             "__OPENHCS_RESTART_EXECUTABLE_ENVIRONMENT__": (
                 DESKTOP_RESTART_EXECUTABLE_ENVIRONMENT_VARIABLE
@@ -969,7 +972,7 @@ class MacOSDesktopDeployment(DesktopDeploymentAuthority):
                 "export OPENHCS_CPU_ONLY=true",
                 (
                     f"export {OpenHCSProcessEnvironment.numba_cache_key}="
-                    f"{shlex.quote(str(context.numba_cache_path))}"
+                    f"{shlex.quote(str(cls.numba_cache_path()))}"
                 ),
                 (
                     f"export {_UV_EXECUTABLE_ENVIRONMENT_VARIABLE}="

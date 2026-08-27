@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from openhcs.desktop_installation import DesktopInstallerSchemaVersion
+from openhcs.utils.environment import OpenHCSProcessEnvironment
 from scripts import smoke_installed_desktop as desktop_smoke
 
 
@@ -190,7 +191,7 @@ def test_mcp_smoke_uses_installed_python_in_isolated_mode(
         (tmp_path / "mcp-cache").resolve()
     )
     assert smoke_environment["NUMBA_CACHE_DIR"] == str(
-        (tmp_path / "cache" / "numba").resolve()
+        OpenHCSProcessEnvironment.current_numba_cache_path()
     )
 
 
@@ -257,7 +258,7 @@ def test_gui_smoke_uses_installed_python_and_isolated_runtime(
     )
     assert smoke_environment["XDG_DATA_HOME"] == str((tmp_path / "gui-data").resolve())
     assert smoke_environment["NUMBA_CACHE_DIR"] == str(
-        (tmp_path / "cache" / "numba").resolve()
+        OpenHCSProcessEnvironment.current_numba_cache_path()
     )
 
 
@@ -374,7 +375,7 @@ def test_portable_demo_uses_installed_python_and_real_viewer_contract(
     assert demo_environment["OPENHCS_AGENT_READ_ROOTS"] == str(demo_root)
     assert demo_environment["OPENHCS_AGENT_WRITE_ROOTS"] == str(demo_root)
     assert demo_environment["NUMBA_CACHE_DIR"] == str(
-        (tmp_path / "cache" / "numba").resolve()
+        OpenHCSProcessEnvironment.current_numba_cache_path()
     )
 
 

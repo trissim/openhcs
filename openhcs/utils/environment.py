@@ -8,6 +8,12 @@ like headless mode, CI environments, and other context-specific settings.
 import os
 from collections.abc import Mapping, MutableMapping
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from openhcs.resources.brand import BRAND_PRODUCT_NAME
+
+if TYPE_CHECKING:
+    from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
 
 
 class OpenHCSProcessEnvironment:
@@ -21,10 +27,22 @@ class OpenHCSProcessEnvironment:
     use_threading_key = "OPENHCS_USE_THREADING"
 
     @staticmethod
-    def numba_cache_path(application_root: Path) -> Path:
-        """Return the application-owned cache path for compiled Numba artifacts."""
+    def numba_cache_path(
+        platform_authority: "AgentRuntimePlatformAuthority",
+    ) -> Path:
+        """Return the user-local cache path for compiled Numba artifacts."""
 
-        return (application_root / "cache" / "numba").resolve(strict=False)
+        return (
+            platform_authority.application_data_root(BRAND_PRODUCT_NAME) / "numba"
+        ).resolve(strict=False)
+
+    @classmethod
+    def current_numba_cache_path(cls) -> Path:
+        """Return the compiled-code cache for the current host platform."""
+
+        from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
+
+        return cls.numba_cache_path(AgentRuntimePlatformAuthority.current())
 
     @classmethod
     def child_process_environment_keys(cls) -> tuple[str, ...]:

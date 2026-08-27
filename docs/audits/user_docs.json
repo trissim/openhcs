@@ -853,12 +853,12 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "3b3d411aa3700411b61dae36888f4e8b2db5d91b353d3b7e7bc278db1b401310",
+        "sha256": "f745f93e245e5c1b02f6e0ece3a4a0e2af086c3cab77282e3907a167f5ce0a7f",
         "role": "Exercises the installed distribution, launchers, MCP/runtime path, viewers, and packaged restart worker outside the source checkout while deriving the GUI subprocess ceiling from the installed-GUI smoke timing authority."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "7e64b4d02e3d916d08c9309478686535421f52d97d9d6fba42b3920f76cc41b3",
+        "sha256": "5ac9f0e9e0e2ffe73cbab940da132421424e355c354b7476a8a072090c5aad00",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, environment, and declaration-derived GUI operation and process-exit budgets to the installed verifiers."
       },
       {
@@ -878,12 +878,12 @@
       },
       {
         "path": "openhcs/desktop_deployment.py",
-        "sha256": "14ac84f0f2d76eaee31ea31235f1d8eb25078c39118d6611cb661df2246090c4",
+        "sha256": "0f8687fc714cc2fabaa77351b36b198563f377c98eba765008c81f902d7edf65",
         "role": "Owns platform-specific managed environment paths, launchers, shortcuts, and atomic desktop publication."
       },
       {
         "path": "tests/unit/test_desktop_deployment.py",
-        "sha256": "642cfac9d6e4d26243528581382b6f0914244420f187b0c35f5cfe413b0dd032",
+        "sha256": "258a657c79a5ad96eacc06a9d4436018ffa10d7ca6d4ae56d5630e0a81c52238",
         "role": "Proves Windows launcher deferral is limited to a sharing violation against a valid live GUI launcher."
       },
       {
@@ -955,7 +955,8 @@
       "On 2026-08-27, rechecked the complete installation how-to after package-source isolation became a serialized detached-worker policy and native CI gained hostile uv configuration coverage; its user-facing behavior remains accurate.",
       "On 2026-08-27, rechecked the complete installation how-to after Windows acceptance began editing the shipping destination field and projecting background output without an encoded wrapper; its user-facing behavior remains accurate.",
       "On 2026-08-27, re-read the complete installation how-to after Windows failure evidence began retaining the wizard state plus custom-root, default-root, and bootstrap logs; its user procedure remains accurate.",
-      "On 2026-08-27, re-read the complete installation how-to after the native smoke stopped mutating another process's controls and began passing the requested destination through the installer's existing InstallRoot input; the user procedure remains accurate."
+      "On 2026-08-27, re-read the complete installation how-to after the native smoke stopped mutating another process's controls and began passing the requested destination through the installer's existing InstallRoot input; the user procedure remains accurate.",
+      "On 2026-08-27, re-read the complete installation how-to after the Windows installed demo exposed an overlong compiled-code cache path; the cache now follows the registered per-user platform data authority independently of the selected install folder, with no change to the documented user procedure."
     ]
   },
   {
@@ -1468,7 +1469,7 @@
       },
       {
         "path": "openhcs/utils/environment.py",
-        "sha256": "311c5f19e80e9df080bcd6cc50758b5a7b0f5e8587f4d8357c48f81a41e2a72b",
+        "sha256": "d408e5c8bd86f9b7d26ce23595fb75200a9320d9f3ee9bfca8d29861cecb9c9d",
         "role": "Detects runtime environment and optional backend availability, including CPU-only operation."
       },
       {
@@ -1523,12 +1524,12 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "3b3d411aa3700411b61dae36888f4e8b2db5d91b353d3b7e7bc278db1b401310",
+        "sha256": "f745f93e245e5c1b02f6e0ece3a4a0e2af086c3cab77282e3907a167f5ce0a7f",
         "role": "Executes the GUI acceptance probe and packaged restart worker from the installed environment while deriving the outer process ceiling from the probe's timing authority."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "7e64b4d02e3d916d08c9309478686535421f52d97d9d6fba42b3920f76cc41b3",
+        "sha256": "5ac9f0e9e0e2ffe73cbab940da132421424e355c354b7476a8a072090c5aad00",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, environment, and declaration-derived GUI operation and process-exit budgets to the installed verifiers."
       },
       {
@@ -1585,7 +1586,8 @@
       "On 2026-08-26, re-read the complete troubleshooting how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; product-owned catalogue timeout errors remain distinct from the acceptance harness deadline, and a fresh 0.8.0 wheel completed the cold catalogue and packaged MCP path.",
       "On 2026-08-26, re-read the complete troubleshooting page after catalog request cancellation began covering endpoint startup and installed probes retained partial phase journals; the selector and endpoint diagnosis remains accurate.",
       "On 2026-08-27, re-read the complete troubleshooting page against the changed installed-desktop evidence harness; its selector, endpoint, and log guidance remains accurate.",
-      "On 2026-08-27, rechecked the complete troubleshooting page after installed-desktop acceptance exposed and covered the detached-worker import boundary; its diagnosis guidance remains accurate."
+      "On 2026-08-27, rechecked the complete troubleshooting page after installed-desktop acceptance exposed and covered the detached-worker import boundary; its diagnosis guidance remains accurate.",
+      "On 2026-08-27, re-read the complete troubleshooting page after Windows native acceptance exposed an overlong Numba cache path; the structural path correction requires no new user recovery step, and the existing first-error and log guidance remains accurate."
     ]
   },
   {
@@ -2133,12 +2135,12 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "3b3d411aa3700411b61dae36888f4e8b2db5d91b353d3b7e7bc278db1b401310",
+        "sha256": "f745f93e245e5c1b02f6e0ece3a4a0e2af086c3cab77282e3907a167f5ce0a7f",
         "role": "Runs installed GUI readiness and screenshot evidence, launch, MCP/runtime, viewer, and packaged restart-worker acceptance outside the source checkout while deriving the outer GUI process ceiling from the probe's timing authority."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "7e64b4d02e3d916d08c9309478686535421f52d97d9d6fba42b3920f76cc41b3",
+        "sha256": "5ac9f0e9e0e2ffe73cbab940da132421424e355c354b7476a8a072090c5aad00",
         "role": "Proves platform smoke orchestration passes the exact installed Python, isolated runtime, evidence directory, and declaration-derived GUI timing to the installed verifiers."
       },
       {
@@ -2244,7 +2246,8 @@
       "On 2026-08-27, rechecked the complete testing how-to after native CI exposed the detached worker's standalone-import contract; focused source tests now prove that boundary and the documented release evidence remains accurate.",
       "On 2026-08-27, rechecked the complete testing how-to after Windows acceptance began editing the real destination field, exercising spaces, and rejecting encoded background launch; the documented evidence remains accurate.",
       "On 2026-08-27, re-read the complete testing how-to after the Windows native lane began retaining its exact failure window and every installer-owned log boundary; the documented behavioral evidence remains accurate.",
-      "On 2026-08-27, re-read the complete testing how-to after retained native evidence disproved cross-process destination editing; the smoke now passes the spaced destination through the shipping installer's declared InstallRoot input and verifies the real Options page before installation."
+      "On 2026-08-27, re-read the complete testing how-to after retained native evidence disproved cross-process destination editing; the smoke now passes the spaced destination through the shipping installer's declared InstallRoot input and verifies the real Options page before installation.",
+      "On 2026-08-27, re-read the complete testing how-to after the Windows installed demo exposed a 265-character Numba cache artifact; the native lane now exercises the same user-local platform-derived cache path projected by production launchers, and the documented evidence boundary remains accurate."
     ]
   },
   {
@@ -2842,7 +2845,7 @@
     "authority": [
       {
         "path": "openhcs/utils/environment.py",
-        "sha256": "311c5f19e80e9df080bcd6cc50758b5a7b0f5e8587f4d8357c48f81a41e2a72b",
+        "sha256": "d408e5c8bd86f9b7d26ce23595fb75200a9320d9f3ee9bfca8d29861cecb9c9d",
         "role": "Detects runtime environment and optional backend availability, including CPU-only operation."
       },
       {
@@ -2873,7 +2876,8 @@
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
+      "On 2026-08-27, re-read the complete CPU-only guide after the process-environment authority began deriving its compiled-code cache from the registered host-platform data root; CPU selection and backend admission behavior remain unchanged."
     ]
   },
   {
