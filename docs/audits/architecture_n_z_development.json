@@ -414,7 +414,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "17370a6251b994795a78d88ff87d41603141d13d0ea6294e4ab3fb40ad937c86",
+        "sha256": "004c26000258d08ae64fffb76b140a4a7317d59c327a6ddb27f339860d75d41f",
         "role": "Canonical callable catalogue preparation, declaration-local projection, lookup caching, and complete derived-view clearing."
       }
     ],
@@ -431,7 +431,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-read the transition and rebuilt the python-introspect owner documentation after adding declaration projection.",
-      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
+      "On 2026-08-27, re-read the complete redirect against the changed RegistryService preparation owner; generic callable projection remains owned by python-introspect and the redirect requires no prose revision."
     ]
   },
   {
@@ -650,7 +651,7 @@
       },
       {
         "path": "openhcs/agent/services/endpoint_function_catalog_service.py",
-        "sha256": "62389b06a31ad89044dae301d1f93601ccdd9122e79758113b49a3747d26fd90",
+        "sha256": "f7197b4fad765af2cd112596e1d44770e4f7008e0e9fdb576c6ab5297e8a2c3a",
         "role": "Owns the shared asynchronous endpoint catalogue used by desktop startup, the Function Selector, and local MCP authoring."
       },
       {
@@ -687,7 +688,8 @@
       "On 2026-08-24, re-read the complete reference against the unconditional client teardown path; 58 focused OpenHCS regressions and the real-GUI startup cancellation smoke passed with no retained endpoint process.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; revised its startup wording and confirmed the remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete service reference against the endpoint-owned catalogue used by desktop and local MCP authoring; focused tests and a live Function Selector probe confirmed asynchronous preparation and exact selection."
+      "On 2026-08-25, re-read the complete service reference against the endpoint-owned catalogue used by desktop and local MCP authoring; focused tests and a live Function Selector probe confirmed asynchronous preparation and exact selection.",
+      "On 2026-08-27, re-read the complete service reference against the catalogue projection's propagated cancellation authority; the endpoint remains the single callable authority and cleanup still retires in-progress work through its owner."
     ]
   },
   {
@@ -1386,7 +1388,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_server.py",
-        "sha256": "55c2fa2f5c614f163d8f34a4c2ba3d49a86ca3c2ccc055111d2b0cd6b4ad8f4d",
+        "sha256": "5074b4b09dd3193d9f4b83003b49beb877fedaf9f8f1ef21df5042d681c0812a",
         "role": "Releases execution-session process resources when the execution server stops."
       },
       {
@@ -1460,7 +1462,8 @@
       "Three isolated real desktop, MCP, ZMQ, execution, and Napari rehearsals completed all nine acceptance requirements; ROI summaries returned in 0.063-0.485 seconds and bulk isolation in 0.078-1.078 seconds within the 2-second command budget, with no UI-log errors.",
       "On 2026-08-25, re-read the complete explanation against the visualizer contract, transactional acquisition path, lifecycle owner, and rollback regressions; revised it to distinguish owned-process cleanup from external-client release.",
       "On 2026-08-25, 162 focused component, microscope, source-binding, streaming, viewer-protocol, and rollback tests passed; documentation validation checked 154 files, 24 Python blocks, and 153 audited sources, and warning-free Sphinx rendered all 152 active pages.",
-      "On 2026-08-26, re-read the complete page after the generic endpoint connection lifecycle gained shared cancellation authority; the viewer transport and lifecycle ownership claims remain accurate."
+      "On 2026-08-26, re-read the complete page after the generic endpoint connection lifecycle gained shared cancellation authority; the viewer transport and lifecycle ownership claims remain accurate.",
+      "On 2026-08-27, re-read the complete explanation against execution-server catalogue shutdown; the changed preparation process does not alter the documented viewer acquisition, settlement, or exact process-group ownership."
     ]
   },
   {
@@ -1719,7 +1722,7 @@
   },
   {
     "path": "docs/source/architecture/zmq_execution_service_extracted.rst",
-    "source_sha256": "5a47e55bd99a336088fbc58dde56b330548fbade4a2c05bbededdc4477df4628",
+    "source_sha256": "cf224a588300889446e62265d56b0225024012ef633368e376a2deac6d63d0dd",
     "audience": [
       "OpenHCS contributors following the former local ZMQ execution-service URL"
     ],
@@ -1733,7 +1736,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_server.py",
-        "sha256": "55c2fa2f5c614f163d8f34a4c2ba3d49a86ca3c2ccc055111d2b0cd6b4ad8f4d",
+        "sha256": "5074b4b09dd3193d9f4b83003b49beb877fedaf9f8f1ef21df5042d681c0812a",
         "role": "OpenHCS compiled-execution adapter over the generic execution server."
       },
       {
@@ -1798,7 +1801,7 @@
       },
       {
         "path": "openhcs/runtime/function_catalog_preparation.py",
-        "sha256": "3961de7612d56d0733015612a9f665dce528a7e626834d29a6a2d72c371fd173",
+        "sha256": "63abd2cc72de8baacff723e4a574a74f0f6ef422b17eb32ca5fabead689505fc",
         "role": "Owns persistent registry preparation and the live endpoint's single asynchronous catalogue-preparation operation."
       },
       {
@@ -1813,7 +1816,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "17370a6251b994795a78d88ff87d41603141d13d0ea6294e4ab3fb40ad937c86",
+        "sha256": "004c26000258d08ae64fffb76b140a4a7317d59c327a6ddb27f339860d75d41f",
         "role": "Prepares the canonical catalogue in a child environment projected by ArrayBridge declarations."
       },
       {
@@ -1828,7 +1831,7 @@
       },
       {
         "path": "tests/unit/test_library_registry_discovery.py",
-        "sha256": "2f29b963996ded68005ee93871f4c7d40e1b66774228f21df86a036cb4613bd3",
+        "sha256": "37124d970423a26f6422534bc5003e64d8082589dbf03ce2fc565307fe296327",
         "role": "Proves source-revision cache invalidation, stable optional-runtime admission, declaration-owned projection, runtime-owned external-signature exclusions, and no partial catalogue after failure."
       },
       {
@@ -1924,7 +1927,8 @@
       "The endpoint-version restart transaction lacked direct failure-path evidence for executor shutdown, saved-session capture, and detached worker launch.",
       "Owner-requested connection-attempt cancellation was not a typed result, so GUI teardown could only surface it as a generic asynchronous failure; ZMQRuntime now owns the explicit cancellation outcome.",
       "The execution reference omitted the shared MemoryType child environment and the public-only native catalogue projection.",
-      "The catalogue cache used one physical document for distinct framework-admission contexts, allowing concurrent CPU-only and GPU-capable preparation to replace each other's valid result."
+      "The catalogue cache used one physical document for distinct framework-admission contexts, allowing concurrent CPU-only and GPU-capable preparation to replace each other's valid result.",
+      "Cancelling a cold catalogue request could leave its isolated capability-discovery child alive; the server-owned preparation now carries one cancellation authority to the exact process and joins it before backend cleanup."
     ],
     "disposition": "revise",
     "validation": [
@@ -1955,7 +1959,8 @@
       "On 2026-08-27, re-read the complete transition reference against the changed installed-desktop evidence authority; its ZMQ ownership and lifecycle claims remain accurate.",
       "On 2026-08-27, rechecked the complete transition reference after installed-desktop acceptance advanced the installer schema; its ZMQ ownership and lifecycle claims remain accurate.",
       "On 2026-08-27, re-read the complete transition explanation after Windows installed-demo execution exposed the Numba cache path budget; the execution and catalogue ownership claims remain unchanged, and the native harness now consumes the declaration-owned current-platform cache path.",
-      "On 2026-08-27, re-read the complete transition explanation after library registries gained declaration-owned runtime-parameter exclusions; endpoint catalogue ownership and transport claims remain unchanged."
+      "On 2026-08-27, re-read the complete transition explanation after library registries gained declaration-owned runtime-parameter exclusions; endpoint catalogue ownership and transport claims remain unchanged.",
+      "On 2026-08-27, applied the Diataxis reference boundary and re-read the complete page against the server, preparation, registry, and cancellation tests; revised the cold-cache lifecycle to identify its exact child-process and joined-shutdown owners."
     ]
   },
   {
@@ -2576,7 +2581,7 @@
   },
   {
     "path": "docs/source/development/mcp_development.rst",
-    "source_sha256": "843ef50b3b2dae29048e7c9e890a85f77965605acea503bce1f7ecf184b73de6",
+    "source_sha256": "7137b6cd7c04f36782bb3aac4bdaa08dab43dbe1748190cebffbcce9a82722cc",
     "audience": [
       "OpenHCS MCP developers"
     ],
@@ -2585,7 +2590,7 @@
     "authority": [
       {
         "path": "openhcs/mcp/dev_client.py",
-        "sha256": "38fae8370065e5dedadf48c9848232f2124afff7f28fefdaf75055cd49449ab8",
+        "sha256": "df0e10ea02d1567d7bc1cab0a9bb2c617470995818363c008507133f4846d749",
         "role": "Current development-client parser, persistent shell entry point, and persistent-session selected-surface preflight."
       },
       {
@@ -2655,7 +2660,7 @@
       },
       {
         "path": "tests/unit/test_mcp_dev_client_persistent_session.py",
-        "sha256": "a27e2edc8b3bbf47f141f04b115a0b1803419741c31b23738dd40c1d7b93fc3b",
+        "sha256": "9288d5092062f6ede46fb34db82d1a1ed5d024b3bbddb1707b03d1eb63fc1d43",
         "role": "Regression proof for persistent dev-client parsing, reuse, errors, and stop-on-error semantics."
       },
       {
@@ -2713,7 +2718,8 @@
       "Capability-local stdout guards left delayed imports and background native output able to corrupt the persistent JSON-RPC stream; process stdout is now reserved once by the stdio transport.",
       "The command examples omitted the bounded ROI-summary and atomic viewer-isolation probes needed to validate current viewer agent workflows.",
       "The how-to did not state that the development client validates commands against the selected declaration-derived surface before starting or dispatching; the selected-profile workflow now fails early with compatible registered profiles.",
-      "The UI window-snapshot command could not select the request DTO's declared output directory even though the underlying capability and viewer command supported it; the CLI now projects that field through the shared request-option authority."
+      "The UI window-snapshot command could not select the request DTO's declared output directory even though the underlying capability and viewer command supported it; the CLI now projects that field through the shared request-option authority.",
+      "The guide called --timeout-seconds a generic client timeout even though standard progress renews it; it now distinguishes transport inactivity from operation-owned maximum duration."
     ],
     "disposition": "revise",
     "validation": [
@@ -2743,7 +2749,8 @@
       "On 2026-08-26, re-read the complete development how-to after child MCP processes began retaining the platform authority's declared temporary root; the current-checkout commands, path-policy guidance, and snapshot workflow remain accurate.",
       "On 2026-08-26, re-read and revised the complete how-to after execution submissions gained a declaration-owned budget distinct from status and stop controls; explicit submit_timeout_ms overrides and known pre-dispatch timeout guidance remain accurate.",
       "On 2026-08-26, re-read the complete how-to after execute-source and the installed demo began deriving the submission deadline from OpenHCSZMQConfig; the page now names that authority and the documented timeout boundary remains accurate.",
-      "On 2026-08-26, re-read the complete development how-to after function-catalog endpoint startup joined the request cancellation authority; the documented MCP and submission timeout boundaries remain accurate."
+      "On 2026-08-26, re-read the complete development how-to after function-catalog endpoint startup joined the request cancellation authority; the documented MCP and submission timeout boundaries remain accurate.",
+      "On 2026-08-27, applied the Diataxis how-to boundary and re-read the complete page against persistent-session progress tests; revised --timeout-seconds as a renewable inactivity deadline while keeping operation maxima separate."
     ]
   },
   {

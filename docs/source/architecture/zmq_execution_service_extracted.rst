@@ -52,15 +52,18 @@ observation, and disconnects it after caching a terminal response. It does not
 recreate clients for polling or mirror transport progress in an OpenHCS-owned
 registry.
 
-The launcher's dedicated capability-preparation mode executes
-``FunctionCatalogPreparation`` before importing or constructing the execution
-server. A cold registry cache therefore has one preparation process and cannot
-recursively start execution-server launchers while server modules are still
-being imported. Both that process and a newly spawned execution server receive
-the environment projected by ArrayBridge's ``MemoryType`` declarations. The
-same declaration-owned framework requirements therefore govern parent
-admission, catalogue preparation, and server startup; OpenHCS does not rebuild
-NVIDIA wheel paths in either launcher.
+The execution server owns one ``FunctionCatalogPreparation``. On a cold cache,
+``RegistryService`` launches the launcher's dedicated
+``--prepare-capabilities`` mode as an isolated child so behaviour probing runs
+on that interpreter's main thread without recursively constructing another
+execution server. The server projects preparation snapshots while clients
+poll, and its shutdown cancels the shared ``OperationCancellation``, stops the
+exact child if it is still alive, and joins the preparation thread before
+backend cleanup. Both the preparation child and a newly spawned execution
+server receive the environment projected by ArrayBridge's ``MemoryType``
+declarations. The same declaration-owned framework requirements therefore
+govern parent admission, catalogue preparation, and server startup; OpenHCS
+does not rebuild NVIDIA wheel paths in either launcher.
 
 The execution client starts its server from the OpenHCS data directory rather
 than inheriting an arbitrary caller working directory. The shared OpenHCS log

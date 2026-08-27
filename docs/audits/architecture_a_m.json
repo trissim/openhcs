@@ -280,7 +280,7 @@
       },
       {
         "path": "openhcs/agent/services/endpoint_function_catalog_service.py",
-        "sha256": "62389b06a31ad89044dae301d1f93601ccdd9122e79758113b49a3747d26fd90",
+        "sha256": "f7197b4fad765af2cd112596e1d44770e4f7008e0e9fdb576c6ab5297e8a2c3a",
         "role": "Owns the shared asynchronous endpoint catalogue, exact revision state, and selected-reference projection for desktop and local MCP consumers."
       },
       {
@@ -313,7 +313,8 @@
       "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; revised its startup wording and confirmed the remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete explanation against the shared endpoint catalogue service and its single revision/projection state; focused unit tests and a live Function Selector probe confirmed non-blocking preparation and exact selected-reference resolution.",
       "On 2026-08-26, re-read the complete page after ZMQRuntime allowed the catalog preparation owner to carry one cancellation authority through endpoint startup and request polling; the documented GUI cleanup and prewarm lifecycle remains accurate.",
-      "On 2026-08-27, re-read the complete explanation and endpoint observation owner after startup rows began projecting each typed lifecycle phase through its nominal declaration; the page already describes the snapshot as the single status and browser-row input, so its ownership claims remain accurate."
+      "On 2026-08-27, re-read the complete explanation and endpoint observation owner after startup rows began projecting each typed lifecycle phase through its nominal declaration; the page already describes the snapshot as the single status and browser-row input, so its ownership claims remain accurate.",
+      "On 2026-08-27, re-read the complete explanation against cancellation propagation through the endpoint catalogue projection; the documented asynchronous prewarm and unconditional cleanup ownership remain accurate."
     ]
   },
   {
@@ -1657,7 +1658,7 @@
   },
   {
     "path": "docs/source/architecture/mcp_distribution.rst",
-    "source_sha256": "b0c4e8986b01737d0fd6fddb2a1b3d5e6534864ecf1a46102f43c7036430627b",
+    "source_sha256": "106d60484efc7007f9f319fdac883209e9bb580640dfbe583e8f5315c26e62b4",
     "audience": [
       "OpenHCS MCP maintainers",
       "packaging and hosted-deployment integrators"
@@ -1677,7 +1678,7 @@
       },
       {
         "path": "openhcs/mcp/dev_client.py",
-        "sha256": "38fae8370065e5dedadf48c9848232f2124afff7f28fefdaf75055cd49449ab8",
+        "sha256": "df0e10ea02d1567d7bc1cab0a9bb2c617470995818363c008507133f4846d749",
         "role": "Validates commands before dispatch through an initialized persistent development session."
       },
       {
@@ -1810,7 +1811,8 @@
       "Constructing the complete UIConfig in a local MCP process pulled Qt-only shortcut validation across the headless boundary; MCP now projects the unique execution endpoint field from the canonical saved document and dataclass schema.",
       "Local and hosted initialization instructions were dispatched again inside the MCP server; the CapabilityTransport declaration now delegates to a transport-owned nominal strategy.",
       "Claude Desktop registration repeated Windows and macOS path decisions inside one target; registered platform leaves now own those paths while the target retains client identity, detection, and configuration format.",
-      "Separate UI and viewer timeout profile classes had become behaviorally identical after timeout derivation moved to the connection contracts; the generated binders now use the sole command policy directly."
+      "Separate UI and viewer timeout profile classes had become behaviorally identical after timeout derivation moved to the connection contracts; the generated binders now use the sole command policy directly.",
+      "The persistent development client wrapped a progress-aware MCP request in a second absolute wall-clock timeout; the duplicate ceiling was removed and the explanation now names transport inactivity as the client boundary."
     ],
     "disposition": "revise",
     "validation": [
@@ -1841,7 +1843,8 @@
       "On 2026-08-27, rechecked the complete explanation after native CI exposed the detached updater's standalone boundary; the update plan now carries the declaration-derived package-source policy without importing application code, and the page reflects that ownership.",
       "On 2026-08-27, re-read the complete distribution explanation after Windows native acceptance exposed an install-root-dependent Numba cache path; process environment semantics now derive the cache through the existing registered host-platform application-data authority, while desktop launchers remain projections of that declaration.",
       "On 2026-08-27, rechecked the complete distribution explanation after the pinned formatter normalized its desktop-deployment authority; the change is mechanical and all ownership and launcher projections remain unchanged.",
-      "On 2026-08-27, re-read and revised the complete distribution explanation after Intel native acceptance exposed an upstream wheel-availability boundary; one desktop profile now projects its binary-wheel policy into both initial installation and staged update."
+      "On 2026-08-27, re-read and revised the complete distribution explanation after Intel native acceptance exposed an upstream wheel-availability boundary; one desktop profile now projects its binary-wheel policy into both initial installation and staged update.",
+      "On 2026-08-27, applied the Diataxis explanation boundary and re-read the complete page against the MCP wire session and progress binder; revised it to name progress-aware transport inactivity and the absence of a duplicate absolute client ceiling."
     ]
   },
   {

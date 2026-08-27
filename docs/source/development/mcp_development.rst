@@ -142,13 +142,17 @@ batch must stop at its first failed command. The persistent process deliberately
 retains the stale-source guard: exit and restart the shell after editing watched
 OpenHCS source.
 
-Use ``--timeout-seconds`` for the MCP client-side timeout. In shell mode it is
-the default for entered commands, while an option on an entered command wins.
-UI and viewer tools also use bounded OpenHCS control timeouts derived from their
-connection declarations. Their default and maximum control budget is currently
-five seconds; ``--timeout-ms`` can request a shorter budget, as in the example
-above. A broken bridge or stale viewer therefore fails within a declared bound
-instead of blocking the development loop.
+Use ``--timeout-seconds`` for the MCP transport-inactivity deadline. In shell
+mode it is the default for entered commands, while an option on an entered
+command wins. Each response or standard progress notification renews this
+deadline, so a cold endpoint catalogue can take longer than the interval while
+it continues reporting activity. Silence still fails within the interval.
+Operation-owned maximum durations remain separate and are not extended by MCP
+progress. UI and viewer tools also use bounded OpenHCS control timeouts derived
+from their connection declarations. Their default and maximum control budget is
+currently five seconds; ``--timeout-ms`` can request a shorter budget, as in the
+example above. A broken bridge or stale viewer therefore fails within a
+declared bound instead of blocking the development loop.
 
 Headless compile and execution submissions apply ``submit_timeout_ms`` as one
 budget across execution-server startup, progress registration, task

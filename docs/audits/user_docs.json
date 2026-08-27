@@ -493,7 +493,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "17370a6251b994795a78d88ff87d41603141d13d0ea6294e4ab3fb40ad937c86",
+        "sha256": "004c26000258d08ae64fffb76b140a4a7317d59c327a6ddb27f339860d75d41f",
         "role": "Owns backend discovery, availability filtering, and the canonical process catalogue projection."
       },
       {
@@ -503,7 +503,7 @@
       },
       {
         "path": "openhcs/agent/services/function_catalog_service.py",
-        "sha256": "22d4b645e1073d344a2387d59e04306ee34232682df12a40aa2abab6f24481b3",
+        "sha256": "88e6846b9f826f4abceff2afd84d638f09723a9bccce4825a7780bcadc4b8de2",
         "role": "Projects callable contracts from the unified function registry for agent discovery and selection."
       },
       {
@@ -528,7 +528,7 @@
       },
       {
         "path": "tests/unit/test_library_registry_discovery.py",
-        "sha256": "2f29b963996ded68005ee93871f4c7d40e1b66774228f21df86a036cb4613bd3",
+        "sha256": "37124d970423a26f6422534bc5003e64d8082589dbf03ce2fc565307fe296327",
         "role": "Proves declaration-derived catalogue discovery and process policy filtering."
       },
       {
@@ -562,7 +562,8 @@
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete explanation against endpoint-owned search, detail, and selected-reference transport; focused catalogue tests plus live desktop and MCP probes confirmed the documented discovery boundary.",
       "On 2026-08-27, re-read and revised the complete explanation after library registries gained declaration-owned runtime-parameter exclusions; it now distinguishes external runtime controls from authored algorithm parameters.",
-      "On 2026-08-27, applied the Diataxis explanation boundary and re-read the complete page against callable-owned form exclusions, runtime-tested registry exclusions, and the real full-catalogue form test; clarified why authorable controls remain editable while runtime-owned inputs stay hidden."
+      "On 2026-08-27, applied the Diataxis explanation boundary and re-read the complete page against callable-owned form exclusions, runtime-tested registry exclusions, and the real full-catalogue form test; clarified why authorable controls remain editable while runtime-owned inputs stay hidden.",
+      "On 2026-08-27, re-read the complete explanation against cancellable isolated catalogue preparation; callable contracts, endpoint-owned discovery, and selected-reference transport remain accurate."
     ]
   },
   {
@@ -1050,7 +1051,7 @@
       },
       {
         "path": "openhcs/agent/services/endpoint_function_catalog_service.py",
-        "sha256": "62389b06a31ad89044dae301d1f93601ccdd9122e79758113b49a3747d26fd90",
+        "sha256": "f7197b4fad765af2cd112596e1d44770e4f7008e0e9fdb576c6ab5297e8a2c3a",
         "role": "Owns asynchronous preparation and reuse of the endpoint callable catalogue across desktop and local MCP authoring."
       },
       {
@@ -1082,7 +1083,8 @@
       "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; revised its startup wording and confirmed the remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete interface reference against the shared endpoint catalogue service; a live dark-themed Function Selector remained responsive during loading and resolved the exact selected callable.",
       "On 2026-08-26, re-read the complete interface reference after the UI bridge service default became a projection of its connection declaration; desktop workspace, editing, and navigation guidance remains accurate.",
-      "On 2026-08-26, re-read the complete interface reference after PipelineEditorActionTargetMode members took ownership of their target selection; user-visible actions and selection scopes remain unchanged."
+      "On 2026-08-26, re-read the complete interface reference after PipelineEditorActionTargetMode members took ownership of their target selection; user-visible actions and selection scopes remain unchanged.",
+      "On 2026-08-27, re-read the complete reference against propagated catalogue cancellation; background loading, responsive selection, and exact-reference transfer remain accurate."
     ]
   },
   {
@@ -1429,7 +1431,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "17370a6251b994795a78d88ff87d41603141d13d0ea6294e4ab3fb40ad937c86",
+        "sha256": "004c26000258d08ae64fffb76b140a4a7317d59c327a6ddb27f339860d75d41f",
         "role": "Owns backend discovery, availability filtering, and the canonical process catalogue projection."
       },
       {
@@ -1446,7 +1448,8 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
+      "On 2026-08-27, re-read the complete explanation against the changed registry preparation lifecycle; supported callable discovery remains declaration-derived and no introductory claim changed."
     ]
   },
   {
@@ -1494,7 +1497,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/troubleshooting_FAQ.rst",
-    "source_sha256": "c895d4c8bc4c00b0b38c614844c7e4542fea0b65f17574bf203d319dd9697d21",
+    "source_sha256": "d6592706e994d98c9abaa35765cdc5c52c164b1575f8b88e1afa0508eee24789",
     "audience": [
       "desktop operators diagnosing a failed workflow"
     ],
@@ -1578,7 +1581,7 @@
       },
       {
         "path": "openhcs/agent/services/endpoint_function_catalog_service.py",
-        "sha256": "62389b06a31ad89044dae301d1f93601ccdd9122e79758113b49a3747d26fd90",
+        "sha256": "f7197b4fad765af2cd112596e1d44770e4f7008e0e9fdb576c6ab5297e8a2c3a",
         "role": "Owns asynchronous execution-endpoint catalogue loading, failure projection, revision state, and reuse."
       },
       {
@@ -1607,7 +1610,8 @@
       "The guide lacked a recovery path for first-start function-catalogue loading; it now distinguishes asynchronous progress from endpoint failure.",
       "The guide did not tell operators how to distinguish a known pre-dispatch MCP timeout from an execute request with an unknown acceptance outcome.",
       "The guide did not distinguish execution-server replacement from recovery after an MCP/UI bridge version mismatch.",
-      "The documented version-restart recovery lacked direct evidence for capture, executor-shutdown, endpoint-replacement, and detached-launch failure outcomes."
+      "The documented version-restart recovery lacked direct evidence for capture, executor-shutdown, endpoint-replacement, and detached-launch failure outcomes.",
+      "The selector recovery section did not explain that progress renews client inactivity or that closing the server reaps the exact cold-catalogue preparation process."
     ],
     "disposition": "revise",
     "validation": [
@@ -1631,7 +1635,8 @@
       "On 2026-08-26, re-read the complete troubleshooting page after catalog request cancellation began covering endpoint startup and installed probes retained partial phase journals; the selector and endpoint diagnosis remains accurate.",
       "On 2026-08-27, re-read the complete troubleshooting page against the changed installed-desktop evidence harness; its selector, endpoint, and log guidance remains accurate.",
       "On 2026-08-27, rechecked the complete troubleshooting page after installed-desktop acceptance exposed and covered the detached-worker import boundary; its diagnosis guidance remains accurate.",
-      "On 2026-08-27, re-read the complete troubleshooting page after Windows native acceptance exposed an overlong Numba cache path; the structural path correction requires no new user recovery step, and the existing first-error and log guidance remains accurate."
+      "On 2026-08-27, re-read the complete troubleshooting page after Windows native acceptance exposed an overlong Numba cache path; the structural path correction requires no new user recovery step, and the existing first-error and log guidance remains accurate.",
+      "On 2026-08-27, applied the Diataxis how-to boundary and re-read the complete guide against the cold-cache rehearsal and cancellation tests; revised selector recovery to distinguish renewable inactivity from total duration and to name exact preparation cleanup."
     ]
   },
   {
@@ -2927,12 +2932,12 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/registry_service.py",
-        "sha256": "17370a6251b994795a78d88ff87d41603141d13d0ea6294e4ab3fb40ad937c86",
+        "sha256": "004c26000258d08ae64fffb76b140a4a7317d59c327a6ddb27f339860d75d41f",
         "role": "Owns backend discovery, availability filtering, and the canonical process catalogue projection."
       },
       {
         "path": "tests/unit/test_library_registry_discovery.py",
-        "sha256": "2f29b963996ded68005ee93871f4c7d40e1b66774228f21df86a036cb4613bd3",
+        "sha256": "37124d970423a26f6422534bc5003e64d8082589dbf03ce2fc565307fe296327",
         "role": "Proves backend discovery and availability filtering produce the expected callable registry."
       },
       {
@@ -2955,7 +2960,8 @@
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
       "On 2026-08-27, re-read the complete CPU-only guide after the process-environment authority began deriving its compiled-code cache from the registered host-platform data root; CPU selection and backend admission behavior remain unchanged.",
-      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate."
+      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate.",
+      "On 2026-08-27, re-read the complete CPU-only how-to against the cancellable registry preparation path; CPU admission and backend exclusion semantics remain declaration-owned and unchanged."
     ]
   },
   {
@@ -2999,12 +3005,12 @@
       },
       {
         "path": "tests/unit/test_function_catalog_zmq.py",
-        "sha256": "6a128b5a4364a70e1653c4679c2854153380c02136c9dce2b431a95386a8a6b3",
+        "sha256": "f146a79c06ad1bec0db105ce88322a3a7158e0a6c60c8bac8e8608784fa7983c",
         "role": "Proves persisted custom functions propagate through registry discovery and the execution-server catalogue."
       },
       {
         "path": "openhcs/agent/services/endpoint_function_catalog_service.py",
-        "sha256": "62389b06a31ad89044dae301d1f93601ccdd9122e79758113b49a3747d26fd90",
+        "sha256": "f7197b4fad765af2cd112596e1d44770e4f7008e0e9fdb576c6ab5297e8a2c3a",
         "role": "Owns endpoint registration, asynchronous invalidation, and refresh of the shared catalogue projection."
       },
       {
@@ -3042,7 +3048,8 @@
       "On 2026-08-25, re-read the complete how-to after custom-function change notification was split into a headless domain event and desktop Qt adapter; cold MCP import and affected custom-function, catalogue, and help regressions passed.",
       "On 2026-08-25, re-read the complete custom-function management how-to after formatting its runtime projection authority; no behavior, ownership, or user workflow changed.",
       "On 2026-08-26, re-read and revised the how-to after the domain event stopped owning Qt adapter lifetimes; exact callback identity and the historical CI crash ordering are covered directly.",
-      "On 2026-08-26, re-read the complete how-to after function-catalog cancellation and its focused regression coverage changed; the asynchronous invalidation and endpoint-owned catalogue flow remains accurate."
+      "On 2026-08-26, re-read the complete how-to after function-catalog cancellation and its focused regression coverage changed; the asynchronous invalidation and endpoint-owned catalogue flow remains accurate.",
+      "On 2026-08-27, re-read the complete how-to against exact child-process cancellation during catalogue refresh; custom-function persistence, domain events, and endpoint projection ownership remain accurate."
     ]
   },
   {
@@ -3071,7 +3078,7 @@
       },
       {
         "path": "tests/unit/test_function_catalog_zmq.py",
-        "sha256": "6a128b5a4364a70e1653c4679c2854153380c02136c9dce2b431a95386a8a6b3",
+        "sha256": "f146a79c06ad1bec0db105ce88322a3a7158e0a6c60c8bac8e8608784fa7983c",
         "role": "Proves persisted custom functions propagate through registry discovery and the execution-server catalogue."
       },
       {
@@ -3103,7 +3110,8 @@
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete custom-function authoring how-to after formatting its runtime projection authority; callable declaration and catalogue behavior remain unchanged.",
       "On 2026-08-26, re-read the complete custom-function how-to after function-catalog transport regression coverage changed; the declaration-owned callable contract remains accurate.",
-      "On 2026-08-27, re-read the complete custom-function how-to after external library registries gained runtime-parameter exclusions; custom callables still declare runtime parameters through their owning decorators and contracts."
+      "On 2026-08-27, re-read the complete custom-function how-to after external library registries gained runtime-parameter exclusions; custom callables still declare runtime parameters through their owning decorators and contracts.",
+      "On 2026-08-27, re-read the complete authoring how-to against the changed endpoint catalogue tests; decorator and processing-contract declarations remain the callable authority."
     ]
   },
   {

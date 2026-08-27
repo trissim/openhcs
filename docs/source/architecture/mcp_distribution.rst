@@ -165,7 +165,12 @@ filtered by the same ``AgentCapabilitySurfaceSelection`` instance.
 The development client resolves each requested tool to its capability
 declaration and validates it against that same selected profile before starting
 a one-shot server or dispatching through a persistent session. An unsupported
-command reports the compatible registered profiles.
+command reports the compatible registered profiles. Its command timeout is a
+transport-inactivity deadline: each response or standard MCP progress
+notification renews the deadline. The persistent session does not wrap the
+same operation in a second absolute wall-clock timeout, so declared progress
+can keep legitimate catalogue preparation alive without weakening detection of
+a silent server.
 
 Hosted HTTP lane
 ----------------
@@ -232,7 +237,9 @@ binder consumes those fields, emits standard MCP progress when the request
 supplies a progress token, and chooses the declared execution context. A
 worker-safe operation can emit periodic liveness updates while its task runs.
 The binder does not switch on tool names or maintain a second list of slow
-operations.
+operations. Clients treat those notifications as transport activity, not as
+proof of completion or permission to extend any operation-owned maximum
+duration.
 
 Source-backed orchestrator-session creation remains on the MCP process's main
 thread because its import and compiler-facing setup is thread-sensitive. The
