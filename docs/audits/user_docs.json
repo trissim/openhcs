@@ -2081,7 +2081,7 @@
       },
       {
         "path": "scripts/smoke_windows_installer_window.ps1",
-        "sha256": "763e55a3e6155cfd173438228f96a8694fd1964f5a5286e3e50c2fc59838aaf9",
+        "sha256": "6719fc0c4739cb94d1bf12ad7652b37573509da159391c4df90a5222e0debaa1",
         "role": "Drives the shipping Windows installer through its real native controls and retains exact welcome, progress, completion, failure, and durable-log evidence."
       },
       {
@@ -2241,7 +2241,8 @@
       "On 2026-08-27, re-read the complete testing how-to against the hostile pip and uv source overrides, direct Windows native logging, and retained three-pass installer evidence; revised the relevant test description and confirmed the remaining commands.",
       "On 2026-08-27, rechecked the complete testing how-to after native CI exposed the detached worker's standalone-import contract; focused source tests now prove that boundary and the documented release evidence remains accurate.",
       "On 2026-08-27, rechecked the complete testing how-to after Windows acceptance began editing the real destination field, exercising spaces, and rejecting encoded background launch; the documented evidence remains accurate.",
-      "On 2026-08-27, re-read the complete testing how-to after the Windows native lane began retaining its exact failure window and every installer-owned log boundary; the documented behavioral evidence remains accurate."
+      "On 2026-08-27, re-read the complete testing how-to after the Windows native lane began retaining its exact failure window and every installer-owned log boundary; the documented behavioral evidence remains accurate.",
+      "On 2026-08-27, re-read the complete testing how-to after the retained failure proved SetWindowText was not a valid cross-process edit; the native probe now sends WM_SETTEXT directly and still validates the documented spaced-path workflow."
     ]
   },
   {

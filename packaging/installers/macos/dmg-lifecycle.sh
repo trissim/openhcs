@@ -49,11 +49,10 @@ openhcs_detach_disk_image() {
   local attempt
 
   /bin/sync
-  if /usr/sbin/diskutil info "$mounted_volume" >/dev/null 2>&1; then
-    if ! /usr/sbin/diskutil unmount "$mounted_volume"; then
-      /usr/sbin/diskutil unmount force "$mounted_volume"
-    fi
-  fi
+  # hdiutil owns the image attachment and uses Disk Arbitration to coordinate
+  # filesystem unmount with device teardown.  Unmounting the APFS volume as a
+  # separate first step can strand its synthesized device while the backing
+  # image remains busy.
   for ((attempt = 1; attempt <= detach_attempt_limit; attempt += 1)); do
     if /usr/bin/hdiutil detach "$mounted_device"; then
       return 0
@@ -65,6 +64,9 @@ openhcs_detach_disk_image() {
       /bin/sleep 1
     fi
   done
+  if /usr/sbin/diskutil info "$mounted_volume" >/dev/null 2>&1; then
+    /usr/sbin/diskutil unmount force "$mounted_volume"
+  fi
   if /usr/bin/hdiutil detach -force "$mounted_device"; then
     return 0
   fi

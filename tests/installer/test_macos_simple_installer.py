@@ -274,7 +274,7 @@ def test_macos_disk_image_cleanup_retains_exact_device_authority() -> None:
     assert "system-entities.0.dev-entry" in lifecycle
     assert 'diskutil info -plist "$mount_point"' in lifecycle
     assert "plutil -extract DeviceNode" in lifecycle
-    assert 'diskutil unmount "$mounted_volume"' in lifecycle
+    assert 'diskutil unmount force "$mounted_volume"' in lifecycle
     assert "DeviceIdentifier" not in lifecycle
     assert "/bin/sync" in lifecycle
     assert "local detach_attempt_limit=10" in lifecycle
@@ -283,6 +283,9 @@ def test_macos_disk_image_cleanup_retains_exact_device_authority() -> None:
     assert '/usr/bin/hdiutil detach "$mounted_device"' in lifecycle
     assert '/usr/sbin/diskutil info "$mounted_device"' in lifecycle
     assert '/usr/bin/hdiutil detach -force "$mounted_device"' in lifecycle
+    assert lifecycle.index(
+        '/usr/bin/hdiutil detach "$mounted_device"'
+    ) < lifecycle.index('diskutil unmount force "$mounted_volume"')
     assert 'hdiutil detach "$mount_point"' not in builder
     assert 'hdiutil detach "$mount_point"' not in integration
 

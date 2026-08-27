@@ -26,6 +26,7 @@ using System.Text;
 public static class OpenHCSInstallerWindowProbe
 {
     private const uint ButtonClick = 0x00F5;
+    private const uint SetText = 0x000C;
 
     private delegate bool EnumerateWindowCallback(IntPtr window, IntPtr state);
 
@@ -79,10 +80,6 @@ public static class OpenHCSInstallerWindowProbe
         IntPtr longParameter
     );
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetWindowTextW(IntPtr window, string text);
-
     public static bool HasVisibleChildText(IntPtr parent, string expectedText)
     {
         return FindUniqueVisibleChild(parent, expectedText) != IntPtr.Zero;
@@ -109,7 +106,20 @@ public static class OpenHCSInstallerWindowProbe
     )
     {
         IntPtr child = FindUniqueVisibleChild(parent, expectedText);
-        return child != IntPtr.Zero && SetWindowTextW(child, replacementText);
+        if (child == IntPtr.Zero)
+        {
+            return false;
+        }
+        IntPtr replacement = Marshal.StringToHGlobalUni(replacementText);
+        try
+        {
+            SendMessageW(child, SetText, IntPtr.Zero, replacement);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(replacement);
+        }
+        return true;
     }
 
     private static IntPtr FindUniqueVisibleChild(

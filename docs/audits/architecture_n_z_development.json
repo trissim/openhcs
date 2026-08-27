@@ -2822,7 +2822,7 @@
       },
       {
         "path": "scripts/smoke_windows_installer_window.ps1",
-        "sha256": "763e55a3e6155cfd173438228f96a8694fd1964f5a5286e3e50c2fc59838aaf9",
+        "sha256": "6719fc0c4739cb94d1bf12ad7652b37573509da159391c4df90a5222e0debaa1",
         "role": "Drives the shipping Windows installer through its real native controls and retains exact welcome, progress, completion, failure, and durable-log evidence."
       },
       {
@@ -2958,7 +2958,8 @@
       "On 2026-08-27, re-read the complete release how-to against the uv-owned native installer and updater lifecycle, hostile pip and uv index overrides, direct Windows native-command logging, and retained installed-desktop evidence; revised the release gate where needed.",
       "On 2026-08-27, rechecked the complete release how-to after native CI proved the updater worker must remain standard-library-only; the source gate now covers that boundary and hostile uv configuration as well as index overrides.",
       "On 2026-08-27, rechecked the complete release how-to after the Windows lane began editing the real destination field, exercising a path with spaces, and launching the background worker without an encoded PowerShell wrapper; its retained evidence claims remain accurate.",
-      "On 2026-08-27, re-read the complete release how-to after Windows failure retention expanded to include the exact wizard state and every installer-owned log boundary; its native evidence claims remain accurate."
+      "On 2026-08-27, re-read the complete release how-to after Windows failure retention expanded to include the exact wizard state and every installer-owned log boundary; its native evidence claims remain accurate.",
+      "On 2026-08-27, re-read the complete release how-to after native evidence exposed an invalid cross-process SetWindowText probe; the corrected WM_SETTEXT interaction now exercises the shipping destination control while preserving the documented evidence boundary."
     ]
   },
   {

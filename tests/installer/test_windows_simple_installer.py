@@ -694,7 +694,9 @@ def test_windows_installer_ci_drives_and_captures_the_shipping_wizard() -> None:
     assert "return matchCount == 1 ? match : IntPtr.Zero;" in probe
     assert "ClickVisibleChildByText(" in probe
     assert "ReplaceVisibleChildText(" in probe
-    assert "SetWindowTextW(" in probe
+    assert "private const uint SetText = 0x000C;" in probe
+    assert "Marshal.StringToHGlobalUni(replacementText)" in probe
+    assert "SetWindowTextW(" not in probe
     assert "Wait-InstallerVisibleText" in probe
     assert "UIAutomation" not in probe
     assert 'Invoke-InstallerButton -Name "Next >"' in probe
