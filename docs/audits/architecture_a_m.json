@@ -1017,7 +1017,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "9f5329c99dffa140048490ae372702b77780cb38360471f1a195fe3c3fe99c32",
+        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -1127,7 +1127,8 @@
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete reference against the OpenHCS OMERO deployment README and plugin compatibility owner; corrected deployment and application ownership without changing generic PolyStore responsibilities.",
       "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
-      "On 2026-08-26, re-read the complete page after ZMQRuntime extended endpoint attempts to accept caller-owned cancellation; the extracted-package ownership boundary remains accurate."
+      "On 2026-08-26, re-read the complete page after ZMQRuntime extended endpoint attempts to accept caller-owned cancellation; the extracted-package ownership boundary remains accurate.",
+      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1593,7 +1594,7 @@
   },
   {
     "path": "docs/source/architecture/mcp_distribution.rst",
-    "source_sha256": "e2b58d899d0d54bc4664387f3041db28439d204d52760a99a9d4fd1c34eb46f6",
+    "source_sha256": "b0c4e8986b01737d0fd6fddb2a1b3d5e6534864ecf1a46102f43c7036430627b",
     "audience": [
       "OpenHCS MCP maintainers",
       "packaging and hosted-deployment integrators"
@@ -1708,7 +1709,7 @@
       },
       {
         "path": "openhcs/desktop_installation.py",
-        "sha256": "2b592b7df8173b935dd42bb4b964768527af7e5925107b25c7ad9d5d1b0d7df4",
+        "sha256": "244ade0711356f68df9f376e2517dfe1c9fb77cc960c517f7c4e8ee418b5711f",
         "role": "Nominally declares and validates native install policy, then projects one exact package selection for installers and staged updates."
       },
       {
@@ -1776,7 +1777,8 @@
       "On 2026-08-27, re-read the complete distribution explanation against the uv-owned desktop environment lifecycle and declaration-derived package-index isolation; revised its packaging explanation and confirmed the remaining ownership claims.",
       "On 2026-08-27, rechecked the complete explanation after native CI exposed the detached updater's standalone boundary; the update plan now carries the declaration-derived package-source policy without importing application code, and the page reflects that ownership.",
       "On 2026-08-27, re-read the complete distribution explanation after Windows native acceptance exposed an install-root-dependent Numba cache path; process environment semantics now derive the cache through the existing registered host-platform application-data authority, while desktop launchers remain projections of that declaration.",
-      "On 2026-08-27, rechecked the complete distribution explanation after the pinned formatter normalized its desktop-deployment authority; the change is mechanical and all ownership and launcher projections remain unchanged."
+      "On 2026-08-27, rechecked the complete distribution explanation after the pinned formatter normalized its desktop-deployment authority; the change is mechanical and all ownership and launcher projections remain unchanged.",
+      "On 2026-08-27, re-read and revised the complete distribution explanation after Intel native acceptance exposed an upstream wheel-availability boundary; one desktop profile now projects its binary-wheel policy into both initial installation and staged update."
     ]
   },
   {

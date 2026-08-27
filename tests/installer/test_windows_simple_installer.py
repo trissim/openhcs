@@ -718,6 +718,8 @@ def test_windows_installer_ci_drives_and_captures_the_shipping_wizard() -> None:
     assert '"installer-smoke-error.txt"' in probe
     assert '-ScreenshotName "installer-failure"' in probe
     assert '"SUCCESS: Installation completed."' in probe
+    assert '-Name "Open log"' in probe
+    assert '-Name "Finish"' in probe
     assert '"installer.log"' in probe
     assert "$windowProcess.CloseMainWindow()" in probe
     assert "-Worker" not in probe

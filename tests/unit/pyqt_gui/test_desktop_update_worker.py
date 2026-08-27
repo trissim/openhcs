@@ -31,7 +31,7 @@ WORKER_LAUNCH_ARGUMENTS = [
     "--background-creationflags=73",
     "--detached-creationflags=91",
 ]
-NATIVE_WHEEL_POLICY = "llvmlite,numba,opencv-python,opencv-python-headless"
+NATIVE_WHEEL_POLICY = DESKTOP_INSTALL_PROFILE.binary_only_argument
 PACKAGE_SOURCE_OVERRIDE_POLICY = (
     DESKTOP_INSTALL_PROFILE.package_source_override_argument
 )

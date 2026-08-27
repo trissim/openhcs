@@ -127,6 +127,8 @@ def test_intel_macos_dependencies_select_wheel_backed_release_lines() -> None:
     assert not requirements["numba"].specifier.contains("0.63")
     assert requirements["opencv-python-headless"].specifier.contains("4.10.0.84")
     assert not requirements["opencv-python-headless"].specifier.contains("4.11.0.86")
+    assert requirements["cryptography"].specifier.contains("48.0.1")
+    assert not requirements["cryptography"].specifier.contains("49.0.0")
 
 
 def test_imagej_install_surfaces_activate_polystore_runtime_authority() -> None:
@@ -162,8 +164,8 @@ def test_install_profile_projects_release_requirement() -> None:
     assert selection.package_requirement == (
         "openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.5.22"
     )
-    assert selection.binary_only_argument == (
-        "llvmlite,numba,opencv-python,opencv-python-headless"
+    assert DESKTOP_INSTALL_PROFILE.binary_only_argument == (
+        "cryptography,llvmlite,numba,opencv-python,opencv-python-headless"
     )
 
 

@@ -74,8 +74,10 @@ class DesktopRestartPurpose(Enum):
     )
     ZMQ_VERSION = (
         "zmq_version",
-        "OpenHCS restarted with a matching execution server and restored the "
-        "working session and edit history.",
+        (
+            "OpenHCS restarted with a matching execution server and restored the "
+            "working session and edit history."
+        ),
         False,
     )
 
@@ -96,7 +98,7 @@ class DesktopRestartEnvironment:
     restart_arguments: tuple[str, ...]
 
     @classmethod
-    def current(cls) -> "DesktopRestartEnvironment":
+    def current(cls) -> DesktopRestartEnvironment:
         python_executable = Path(sys.executable).absolute()
         environment_root = Path(sys.prefix).resolve()
         worker_python_executable = Path(sys._base_executable).resolve()
@@ -276,7 +278,7 @@ class DesktopRuntimeEnvironment:
             candidate_environment=str(candidate.root),
             candidate_python_executable=str(candidate.python_executable),
             package_requirement=install_profile.package_requirement,
-            binary_only_packages=install_profile.binary_only_argument,
+            binary_only_packages=install_profile.profile.binary_only_argument,
             package_source_override_variables=(
                 DESKTOP_INSTALL_PROFILE.package_source_override_argument
             ),

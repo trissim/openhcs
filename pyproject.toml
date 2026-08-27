@@ -87,6 +87,9 @@ dependencies = [
     "portalocker>=2.8.2",  # Cross-platform file locking (Windows compatibility for fcntl)
     "tomlkit>=0.13.3",  # Preserve user-authored Codex MCP configuration on registration
     "tqdm>=4.66.5",
+    # MCP's JWT support pulls cryptography. Version 49 removed Intel macOS
+    # wheels, so retain the final wheel-backed release line on that platform.
+    "cryptography>=48,<49; platform_system == 'Darwin' and platform_machine == 'x86_64'",
 
     # System monitoring (required by ui/shared/system_monitor_core.py)
     "psutil>=5.9.0",

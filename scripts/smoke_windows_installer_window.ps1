@@ -364,6 +364,12 @@ try {
     Wait-InstallerVisibleText `
         -Name "Installation complete" `
         -Deadline $installationDeadline
+    Wait-InstallerVisibleText `
+        -Name "Open log" `
+        -Deadline $installationDeadline
+    Wait-InstallerVisibleText `
+        -Name "Finish" `
+        -Deadline $installationDeadline
     Save-InstallerWindowEvidence `
         -EvidenceName "installer-finished" `
         -ScreenshotName "installer-finished" `

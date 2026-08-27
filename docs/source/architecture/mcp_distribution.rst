@@ -274,7 +274,9 @@ name from the brand declaration, then pins the resulting contract to the exact
 release version embedded in each native installer. Native installation and
 in-app replacement environments use that declared uv executable to create,
 populate, and verify the candidate without introducing a second seeded package
-manager.
+manager. The same profile projects its binary-wheel policy into both paths, so
+platform compatibility lines remain one package declaration and both native
+consumers require the reviewed wheel-backed releases.
 
 Canonical MCP knowledge documents remain in the documentation tree. The wheel
 build deterministically projects the manifest-declared sources into package

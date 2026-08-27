@@ -138,7 +138,10 @@ screenshots, plus the complete durable installer log, are retained for 14 days
 as ``native-installer-ui-*`` evidence. Each installed desktop pass adds its
 flushed phase journal and native GUI snapshots to that artifact, so a timeout
 identifies the last completed lifecycle boundary instead of discarding the
-child process output.
+child process output. Initial installation and staged update consume the same
+profile-owned binary-wheel policy. The dual-architecture macOS lanes therefore
+exercise the declared Intel compatibility lines through the released desktop
+path rather than a test-only resolver configuration.
 
 On ``main``, the Python quality job checks the cumulative change set since the
 most recent successful Integration Tests head. A failed Python change remains

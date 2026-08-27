@@ -200,7 +200,10 @@ index overrides. The Windows installation, reinstall, and staged-update paths
 and the macOS installation must complete without contacting that index,
 proving that release behaviour does not depend on a runner's package-index
 settings. The Windows lane also rejects serialized PowerShell progress records
-in the durable installer log.
+in the durable installer log. The installer profile projects one binary-wheel
+policy into initial installation and staged update. The dual-architecture
+macOS lanes therefore exercise the declared Intel compatibility lines through
+the same wheel-backed path used by the released desktop.
 
 Tag and publish
 ---------------

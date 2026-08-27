@@ -480,7 +480,7 @@ def _staged_update_plan(tmp_path: Path) -> DesktopUpdatePlan:
         package_requirement=(
             "openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.7.0"
         ),
-        binary_only_packages=("llvmlite,numba,opencv-python,opencv-python-headless"),
+        binary_only_packages=DESKTOP_INSTALL_PROFILE.binary_only_argument,
         package_source_override_variables=(
             DESKTOP_INSTALL_PROFILE.package_source_override_argument
         ),

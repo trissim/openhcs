@@ -1309,7 +1309,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "9f5329c99dffa140048490ae372702b77780cb38360471f1a195fe3c3fe99c32",
+        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1328,7 +1328,8 @@
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
+      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1517,7 +1518,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "9f5329c99dffa140048490ae372702b77780cb38360471f1a195fe3c3fe99c32",
+        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1565,7 +1566,8 @@
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete transition reference after viewer-only regressions changed the shared agent-service test authority; generic execution ownership and the OpenHCS adapter boundary remain unchanged.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
+      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate."
     ]
   },
   {
@@ -1579,7 +1581,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "9f5329c99dffa140048490ae372702b77780cb38360471f1a195fe3c3fe99c32",
+        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -1609,7 +1611,8 @@
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
-      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate."
+      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate.",
+      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2355,7 +2358,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "9f5329c99dffa140048490ae372702b77780cb38360471f1a195fe3c3fe99c32",
+        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2412,7 +2415,8 @@
       "On 2026-08-23, re-read the complete how-to after the ZMQRuntime floor moved to 0.2.15 and removed the parallel Markdown procedure; its install and verification commands remain current.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
+      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2431,7 +2435,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "9f5329c99dffa140048490ae372702b77780cb38360471f1a195fe3c3fe99c32",
+        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2454,7 +2458,8 @@
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
+      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2468,7 +2473,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "9f5329c99dffa140048490ae372702b77780cb38360471f1a195fe3c3fe99c32",
+        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2496,7 +2501,8 @@
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
-      "On 2026-08-25, re-read the complete navigation page after moving the active gallery capture how-to into the maintained developer guide; the new entry follows the focused-guide hierarchy and does not alter product claims."
+      "On 2026-08-25, re-read the complete navigation page after moving the active gallery capture how-to into the maintained developer guide; the new entry follows the focused-guide hierarchy and does not alter product claims.",
+      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate."
     ]
   },
   {
@@ -2754,7 +2760,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "15ccd3d7566d201daacbeb10d6a55daa61bed475ef6c5c5b9462cae3c0488ca8",
+    "source_sha256": "6c85d9e9f1a49cc5f565b690d7af4812c454f40df5e2f9b16b4cd213d94abc4e",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2823,7 +2829,7 @@
       },
       {
         "path": "scripts/smoke_windows_installer_window.ps1",
-        "sha256": "9164e64ac876b64623e947629c315524a60b59b2a5c9afe39effd97906efbf03",
+        "sha256": "34cca9125254894232d768d1187c5be515e7a01db67b231543eeee6fc8af5e63",
         "role": "Drives the shipping Windows installer through its real native controls and retains exact welcome, progress, completion, failure, and durable-log evidence."
       },
       {
@@ -2911,9 +2917,9 @@
       "Installed GUI and MCP package checks terminated before either operated the other; the source-wheel, publication, and scheduled canaries now keep the packaged GUI live while the packaged desktop MCP discovers it and invokes a declared UI action.",
       "The fixed desktop candidate was operated before publication only on Linux, while Windows and macOS evidence remained behind the unpublished-dependency gate; a complementary source-candidate matrix now proves Windows and both macOS architectures alongside the Linux wheel lane.",
       "The native source-candidate matrix still depended on published first-party tags, so the real installer and staged-update jobs were skipped exactly while those dependency releases were being prepared; the native lane now builds its complete wheelhouse from metadata-discovered submodules while the separate PyPI lane remains fail-closed on publication readiness.",
-    "Cross-platform GUI canaries proved readiness and MCP actions but discarded the rendered UI, leaving native theming regressions outside retained evidence; candidate and published-package jobs now upload typed, hash-verified window snapshots.",
-    "The installed-GUI canary constructed the application below the production logging boundary, so a successful endpoint could advertise an empty log; the probe now applies its declared logging configuration and fails unless the exact advertised log contains output.",
-    "Native installer acceptance invoked worker mode without proving that either shipping wizard could start or drive installation; each supported lane now activates the shipping wizard and retains its welcome, progress, and completion states."
+      "Cross-platform GUI canaries proved readiness and MCP actions but discarded the rendered UI, leaving native theming regressions outside retained evidence; candidate and published-package jobs now upload typed, hash-verified window snapshots.",
+      "The installed-GUI canary constructed the application below the production logging boundary, so a successful endpoint could advertise an empty log; the probe now applies its declared logging configuration and fails unless the exact advertised log contains output.",
+      "Native installer acceptance invoked worker mode without proving that either shipping wizard could start or drive installation; each supported lane now activates the shipping wizard and retains its welcome, progress, and completion states."
     ],
     "disposition": "revise",
     "validation": [
@@ -2950,11 +2956,11 @@
       "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after native GUI evidence became retained; 54 focused contract tests and a live 0.7.27 GUI/MCP run validated two PNGs through their typed paths, sizes, dimensions, and SHA-256 values.",
       "On 2026-08-26, re-read the complete release how-to against the 0.8.0 version authority and regenerated MCP metadata; the source-candidate test now derives the root wheel identity from that authority, and 73 focused release tests plus wheel metadata validation passed.",
       "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after the installed GUI canary gained background function-catalogue readiness proof; a cold installed wheel completed launch, catalogue resolution, packaged MCP control, and retained screenshots within one end-to-end deadline.",
-    "On 2026-08-26, re-read the complete release how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; one installed-GUI timing declaration now derives the operation and process budgets, 106 focused release and installer tests passed, and a fresh 0.8.0 wheel completed cold launch, 263-function catalogue resolution, packaged MCP control, and two visually inspected native screenshots.",
-    "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after the packaged GUI canary began applying LoggingConfig and validating its live endpoint-advertised log; 61 focused smoke, workflow, and installer tests passed, and a live UI/MCP run produced two inspected screenshots plus a non-empty execution-server log.",
-    "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete page after native installer acceptance began opening the shipping Windows and macOS applications before worker execution; 71 focused installer tests plus workflow, shell, formatting, and diff validation passed locally.",
-    "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after native installer evidence began retaining the exact durable transcript beside its three window states; the revised evidence description matches both platform probes and 71 focused installer tests passed.",
-    "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after native installer acceptance retained per-pass phase journals and live GUI snapshots and catalog startup became teardown-cancellable; the evidence and ownership descriptions now match the exact workflow.",
+      "On 2026-08-26, re-read the complete release how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; one installed-GUI timing declaration now derives the operation and process budgets, 106 focused release and installer tests passed, and a fresh 0.8.0 wheel completed cold launch, 263-function catalogue resolution, packaged MCP control, and two visually inspected native screenshots.",
+      "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after the packaged GUI canary began applying LoggingConfig and validating its live endpoint-advertised log; 61 focused smoke, workflow, and installer tests passed, and a live UI/MCP run produced two inspected screenshots plus a non-empty execution-server log.",
+      "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete page after native installer acceptance began opening the shipping Windows and macOS applications before worker execution; 71 focused installer tests plus workflow, shell, formatting, and diff validation passed locally.",
+      "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after native installer evidence began retaining the exact durable transcript beside its three window states; the revised evidence description matches both platform probes and 71 focused installer tests passed.",
+      "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after native installer acceptance retained per-pass phase journals and live GUI snapshots and catalog startup became teardown-cancellable; the evidence and ownership descriptions now match the exact workflow.",
       "On 2026-08-27, re-read the complete release how-to after the installed-GUI harness replaced competing timeout, failure, and success fields with one terminal completion authority; focused regression and forced cold-deadline wheel probes confirmed the documented partial-journal behavior.",
       "On 2026-08-27, re-read the complete release how-to against the uv-owned native installer and updater lifecycle, hostile pip and uv index overrides, direct Windows native-command logging, and retained installed-desktop evidence; revised the release gate where needed.",
       "On 2026-08-27, rechecked the complete release how-to after native CI proved the updater worker must remain standard-library-only; the source gate now covers that boundary and hostile uv configuration as well as index overrides.",
@@ -2964,7 +2970,8 @@
       "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after Intel native evidence exposed APFS synthesized-volume teardown and Windows evidence exposed a pip configuration misused as uv TOML; the DMG now uses one HFS+ device lifecycle without retry dispatch and each hostile package-manager fixture uses its native syntax, while the documented release procedure remains accurate.",
       "On 2026-08-27, re-read the complete release how-to after Windows native evidence exposed a stale raw-uv and checkout-reinstall path; removing that parallel installation path leaves the metadata-discovered candidate wheelhouse as the single installed artifact authority and strengthens the documented candidate proof.",
       "On 2026-08-27, rechecked the complete release how-to after strict PowerShell acceptance exposed an undeclared test-fixture alias; the managed candidate, staged-update, and publication boundaries remain unchanged.",
-      "On 2026-08-27, rechecked the complete release how-to after strict mode exposed a null Compare-Object result in the Windows launcher probe; materializing the comparison as a collection changes no release procedure or product boundary."
+      "On 2026-08-27, rechecked the complete release how-to after strict mode exposed a null Compare-Object result in the Windows launcher probe; materializing the comparison as a collection changes no release procedure or product boundary.",
+      "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after Intel native acceptance exposed an upstream wheel-availability boundary and Windows completion capture raced its action row; the page now records the shared binary-wheel path, and focused native-installer regressions passed."
     ]
   },
   {
@@ -3078,7 +3085,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "9f5329c99dffa140048490ae372702b77780cb38360471f1a195fe3c3fe99c32",
+        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -3114,7 +3121,8 @@
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
+      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate."
     ]
   },
   {
@@ -3247,7 +3255,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "9f5329c99dffa140048490ae372702b77780cb38360471f1a195fe3c3fe99c32",
+        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -3263,7 +3271,8 @@
       "On 2026-08-23, re-reviewed package metadata after the ZMQRuntime floor moved to 0.2.11; the documented package ownership, installation, Python support, and entry-point claims remain accurate.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
+      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate."
     ]
   },
   {

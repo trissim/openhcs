@@ -12,7 +12,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "9f5329c99dffa140048490ae372702b77780cb38360471f1a195fe3c3fe99c32",
+        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
         "role": "Declares the published README, Python range, package dependencies, optional surfaces, console commands, and project links."
       },
       {
@@ -22,7 +22,7 @@
       },
       {
         "path": "openhcs/desktop_installation.py",
-        "sha256": "2b592b7df8173b935dd42bb4b964768527af7e5925107b25c7ad9d5d1b0d7df4",
+        "sha256": "244ade0711356f68df9f376e2517dfe1c9fb77cc960c517f7c4e8ee418b5711f",
         "role": "Nominally declares the CPU-safe desktop extras and native installation policy without copying project or brand declarations."
       },
       {
@@ -91,7 +91,8 @@
       "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
       "On 2026-08-26, re-read the complete project overview against the changed capability and client-registration owners; transport instruction and platform-path extraction are internal ownership changes, so the public feature, client, installation, and safety claims remain accurate.",
       "On 2026-08-27, re-read the complete project overview against the uv-owned installer and updater lifecycle; its public installation and capability claims remain accurate.",
-      "On 2026-08-27, rechecked the complete project overview after package-source policy became a serialized detached-worker input; its public installation and capability claims remain accurate."
+      "On 2026-08-27, rechecked the complete project overview after package-source policy became a serialized detached-worker input; its public installation and capability claims remain accurate.",
+      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate."
     ]
   }
 ]

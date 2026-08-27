@@ -26,6 +26,7 @@ class DesktopPackageExtra(str, Enum):
 class DesktopBinaryOnlyPackage(str, Enum):
     """Packages that native installs require from a binary distribution."""
 
+    CRYPTOGRAPHY = "cryptography"
     LLVMLITE = "llvmlite"
     NUMBA = "numba"
     OPENCV = "opencv-python"
@@ -115,6 +116,12 @@ class DesktopInstallProfile:
             variable.value for variable in self.package_source_override_variables
         )
 
+    @property
+    def binary_only_argument(self) -> str:
+        """Project packages that managed installs must resolve as wheels."""
+
+        return ",".join(package.value for package in self.binary_only_packages)
+
     @staticmethod
     def _validate_members(
         values: tuple[Enum, ...],
@@ -169,7 +176,7 @@ class DesktopInstallProfile:
             product_name=product_name,
             python_version=self.python_version,
             package_requirement=selection.package_requirement,
-            binary_only_packages=selection.binary_only_argument,
+            binary_only_packages=self.binary_only_argument,
             package_source_override_variables=self.package_source_override_argument,
             entry_point=entry_point,
             gui_entry_point=gui_entry_point,
@@ -191,12 +198,6 @@ class DesktopPackageInstallSelection:
 
         extras = ",".join(sorted(extra.value for extra in self.profile.package_extras))
         return f"{self.package_name}[{extras}]=={self.version}"
-
-    @property
-    def binary_only_argument(self) -> str:
-        """Return pip's comma-separated binary-only projection."""
-
-        return ",".join(package.value for package in self.profile.binary_only_packages)
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,12 +256,7 @@ DESKTOP_INSTALL_PROFILE = DesktopInstallProfile(
         DesktopPackageExtra.MCP,
         DesktopPackageExtra.VIZ,
     ),
-    binary_only_packages=(
-        DesktopBinaryOnlyPackage.LLVMLITE,
-        DesktopBinaryOnlyPackage.NUMBA,
-        DesktopBinaryOnlyPackage.OPENCV,
-        DesktopBinaryOnlyPackage.OPENCV_HEADLESS,
-    ),
+    binary_only_packages=tuple(DesktopBinaryOnlyPackage),
     package_source_override_variables=tuple(DesktopPackageSourceOverrideVariable),
     uv_release=DesktopUvRelease(
         version="0.11.28",
