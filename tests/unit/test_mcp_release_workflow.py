@@ -160,8 +160,10 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
         build_step_names.index("Download desktop installers")
     ]
     github_release = build_steps[build_step_names.index("Create GitHub Release")]
-    assert installer_download["if"] == "github.event_name == 'push'"
-    assert github_release["if"] == "github.event_name == 'push'"
+    assert installer_download["if"] == (
+        "github.event_name == 'push' || inputs.publish_desktop_installers"
+    )
+    assert "if" not in github_release
 
     installer_recovery = workflow["jobs"]["publish-installer-recovery-release"]
     assert installer_recovery["needs"] == [
@@ -169,6 +171,7 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
         "build-windows-installer",
         "build-macos-installer",
     ]
+    assert "!inputs.publish_python_package" in installer_recovery["if"]
     recovery_steps = installer_recovery["steps"]
     recovery_step_names = tuple(step.get("name") for step in recovery_steps)
     assert "Require existing release tag" not in recovery_step_names

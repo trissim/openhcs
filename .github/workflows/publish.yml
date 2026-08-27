@@ -353,7 +353,7 @@ jobs:
           twine upload dist/*
 
       - name: Download desktop installers
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || inputs.publish_desktop_installers
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: openhcs-*-installer
@@ -361,7 +361,6 @@ jobs:
           merge-multiple: true
 
       - name: Create GitHub Release
-        if: github.event_name == 'push'
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           files: |
@@ -377,6 +376,7 @@ jobs:
       always() &&
       github.event_name == 'workflow_dispatch' &&
       inputs.publish_desktop_installers &&
+      !inputs.publish_python_package &&
       needs.build-windows-installer.result == 'success' &&
       needs.build-macos-installer.result == 'success'
     runs-on: ubuntu-latest
