@@ -268,7 +268,7 @@ behaviour.
 The native installer contract is also a generated boundary rather than a
 second product declaration. ``DESKTOP_INSTALL_PROFILE`` in
 ``openhcs.desktop_installation`` owns only installer-specific Python, extras,
-binary-wheel, package-index isolation, and uv policy. The renderer combines it
+binary-wheel, package-source isolation, and uv policy. The renderer combines it
 with the package name and entry points from ``pyproject.toml`` and the product
 name from the brand declaration, then pins the resulting contract to the exact
 release version embedded in each native installer. Native installation and

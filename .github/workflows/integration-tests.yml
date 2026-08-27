@@ -842,6 +842,9 @@ jobs:
           $installRoot = Join-Path `
             ([Environment]::GetFolderPath("LocalApplicationData")) `
             "OpenHCS Installer Smoke"
+          $defaultInstallRoot = Join-Path `
+            ([Environment]::GetFolderPath("LocalApplicationData")) `
+            "OpenHCS"
           $contractPath = Join-Path $env:RUNNER_TEMP "installer_contract.json"
           New-Item -ItemType Directory -Path $stage | Out-Null
           python -m scripts.render_installer_contract `
@@ -914,6 +917,7 @@ jobs:
           $env:PIP_CONFIG_FILE = $hostilePipConfig
           $env:PIP_INDEX_URL = $hostilePipIndex
           $env:PIP_EXTRA_INDEX_URL = $hostilePipIndex
+          $env:UV_CONFIG_FILE = $hostilePipConfig
           $env:UV_DEFAULT_INDEX = $hostilePipIndex
           $env:UV_INDEX = $hostilePipIndex
           $env:UV_INDEX_URL = $hostilePipIndex
@@ -930,6 +934,8 @@ jobs:
           & scripts/smoke_windows_installer_window.ps1 `
             -LauncherPath $launcher `
             -ExpectedTitle "$($contract.product_name) Setup" `
+            -DefaultInstallRoot $defaultInstallRoot `
+            -InstallRoot $installRoot `
             -EvidenceDirectory (
               Join-Path $env:RUNNER_TEMP "openhcs-native-installer-ui"
             ) `
@@ -1439,7 +1445,7 @@ jobs:
         run: |
           $installerLog = Join-Path `
             ([Environment]::GetFolderPath("LocalApplicationData")) `
-            "OpenHCS\installer.log"
+            "OpenHCS Installer Smoke\installer.log"
           if (Test-Path -LiteralPath $installerLog -PathType Leaf) {
             Write-Host "=== Windows installer log ==="
             Get-Content -LiteralPath $installerLog
@@ -1450,7 +1456,7 @@ jobs:
 
           $installRoot = Join-Path `
             ([Environment]::GetFolderPath("LocalApplicationData")) `
-            "OpenHCS"
+            "OpenHCS Installer Smoke"
           $runtimeLogRoot = Join-Path $installRoot "gui-data\openhcs\logs"
           if (Test-Path -LiteralPath $runtimeLogRoot -PathType Container) {
             Get-ChildItem -LiteralPath $runtimeLogRoot -File |
@@ -1546,6 +1552,7 @@ jobs:
           export PIP_CONFIG_FILE="$hostile_pip_config"
           export PIP_INDEX_URL="$hostile_pip_index"
           export PIP_EXTRA_INDEX_URL="$hostile_pip_index"
+          export UV_CONFIG_FILE="$hostile_pip_config"
           export UV_DEFAULT_INDEX="$hostile_pip_index"
           export UV_INDEX="$hostile_pip_index"
           export UV_INDEX_URL="$hostile_pip_index"

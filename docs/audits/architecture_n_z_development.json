@@ -1862,7 +1862,7 @@
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "504f9e7d76de50da6ded308f138d6471fbb8e25065c62357494555c93cfead31",
+        "sha256": "7e64b4d02e3d916d08c9309478686535421f52d97d9d6fba42b3920f76cc41b3",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, environment, and declaration-derived GUI operation and process-exit budgets to the installed verifiers."
       },
       {
@@ -1936,7 +1936,8 @@
       "On 2026-08-26, re-read the complete transition reference after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; the acceptance harness now derives its outer limit from one timing owner without replacing ZMQRuntime's progress-aware endpoint inactivity semantics, and a fresh 0.8.0 wheel completed the cold 263-function catalogue path.",
       "On 2026-08-26, re-read and revised the complete catalogue boundary after a 6,336-test parallel run exposed cross-profile cache replacement; 20 focused registry tests passed with admission-context-owned persistent paths.",
       "On 2026-08-26, re-read and revised the complete page after one caller-owned cancellation authority began spanning function-catalog endpoint startup and request polling; the updated text matches ZMQRuntime and the OpenHCS execution client.",
-      "On 2026-08-27, re-read the complete transition reference against the changed installed-desktop evidence authority; its ZMQ ownership and lifecycle claims remain accurate."
+      "On 2026-08-27, re-read the complete transition reference against the changed installed-desktop evidence authority; its ZMQ ownership and lifecycle claims remain accurate.",
+      "On 2026-08-27, rechecked the complete transition reference after installed-desktop acceptance advanced the installer schema; its ZMQ ownership and lifecycle claims remain accurate."
     ]
   },
   {
@@ -2816,12 +2817,12 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "53eeda5da6148c5679f1899a73ced83e0219b5fdc7d68eeb4547b11216615737",
+        "sha256": "b47569cea8b2b6dfe5edc7319bee59fbe22b3062eddd9fe31c660fd68bee9bc2",
         "role": "Cross-platform source-candidate and published-dependency readiness, installed-wheel live GUI/MCP operation with retained native screenshots, three-stage native-installer workflow proof, signing-helper parse, and staged-update validation matrix."
       },
       {
         "path": "scripts/smoke_windows_installer_window.ps1",
-        "sha256": "e1e72043ea7bffd4374ba635c59d6f6ddc38687d9c282cf7535f131adb3355ac",
+        "sha256": "ac300e09e5c14b182a4410a692e299d6ef98a6613bd07cc0642cab09adac3aac",
         "role": "Drives the shipping Windows installer through its real native controls and retains exact welcome, progress, completion, and durable-log evidence."
       },
       {
@@ -2954,7 +2955,9 @@
     "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after native installer evidence began retaining the exact durable transcript beside its three window states; the revised evidence description matches both platform probes and 71 focused installer tests passed.",
     "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after native installer acceptance retained per-pass phase journals and live GUI snapshots and catalog startup became teardown-cancellable; the evidence and ownership descriptions now match the exact workflow.",
       "On 2026-08-27, re-read the complete release how-to after the installed-GUI harness replaced competing timeout, failure, and success fields with one terminal completion authority; focused regression and forced cold-deadline wheel probes confirmed the documented partial-journal behavior.",
-      "On 2026-08-27, re-read the complete release how-to against the uv-owned native installer and updater lifecycle, hostile pip and uv index overrides, direct Windows native-command logging, and retained installed-desktop evidence; revised the release gate where needed."
+      "On 2026-08-27, re-read the complete release how-to against the uv-owned native installer and updater lifecycle, hostile pip and uv index overrides, direct Windows native-command logging, and retained installed-desktop evidence; revised the release gate where needed.",
+      "On 2026-08-27, rechecked the complete release how-to after native CI proved the updater worker must remain standard-library-only; the source gate now covers that boundary and hostile uv configuration as well as index overrides.",
+      "On 2026-08-27, rechecked the complete release how-to after the Windows lane began editing the real destination field, exercising a path with spaces, and launching the background worker without an encoded PowerShell wrapper; its retained evidence claims remain accurate."
     ]
   },
   {
@@ -3013,7 +3016,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "53eeda5da6148c5679f1899a73ced83e0219b5fdc7d68eeb4547b11216615737",
+        "sha256": "b47569cea8b2b6dfe5edc7319bee59fbe22b3062eddd9fe31c660fd68bee9bc2",
         "role": "Runs explicitly selected live OMERO variants and preserves component and table-service diagnostics on failure."
       }
     ],
@@ -3046,7 +3049,9 @@
       "On 2026-08-26, re-read the complete OMERO testing how-to after the shared integration workflow began retaining desktop GUI screenshots; OMERO selection, readiness, diagnostics, and lifecycle ownership are unchanged.",
       "On 2026-08-26, re-read the complete OMERO testing guide after the shared integration workflow gained native installer window evidence; OMERO selection, readiness, diagnostics, and lifecycle ownership remain unchanged.",
       "On 2026-08-26, re-read the complete OMERO testing how-to after native installer workflow evidence changed; the independent OMERO lane and owner boundaries remain accurate.",
-      "On 2026-08-27, re-read the complete OMERO testing how-to against the changed integration workflow; the independent OMERO lane and its owner boundaries remain accurate."
+      "On 2026-08-27, re-read the complete OMERO testing how-to against the changed integration workflow; the independent OMERO lane and its owner boundaries remain accurate.",
+      "On 2026-08-27, rechecked the complete OMERO testing how-to after the native installer workflow changed again; the independent OMERO lane and its owner boundaries remain accurate.",
+      "On 2026-08-27, rechecked the complete OMERO testing how-to after the Windows installer destination probe changed; the independent OMERO lane and its owner boundaries remain accurate."
     ]
   },
   {

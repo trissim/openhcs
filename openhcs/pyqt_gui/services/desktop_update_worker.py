@@ -20,8 +20,6 @@ from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from openhcs.desktop_installation import DESKTOP_INSTALL_PROFILE
-
 
 class DesktopUpdatePhase(Enum):
     """Closed worker phases projected to the detached progress surface."""
@@ -181,6 +179,7 @@ class DesktopUpdatePlan:
     candidate_python_executable: str
     package_requirement: str
     binary_only_packages: str
+    package_source_override_variables: str
     expected_version: str
     installation_pointer: str
 
@@ -242,6 +241,13 @@ class DesktopUpdatePlan:
             self.binary_only_packages,
         ):
             raise ValueError("Desktop update native-wheel policy is unsafe.")
+        if not re.fullmatch(
+            r"[A-Z][A-Z0-9_]*(?:,[A-Z][A-Z0-9_]*)*",
+            self.package_source_override_variables,
+        ):
+            raise ValueError(
+                "Desktop update package-source override variables are unsafe."
+            )
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.*+!_-]+", self.expected_version):
             raise ValueError("Desktop update expected version is unsafe.")
 
@@ -289,6 +295,14 @@ class DesktopUpdatePlan:
             "--python",
             self.candidate_python_executable,
         ]
+
+    def child_environment(self) -> dict[str, str]:
+        """Project a managed child environment from the serialized policy."""
+
+        environment = os.environ.copy()
+        for variable in self.package_source_override_variables.split(","):
+            environment.pop(variable, None)
+        return environment
 
     @classmethod
     def read(cls, path: Path) -> DesktopUpdatePlan:
@@ -371,11 +385,13 @@ def _run_required_stage(
     command: list[str],
     *,
     failure_message: str,
+    environment: dict[str, str],
     launch_spec: ResolvedProcessLaunchSpec,
     progress: DesktopUpdateProgressReporterABC,
 ) -> str:
     returncode, detail = _run_process_with_progress(
         command,
+        environment=environment,
         launch_spec=launch_spec,
         progress=progress,
     )
@@ -396,6 +412,7 @@ def _run_update(
     """Build, verify, and publish a replacement without mutating the live env."""
 
     plan.validate()
+    environment = plan.child_environment()
     candidate = Path(plan.candidate_environment)
     try:
         candidate.mkdir()
@@ -412,6 +429,7 @@ def _run_update(
         _run_required_stage(
             plan.create_environment_command(),
             failure_message="OpenHCS could not create the replacement environment",
+            environment=environment,
             launch_spec=launch_spec,
             progress=progress,
         )
@@ -420,6 +438,7 @@ def _run_update(
         _run_required_stage(
             plan.install_command(),
             failure_message="OpenHCS update failed",
+            environment=environment,
             launch_spec=launch_spec,
             progress=progress,
         )
@@ -450,6 +469,7 @@ def _run_update(
             _run_required_stage(
                 command,
                 failure_message=failure_message,
+                environment=environment,
                 launch_spec=launch_spec,
                 progress=progress,
             )
@@ -467,6 +487,7 @@ def _run_update(
             failure_message=(
                 "OpenHCS could not publish the verified replacement environment"
             ),
+            environment=environment,
             launch_spec=launch_spec,
             progress=progress,
         )
@@ -500,15 +521,12 @@ def _run_update(
 def _run_process_with_progress(
     command: list[str],
     *,
+    environment: dict[str, str],
     launch_spec: ResolvedProcessLaunchSpec,
     progress: DesktopUpdateProgressReporterABC,
 ) -> tuple[int, str]:
     """Run one worker command while reporting its real merged output."""
 
-    environment = os.environ.copy()
-    environment["PIP_CONFIG_FILE"] = os.devnull
-    for variable in DESKTOP_INSTALL_PROFILE.package_index_override_variables:
-        environment.pop(variable.value, None)
     process = subprocess.Popen(
         command,
         env=environment,

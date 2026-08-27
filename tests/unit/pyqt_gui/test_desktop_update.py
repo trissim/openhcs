@@ -17,6 +17,7 @@ from openhcs import __version__ as OPENHCS_VERSION
 from openhcs.desktop_deployment import (
     DESKTOP_RESTART_EXECUTABLE_ENVIRONMENT_VARIABLE,
 )
+from openhcs.desktop_installation import DESKTOP_INSTALL_PROFILE
 from openhcs.pyqt_gui.services.desktop_update import (
     LATEST_RELEASE_API_URL,
     DesktopRestartPurpose,
@@ -480,6 +481,9 @@ def _staged_update_plan(tmp_path: Path) -> DesktopUpdatePlan:
             "openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.7.0"
         ),
         binary_only_packages=("llvmlite,numba,opencv-python,opencv-python-headless"),
+        package_source_override_variables=(
+            DESKTOP_INSTALL_PROFILE.package_source_override_argument
+        ),
         expected_version="0.7.0",
         installation_pointer=str(tmp_path / "current"),
     )
@@ -526,6 +530,9 @@ def test_runtime_plan_stages_sibling_and_never_targets_running_python(
     assert plan.candidate_environment == str(candidate)
     assert plan.candidate_python_executable != str(runtime.python_executable)
     assert plan.package_requirement.endswith("==0.7.24")
+    assert plan.package_source_override_variables == (
+        DESKTOP_INSTALL_PROFILE.package_source_override_argument
+    )
 
 
 def test_service_starts_worker_with_unambiguous_argument_vectors(

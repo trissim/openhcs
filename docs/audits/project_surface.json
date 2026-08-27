@@ -22,7 +22,7 @@
       },
       {
         "path": "openhcs/desktop_installation.py",
-        "sha256": "c12660067688ffc3a7cbd49b37cbb03971b5409b49001d048eef670f91c8a62b",
+        "sha256": "2b592b7df8173b935dd42bb4b964768527af7e5925107b25c7ad9d5d1b0d7df4",
         "role": "Nominally declares the CPU-safe desktop extras and native installation policy without copying project or brand declarations."
       },
       {
@@ -90,7 +90,8 @@
       "On 2026-08-25, re-read the complete project overview after capability surfaces gained declaration-derived development-client preflight; the public product, installation, and agent-workflow claims remain accurate.",
       "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
       "On 2026-08-26, re-read the complete project overview against the changed capability and client-registration owners; transport instruction and platform-path extraction are internal ownership changes, so the public feature, client, installation, and safety claims remain accurate.",
-      "On 2026-08-27, re-read the complete project overview against the uv-owned installer and updater lifecycle; its public installation and capability claims remain accurate."
+      "On 2026-08-27, re-read the complete project overview against the uv-owned installer and updater lifecycle; its public installation and capability claims remain accurate.",
+      "On 2026-08-27, rechecked the complete project overview after package-source policy became a serialized detached-worker input; its public installation and capability claims remain accurate."
     ]
   }
 ]

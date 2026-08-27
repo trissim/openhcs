@@ -12,7 +12,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$script:SupportedContractSchema = "openhcs.installer.v3"
+$script:SupportedContractSchema = "openhcs.installer.v4"
 $script:ManagedEnvironmentIdLength = 8
 $script:ManagedEnvironmentNamePattern = (
     "^env-(?:[a-f0-9]{$($script:ManagedEnvironmentIdLength)}|" +
@@ -139,8 +139,8 @@ function Read-InstallerContract {
     $pythonVersion = Get-RequiredTextProperty $contract "python_version"
     $packageRequirement = Get-RequiredTextProperty $contract "package_requirement"
     $binaryOnlyPackages = Get-RequiredTextProperty $contract "binary_only_packages"
-    $packageIndexOverrideVariables = Get-RequiredTextProperty `
-        $contract "package_index_override_variables"
+    $packageSourceOverrideVariables = Get-RequiredTextProperty `
+        $contract "package_source_override_variables"
     $entryPoint = Get-RequiredTextProperty $contract "entry_point"
     $guiEntryPoint = Get-RequiredTextProperty $contract "gui_entry_point"
 
@@ -167,11 +167,11 @@ function Read-InstallerContract {
     )) {
         throw "Installer contract binary_only_packages has an unsafe format."
     }
-    if ($packageIndexOverrideVariables -notmatch (
+    if ($packageSourceOverrideVariables -notmatch (
         "^[A-Z][A-Z0-9_]*(,[A-Z][A-Z0-9_]*)*$"
     )) {
         throw (
-            "Installer contract package_index_override_variables has an unsafe " +
+            "Installer contract package_source_override_variables has an unsafe " +
             "format."
         )
     }
@@ -224,7 +224,7 @@ function Read-InstallerContract {
         PythonVersion = $pythonVersion
         PackageRequirement = $packageRequirement
         BinaryOnlyPackages = $binaryOnlyPackages
-        PackageIndexOverrideVariables = $packageIndexOverrideVariables
+        PackageSourceOverrideVariables = $packageSourceOverrideVariables
         EntryPoint = $entryPoint
         GuiEntryPoint = $guiEntryPoint
         UvVersion = $uvVersion
@@ -921,11 +921,10 @@ function Invoke-WorkerInstall {
         )
 
         # The managed desktop environment must not inherit a workstation's
-        # package indexes. PIP_CONFIG_FILE=nul suppresses pip configuration
-        # files while both pip and uv index overrides are removed. UV_FIND_LINKS
-        # remains available as an explicit candidate-wheel source in CI.
-        $env:PIP_CONFIG_FILE = "nul"
-        foreach ($variable in $Contract.PackageIndexOverrideVariables -split ",") {
+        # package sources. The declaration-owned override list covers pip and
+        # uv configuration and indexes. UV_FIND_LINKS remains available as an
+        # explicit candidate-wheel source in CI.
+        foreach ($variable in $Contract.PackageSourceOverrideVariables -split ",") {
             [Environment]::SetEnvironmentVariable($variable, $null, "Process")
         }
 
@@ -1122,27 +1121,25 @@ function Start-InstallerWorker {
         [Parameter(Mandatory = $true)][bool]$ShouldRegisterMcpClients
     )
 
-    $escapedScriptPath = $PSCommandPath.Replace("'", "''")
-    $escapedInstallRoot = $ResolvedInstallRoot.Replace("'", "''")
-    $escapedCancellationPath = $ResolvedCancellationPath.Replace("'", "''")
-    $registrationLiteral = if ($ShouldRegisterMcpClients) { '$true' } else { '$false' }
-    $workerCommand = (
-        "& '{0}' -Worker -InstallRoot '{1}' -CancellationPath '{2}' " +
-        "-RegisterMcpClients:{3}"
-    ) -f (
-        $escapedScriptPath,
-        $escapedInstallRoot,
-        $escapedCancellationPath,
-        $registrationLiteral
+    $workerArguments = @(
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $PSCommandPath,
+        "-Worker",
+        "-InstallRoot", $ResolvedInstallRoot,
+        "-CancellationPath", $ResolvedCancellationPath
     )
-    $encodedCommand = [Convert]::ToBase64String(
-        [Text.Encoding]::Unicode.GetBytes($workerCommand)
-    )
+    if ($ShouldRegisterMcpClients) {
+        $workerArguments += "-RegisterMcpClients"
+    }
     $startInfo = New-Object Diagnostics.ProcessStartInfo
     $startInfo.FileName = Get-WindowsPowerShellExecutable
-    $startInfo.Arguments = (
-        "-NoProfile -ExecutionPolicy Bypass -EncodedCommand {0}" -f $encodedCommand
-    )
+    $startInfo.Arguments = (@(
+        $workerArguments | ForEach-Object {
+            ConvertTo-WindowsCommandLineArgument ([string]$_)
+        }
+    ) -join " ")
     $startInfo.WorkingDirectory = $PSScriptRoot
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true

@@ -7,7 +7,7 @@ from pathlib import Path, PureWindowsPath
 
 from openhcs.desktop_installation import (
     DESKTOP_INSTALL_PROFILE,
-    DesktopPackageIndexOverrideVariable,
+    DesktopPackageSourceOverrideVariable,
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -139,7 +139,7 @@ def test_windows_installer_fails_closed_on_validated_shared_contract() -> None:
     assert "ConvertFrom-Json" in source
     assert 'Get-RequiredTextProperty $contract "entry_point"' in source
     assert 'Get-RequiredTextProperty $contract "gui_entry_point"' in source
-    assert '"openhcs.installer.v3"' in source
+    assert '"openhcs.installer.v4"' in source
     assert "Expected exactly one installer_contract.json" in source
     assert "Uri]::TryCreate" in source
     assert "UriSchemeHttps" in source
@@ -187,10 +187,9 @@ def test_windows_installer_uses_uv_for_the_environment_lifecycle() -> None:
     assert '-Description "Prepare the execution catalog"' not in source
     assert "$env:UV_INSTALL_DIR" in source
     assert "$env:UV_NO_MODIFY_PATH" in source
-    assert '$env:PIP_CONFIG_FILE = "nul"' in source
-    assert '"package_index_override_variables"' in source
-    assert "$Contract.PackageIndexOverrideVariables -split" in source
-    for variable in DesktopPackageIndexOverrideVariable:
+    assert '"package_source_override_variables"' in source
+    assert "$Contract.PackageSourceOverrideVariables -split" in source
+    for variable in DesktopPackageSourceOverrideVariable:
         assert variable.value not in source
     assert "pinned official uv $($Contract.UvVersion)" in source
     assert "[Environment]::OSVersion.VersionString" in source
@@ -311,7 +310,7 @@ def test_windows_installer_keeps_ui_responsive_and_failures_visible() -> None:
 
     assert "System.Windows.Forms" in source
     assert "Start-InstallerWorker" in source
-    assert "-EncodedCommand" in source
+    assert "-EncodedCommand" not in source
     assert '"taskkill.exe"' in source
     assert '"/T"' in source
     assert "Cancel install" in source
@@ -378,6 +377,8 @@ def test_windows_wizard_owns_liveness_failure_and_optional_launch_ui() -> None:
     assert "$timer.Interval = 350" in source
     assert "$startInfo.RedirectStandardOutput = $true" in worker_start
     assert "$startInfo.RedirectStandardError = $true" in worker_start
+    assert '"-NonInteractive"' in worker_start
+    assert "ConvertTo-WindowsCommandLineArgument ([string]$_)" in worker_start
     assert "New-InstallerProgressStream" in window
     assert "$Reader.ReadLineAsync()" in window
     assert "Read-InstallerProgressStream" in window
@@ -597,8 +598,8 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
     assert "        timeout-minutes: 30" in smoke_step
     assert "Build-InstallerLauncher.ps1" in smoke_step
     assert "$env:PIP_FIND_LINKS = $env:UV_FIND_LINKS" in smoke_step
-    for variable in DesktopPackageIndexOverrideVariable:
-        assert f"$env:{variable.value} = $hostilePipIndex" in smoke_step
+    for variable in DesktopPackageSourceOverrideVariable:
+        assert f"$env:{variable.value} =" in smoke_step
     assert '"OpenHCS Installer Smoke"' in smoke_step
     assert '"#< CLIXML"' in smoke_step
     assert '"<Objs Version="' in smoke_step
@@ -692,6 +693,8 @@ def test_windows_installer_ci_drives_and_captures_the_shipping_wizard() -> None:
     assert "FindUniqueVisibleChild(" in probe
     assert "return matchCount == 1 ? match : IntPtr.Zero;" in probe
     assert "ClickVisibleChildByText(" in probe
+    assert "ReplaceVisibleChildText(" in probe
+    assert "SetWindowTextW(" in probe
     assert "Wait-InstallerVisibleText" in probe
     assert "UIAutomation" not in probe
     assert 'Invoke-InstallerButton -Name "Next >"' in probe
@@ -713,6 +716,8 @@ def test_windows_installer_ci_drives_and_captures_the_shipping_wizard() -> None:
     invocation = "& scripts/smoke_windows_installer_window.ps1"
     assert invocation in smoke_step
     assert '-ExpectedTitle "$($contract.product_name) Setup"' in smoke_step
+    assert "-DefaultInstallRoot $defaultInstallRoot" in smoke_step
+    assert "-InstallRoot $installRoot" in smoke_step
     assert "-CompletionLogPath $installerLog" in smoke_step
     assert smoke_step.index(invocation) < smoke_step.index(
         "$updateExitCode = Invoke-OpenHcsInstallerWorker"

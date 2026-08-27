@@ -62,12 +62,12 @@ product_name=$(contract_value product_name)
 python_version=$(contract_value python_version)
 package_requirement=$(contract_value package_requirement)
 binary_only_packages=$(contract_value binary_only_packages)
-package_index_override_variables=$(contract_value package_index_override_variables)
+package_source_override_variables=$(contract_value package_source_override_variables)
 entry_point=$(contract_value entry_point)
 uv_version=$(contract_value uv_release.version)
 uv_base_url=$(contract_value uv_release.base_url)
 
-if [[ "$schema_version" != 'openhcs.installer.v3' ]]; then
+if [[ "$schema_version" != 'openhcs.installer.v4' ]]; then
     printf 'Unsupported installer contract schema: %s\n' "$schema_version" >&2
     exit 2
 fi
@@ -87,8 +87,8 @@ if [[ ! "$binary_only_packages" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*(,[A-Za-z0-9][A-Za
     printf 'Unsafe binary_only_packages in installer contract.\n' >&2
     exit 2
 fi
-if [[ ! "$package_index_override_variables" =~ ^[A-Z][A-Z0-9_]*(,[A-Z][A-Z0-9_]*)*$ ]]; then
-    printf 'Unsafe package_index_override_variables in installer contract.\n' >&2
+if [[ ! "$package_source_override_variables" =~ ^[A-Z][A-Z0-9_]*(,[A-Z][A-Z0-9_]*)*$ ]]; then
+    printf 'Unsafe package_source_override_variables in installer contract.\n' >&2
     exit 2
 fi
 if [[ ! "$entry_point" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
@@ -231,13 +231,12 @@ export UV_INSTALL_DIR="$uv_root"
 export UV_NO_MODIFY_PATH=1
 export UV_NO_CONFIG=1
 export UV_PYTHON_INSTALL_DIR="$python_root"
-# Keep the managed environment independent of workstation package indexes.
-# /dev/null suppresses every pip configuration file. The declaration-owned
-# override list leaves the package manager's default index authoritative.
-export PIP_CONFIG_FILE=/dev/null
+# Keep the managed environment independent of workstation package sources.
+# The declaration-owned override list leaves the package manager's default
+# configuration and index authoritative.
 while IFS= read -r variable; do
     unset "$variable"
-done < <(printf '%s\n' "$package_index_override_variables" | /usr/bin/tr ',' '\n')
+done < <(printf '%s\n' "$package_source_override_variables" | /usr/bin/tr ',' '\n')
 report_progress 'Preparing the private package manager…'
 run_cancellable /bin/sh "$temporary_uv_installer"
 

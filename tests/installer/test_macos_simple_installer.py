@@ -13,7 +13,7 @@ import pytest
 
 from openhcs.desktop_installation import (
     DESKTOP_INSTALL_PROFILE,
-    DesktopPackageIndexOverrideVariable,
+    DesktopPackageSourceOverrideVariable,
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -62,7 +62,7 @@ def test_macos_installer_fails_closed_on_validated_shared_contract() -> None:
 
     assert "plutil -extract" in source
     assert "entry_point=$(contract_value entry_point)" in source
-    assert "openhcs.installer.v3" in source
+    assert "openhcs.installer.v4" in source
     assert "'https://astral.sh/uv'" in source
     assert 'uv_installer_url="$uv_base_url/$uv_version/install.sh"' in source
     assert "==[A-Za-z0-9][A-Za-z0-9.*+!_-]*$" in source
@@ -78,10 +78,9 @@ def test_macos_installer_uses_uv_for_the_environment_lifecycle() -> None:
     assert "UV_PYTHON_INSTALL_DIR" in source
     assert "UV_NO_MODIFY_PATH=1" in source
     assert "UV_NO_CONFIG=1" in source
-    assert "PIP_CONFIG_FILE=/dev/null" in source
-    assert "package_index_override_variables=$(contract_value" in source
+    assert "package_source_override_variables=$(contract_value" in source
     assert 'unset "$variable"' in source
-    for variable in DesktopPackageIndexOverrideVariable:
+    for variable in DesktopPackageSourceOverrideVariable:
         assert variable.value not in source
     for command in ("python install", "venv"):
         assert f'run_cancellable "$uv_executable" --no-config {command}' in source
@@ -509,8 +508,8 @@ def test_macos_installer_registers_agent_clients_through_stable_launcher() -> No
         ) : workflow.index("      - name: Show macOS installer log on failure")
     ]
     assert 'export PIP_FIND_LINKS="$UV_FIND_LINKS"' in macos_smoke
-    for variable in DesktopPackageIndexOverrideVariable:
-        assert f'export {variable.value}="$hostile_pip_index"' in macos_smoke
+    for variable in DesktopPackageSourceOverrideVariable:
+        assert f"export {variable.value}=" in macos_smoke
     assert 'codex_config="$HOME/.codex/config.toml"' in macos_smoke
     assert "stable_launcher=" in macos_smoke
     assert "['mcp']" in macos_smoke

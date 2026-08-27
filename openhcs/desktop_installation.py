@@ -32,21 +32,23 @@ class DesktopBinaryOnlyPackage(str, Enum):
     OPENCV_HEADLESS = "opencv-python-headless"
 
 
-class DesktopPackageIndexOverrideVariable(str, Enum):
-    """Inherited package-index variables ignored by managed installations."""
+class DesktopPackageSourceOverrideVariable(str, Enum):
+    """Inherited package-source variables ignored by managed installations."""
 
-    PIP_PRIMARY = "PIP_INDEX_URL"
-    PIP_EXTRA = "PIP_EXTRA_INDEX_URL"
-    UV_DEFAULT = "UV_DEFAULT_INDEX"
-    UV_INDEXES = "UV_INDEX"
-    UV_PRIMARY_LEGACY = "UV_INDEX_URL"
-    UV_EXTRA_LEGACY = "UV_EXTRA_INDEX_URL"
+    PIP_CONFIG_FILE = "PIP_CONFIG_FILE"
+    PIP_INDEX_URL = "PIP_INDEX_URL"
+    PIP_EXTRA_INDEX_URL = "PIP_EXTRA_INDEX_URL"
+    UV_CONFIG_FILE = "UV_CONFIG_FILE"
+    UV_DEFAULT_INDEX = "UV_DEFAULT_INDEX"
+    UV_INDEX = "UV_INDEX"
+    UV_INDEX_URL = "UV_INDEX_URL"
+    UV_EXTRA_INDEX_URL = "UV_EXTRA_INDEX_URL"
 
 
 class DesktopInstallerSchemaVersion(str, Enum):
     """Supported native installer contract schemas."""
 
-    V3 = "openhcs.installer.v3"
+    V4 = "openhcs.installer.v4"
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +83,7 @@ class DesktopInstallProfile:
     python_version: str
     package_extras: tuple[DesktopPackageExtra, ...]
     binary_only_packages: tuple[DesktopBinaryOnlyPackage, ...]
-    package_index_override_variables: tuple[DesktopPackageIndexOverrideVariable, ...]
+    package_source_override_variables: tuple[DesktopPackageSourceOverrideVariable, ...]
     uv_release: DesktopUvRelease
 
     def __post_init__(self) -> None:
@@ -100,17 +102,17 @@ class DesktopInstallProfile:
             description="binary-only packages",
         )
         self._validate_members(
-            self.package_index_override_variables,
-            member_type=DesktopPackageIndexOverrideVariable,
-            description="package-index override variables",
+            self.package_source_override_variables,
+            member_type=DesktopPackageSourceOverrideVariable,
+            description="package-source override variables",
         )
 
     @property
-    def package_index_override_argument(self) -> str:
-        """Project ignored package-index variables for native consumers."""
+    def package_source_override_argument(self) -> str:
+        """Project ignored package-source variables for native consumers."""
 
         return ",".join(
-            variable.value for variable in self.package_index_override_variables
+            variable.value for variable in self.package_source_override_variables
         )
 
     @staticmethod
@@ -168,7 +170,7 @@ class DesktopInstallProfile:
             python_version=self.python_version,
             package_requirement=selection.package_requirement,
             binary_only_packages=selection.binary_only_argument,
-            package_index_override_variables=self.package_index_override_argument,
+            package_source_override_variables=self.package_source_override_argument,
             entry_point=entry_point,
             gui_entry_point=gui_entry_point,
             uv_release=self.uv_release,
@@ -203,13 +205,13 @@ class DesktopInstallerContract:
 
     schema_version: DesktopInstallerSchemaVersion = field(
         init=False,
-        default=DesktopInstallerSchemaVersion.V3,
+        default=DesktopInstallerSchemaVersion.V4,
     )
     product_name: str
     python_version: str
     package_requirement: str
     binary_only_packages: str
-    package_index_override_variables: str
+    package_source_override_variables: str
     entry_point: str
     gui_entry_point: str
     uv_release: DesktopUvRelease
@@ -219,10 +221,10 @@ class DesktopInstallerContract:
             raise ValueError("Installer contract product name has an invalid format.")
         if not re.fullmatch(
             r"[A-Z][A-Z0-9_]*(?:,[A-Z][A-Z0-9_]*)*",
-            self.package_index_override_variables,
+            self.package_source_override_variables,
         ):
             raise ValueError(
-                "Installer contract package-index override variables have an "
+                "Installer contract package-source override variables have an "
                 "invalid format."
             )
         for value, description in (
@@ -259,7 +261,7 @@ DESKTOP_INSTALL_PROFILE = DesktopInstallProfile(
         DesktopBinaryOnlyPackage.OPENCV,
         DesktopBinaryOnlyPackage.OPENCV_HEADLESS,
     ),
-    package_index_override_variables=tuple(DesktopPackageIndexOverrideVariable),
+    package_source_override_variables=tuple(DesktopPackageSourceOverrideVariable),
     uv_release=DesktopUvRelease(
         version="0.11.28",
         base_url="https://astral.sh/uv",

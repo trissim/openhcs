@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$LauncherPath,
     [Parameter(Mandatory = $true)][string]$ExpectedTitle,
+    [Parameter(Mandatory = $true)][string]$DefaultInstallRoot,
+    [Parameter(Mandatory = $true)][string]$InstallRoot,
     [Parameter(Mandatory = $true)][string]$EvidenceDirectory,
     [Parameter(Mandatory = $true)][string]$CompletionLogPath
 )
@@ -11,6 +13,8 @@ Set-StrictMode -Version Latest
 $resolvedLauncher = (Resolve-Path -LiteralPath $LauncherPath).Path
 $resolvedEvidenceDirectory = [IO.Path]::GetFullPath($EvidenceDirectory)
 $resolvedCompletionLog = [IO.Path]::GetFullPath($CompletionLogPath)
+$resolvedDefaultInstallRoot = [IO.Path]::GetFullPath($DefaultInstallRoot)
+$resolvedInstallRoot = [IO.Path]::GetFullPath($InstallRoot)
 [IO.Directory]::CreateDirectory($resolvedEvidenceDirectory) | Out-Null
 
 Add-Type -AssemblyName System.Drawing
@@ -75,6 +79,10 @@ public static class OpenHCSInstallerWindowProbe
         IntPtr longParameter
     );
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowTextW(IntPtr window, string text);
+
     public static bool HasVisibleChildText(IntPtr parent, string expectedText)
     {
         return FindUniqueVisibleChild(parent, expectedText) != IntPtr.Zero;
@@ -92,6 +100,16 @@ public static class OpenHCSInstallerWindowProbe
         }
         SendMessageW(child, ButtonClick, IntPtr.Zero, IntPtr.Zero);
         return true;
+    }
+
+    public static bool ReplaceVisibleChildText(
+        IntPtr parent,
+        string expectedText,
+        string replacementText
+    )
+    {
+        IntPtr child = FindUniqueVisibleChild(parent, expectedText);
+        return child != IntPtr.Zero && SetWindowTextW(child, replacementText);
     }
 
     private static IntPtr FindUniqueVisibleChild(
@@ -331,6 +349,18 @@ try {
     Wait-InstallerVisibleText `
         -Name "Installation options" `
         -Deadline $interactionDeadline
+    if ($resolvedDefaultInstallRoot -ne $resolvedInstallRoot) {
+        if (-not [OpenHCSInstallerWindowProbe]::ReplaceVisibleChildText(
+            $windowProcess.MainWindowHandle,
+            $resolvedDefaultInstallRoot,
+            $resolvedInstallRoot
+        )) {
+            throw "The native installer could not set the requested installation root."
+        }
+        Wait-InstallerVisibleText `
+            -Name $resolvedInstallRoot `
+            -Deadline $interactionDeadline
+    }
     Invoke-InstallerButton -Name "Next >" -Deadline $interactionDeadline
 
     $progressDeadline = [DateTime]::UtcNow.AddSeconds(30)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import io
 import json
 import os
@@ -31,6 +32,9 @@ WORKER_LAUNCH_ARGUMENTS = [
     "--detached-creationflags=91",
 ]
 NATIVE_WHEEL_POLICY = "llvmlite,numba,opencv-python,opencv-python-headless"
+PACKAGE_SOURCE_OVERRIDE_POLICY = (
+    DESKTOP_INSTALL_PROFILE.package_source_override_argument
+)
 
 
 class _ProgressProbe:
@@ -71,6 +75,21 @@ class _StreamingProcess:
 
     def wait(self) -> int:
         return self._returncode
+
+
+def test_detached_worker_imports_only_the_standard_library() -> None:
+    source_path = Path(desktop_update_worker.__file__)
+    imported_roots = set()
+    for node in ast.walk(ast.parse(source_path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            imported_roots.update(alias.name.partition(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                imported_roots.add("<relative>")
+            elif node.module is not None:
+                imported_roots.add(node.module.partition(".")[0])
+
+    assert imported_roots <= sys.stdlib_module_names | {"__future__"}
 
 
 def test_progress_window_implements_nominal_reporter_contract() -> None:
@@ -145,6 +164,7 @@ def _update_plan(tmp_path: Path) -> desktop_update_worker.DesktopUpdatePlan:
             "openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.7.1"
         ),
         binary_only_packages=NATIVE_WHEEL_POLICY,
+        package_source_override_variables=PACKAGE_SOURCE_OVERRIDE_POLICY,
         expected_version="0.7.1",
         installation_pointer=str(tmp_path / "current"),
     )
@@ -196,6 +216,7 @@ def test_update_plan_round_trips_windows_managed_paths(tmp_path: Path) -> None:
         candidate_python_executable="C:/OpenHCS/env-1234abcd/Scripts/python.exe",
         package_requirement="openhcs[gui,mcp]==0.7.24",
         binary_only_packages=NATIVE_WHEEL_POLICY,
+        package_source_override_variables=PACKAGE_SOURCE_OVERRIDE_POLICY,
         expected_version="0.7.24",
         installation_pointer="C:/OpenHCS/Launch-OpenHCS.ps1",
     )
@@ -236,6 +257,19 @@ def test_update_plan_accepts_authority_owned_candidate_name(tmp_path: Path) -> N
     )
 
     projected.validate()
+
+
+def test_update_plan_rejects_unsafe_package_source_override(tmp_path: Path) -> None:
+    plan = _update_plan(tmp_path)
+    invalid = desktop_update_worker.DesktopUpdatePlan(
+        **{
+            **asdict(plan),
+            "package_source_override_variables": "UV_INDEX,unsafe-name",
+        }
+    )
+
+    with pytest.raises(ValueError, match="package-source override"):
+        invalid.validate()
 
 
 def test_update_plan_rejects_current_environment_as_candidate(tmp_path: Path) -> None:
@@ -388,8 +422,7 @@ def test_worker_stages_and_verifies_replacement_environment(
     assert calls[1][1]["creationflags"] == 73
     for _command, arguments in calls:
         environment = arguments["env"]
-        assert environment["PIP_CONFIG_FILE"] == os.devnull
-        for variable in DESKTOP_INSTALL_PROFILE.package_index_override_variables:
+        for variable in DESKTOP_INSTALL_PROFILE.package_source_override_variables:
             assert variable.value not in environment
     assert progress.phases == [
         desktop_update_worker.DesktopUpdatePhase.PREPARING_ENVIRONMENT,
@@ -411,7 +444,7 @@ def test_worker_stages_and_verifies_replacement_environment(
     assert Path(plan.candidate_environment).is_dir()
 
 
-def test_worker_child_process_ignores_host_package_indexes(
+def test_worker_child_process_ignores_host_package_sources(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -430,10 +463,13 @@ def test_worker_child_process_ignores_host_package_indexes(
     monkeypatch.setenv("UV_INDEX", hostile_index)
     monkeypatch.setenv("UV_INDEX_URL", hostile_index)
     monkeypatch.setenv("UV_EXTRA_INDEX_URL", hostile_index)
+    monkeypatch.setenv("UV_CONFIG_FILE", str(hostile_config))
     progress = _ProgressProbe()
+    plan = _update_plan(tmp_path)
 
     returncode, output = desktop_update_worker._run_process_with_progress(
         [sys.executable, "-m", "pip", "config", "list"],
+        environment=plan.child_environment(),
         launch_spec=desktop_update_worker.ResolvedProcessLaunchSpec(
             creationflags=0,
             start_new_session=False,
@@ -951,17 +987,20 @@ args.marker.write_text(
         candidate_python_executable=str(candidate_python),
         package_requirement=f"openhcs=={distribution_version('openhcs')}",
         binary_only_packages=NATIVE_WHEEL_POLICY,
+        package_source_override_variables=PACKAGE_SOURCE_OVERRIDE_POLICY,
         expected_version=distribution_version("openhcs"),
         installation_pointer=str(tmp_path / "current"),
     )
     update_plan_path = session_directory / "desktop-update-plan.json"
     plan.write(update_plan_path)
+    worker_document = session_directory / "desktop-update-worker.py"
+    shutil.copyfile(Path(desktop_update_worker.__file__), worker_document)
 
     completed = subprocess.run(
         [
             sys.executable,
-            "-m",
-            "openhcs.pyqt_gui.services.desktop_update_worker",
+            "-I",
+            str(worker_document),
             "--parent-pid",
             str(parent.pid),
             "--session-directory",

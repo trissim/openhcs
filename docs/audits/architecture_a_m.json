@@ -1593,7 +1593,7 @@
   },
   {
     "path": "docs/source/architecture/mcp_distribution.rst",
-    "source_sha256": "aba6ec44b855e7b2521080d987e9a56310eb6306eb52ac39a4ed11401d842576",
+    "source_sha256": "e2b58d899d0d54bc4664387f3041db28439d204d52760a99a9d4fd1c34eb46f6",
     "audience": [
       "OpenHCS MCP maintainers",
       "packaging and hosted-deployment integrators"
@@ -1708,7 +1708,7 @@
       },
       {
         "path": "openhcs/desktop_installation.py",
-        "sha256": "c12660067688ffc3a7cbd49b37cbb03971b5409b49001d048eef670f91c8a62b",
+        "sha256": "2b592b7df8173b935dd42bb4b964768527af7e5925107b25c7ad9d5d1b0d7df4",
         "role": "Nominally declares and validates native install policy, then projects one exact package selection for installers and staged updates."
       },
       {
@@ -1773,7 +1773,8 @@
       "On 2026-08-26, re-read the complete explanation after the stdio bootstrap regression isolated its spawned process from pytest-cov instrumentation; product transport, capability, and distribution semantics remain unchanged.",
       "On 2026-08-26, re-read the complete distribution explanation after the platform authority began preserving declared temporary roots across the local MCP process boundary; focused regressions and a packaged macOS-style nonstandard TMPDIR GUI/MCP probe passed, and the documented transport and snapshot ownership remain accurate.",
       "On 2026-08-26, re-read the complete distribution explanation after the shared MCP regression began proving the declaration-owned execution submission default; capability, transport, packaging, and projection ownership remain accurate.",
-      "On 2026-08-27, re-read the complete distribution explanation against the uv-owned desktop environment lifecycle and declaration-derived package-index isolation; revised its packaging explanation and confirmed the remaining ownership claims."
+      "On 2026-08-27, re-read the complete distribution explanation against the uv-owned desktop environment lifecycle and declaration-derived package-index isolation; revised its packaging explanation and confirmed the remaining ownership claims.",
+      "On 2026-08-27, rechecked the complete explanation after native CI exposed the detached updater's standalone boundary; the update plan now carries the declaration-derived package-source policy without importing application code, and the page reflects that ownership."
     ]
   },
   {
