@@ -93,7 +93,8 @@ requires its detached restart command to execute from the installed
 environment. It constructs the installed OpenHCS application as well, requires
 the main window to reach its painted-ready boundary, and waits for the GUI's
 background execution endpoint to return a complete, revisioned function
-catalogue. The probe resolves one returned function reference, then drives the
+catalogue. The probe resolves one returned function reference and requires the
+ready endpoint's advertised log to be readable and non-empty, then drives the
 live UI through a packaged desktop MCP session. It discovers the main and Plate
 Manager windows, invokes the declared code action, verifies its new window, and
 captures the main window and newly opened editor through the production MCP
@@ -108,10 +109,11 @@ A complementary desktop candidate matrix runs it on Windows and both macOS
 architectures using wheels built from the recursively recorded first-party
 submodules. Each job retains the JSON result and native Qt screenshots as a
 14-day ``desktop-candidate-gui-*`` artifact. The artifact also retains the
-isolated OpenHCS log directory, including the failed endpoint's startup journal
-when readiness is not reached. These jobs run independently of dependency
-publication, providing cross-platform behavioural and visual evidence for an
-unreleased dependency graph before the PyPI lanes become eligible.
+isolated OpenHCS log directory, including the verified execution-server log and
+failed endpoint startup journal when readiness is not reached. These jobs run
+independently of dependency publication, providing cross-platform behavioural
+and visual evidence for an unreleased dependency graph before the PyPI lanes
+become eligible.
 
 The daily Published Release Canary installs the latest stable desktop package
 from PyPI on Linux, Windows, and macOS and repeats that live GUI/MCP probe. It is

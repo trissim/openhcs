@@ -2041,7 +2041,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "cac64aeb578229365f8d2444277370b8eeef6d6a1c31991f5f7ba937eccf27e6",
+    "source_sha256": "859e2f7fc358d144074691c3a1e20d28f5e06ef90947c4a4e1bada98df50b197",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -2111,13 +2111,13 @@
       },
       {
         "path": "scripts/smoke_installed_gui.py",
-        "sha256": "f64816d7f61c1b92d9ce6a896918352bfd0a43c974d1776599d63becd4418dfe",
-        "role": "Owns the installed-GUI acceptance timing, constructs the application on declaration-allocated endpoints, proves the background function catalogue is usable, drives the GUI through packaged MCP, validates retained window snapshots, and cleans up exact owned resources outside the checkout."
+        "sha256": "572f0d0d7457fc97430872c882726c375771cc9b723aa35a6c32c73576c3152a",
+        "role": "Owns the installed-GUI acceptance timing, applies the declared logging configuration, constructs the application on declaration-allocated endpoints, proves the background function catalogue and advertised endpoint log are usable, drives the GUI through packaged MCP, validates retained window snapshots, and cleans up exact owned resources outside the checkout."
       },
       {
         "path": "tests/unit/test_smoke_installed_gui.py",
-        "sha256": "0c3bef0dd15aa1b75a4e3109195071290ee6535984152921aef6e4175980f314",
-        "role": "Proves source-checkout rejection, one derived smoke timing policy, deadline-owner error preservation, declaration-owned endpoint allocation, function-catalogue readiness, snapshot CLI projection, and emitted PNG identity validation for the installed GUI/MCP probe."
+        "sha256": "54cf260939cf4966ddf601d84aabdd2e24969934f4fbc39be43839df751d7998",
+        "role": "Proves source-checkout rejection, one derived smoke timing policy, deadline-owner error preservation, declaration-owned endpoint allocation, function-catalogue readiness, advertised execution-log validation, snapshot CLI projection, and emitted PNG identity validation for the installed GUI/MCP probe."
       },
       {
         "path": "openhcs/pyqt_gui/config.py",
@@ -2166,7 +2166,8 @@
       "Installed GUI and MCP package checks terminated before either operated the other; the source-wheel, publication, native-installer, and scheduled canaries now keep the packaged GUI live while the packaged desktop MCP discovers it and invokes a declared UI action.",
       "The fixed desktop candidate was operated before publication only on Linux, while Windows and macOS evidence remained behind the unpublished-dependency gate; a complementary source-candidate matrix now proves Windows and both macOS architectures alongside the Linux wheel lane.",
       "The native installer source job still depended on public first-party release tags and therefore skipped the real Windows and macOS installer paths while dependency candidates were unpublished; it now builds the complete metadata-discovered source wheelhouse independently, while the PyPI installation lane remains publication-gated.",
-      "Cross-platform GUI canaries proved readiness and MCP actions but discarded the rendered UI, so native theming regressions had no retained evidence; candidate and published-package jobs now upload typed, hash-verified window snapshots."
+    "Cross-platform GUI canaries proved readiness and MCP actions but discarded the rendered UI, so native theming regressions had no retained evidence; candidate and published-package jobs now upload typed, hash-verified window snapshots.",
+    "The installed-GUI canary bypassed the production logging setup and therefore could pass while its execution server advertised an empty log; the probe now applies LoggingConfig and verifies readable endpoint output."
     ],
     "disposition": "revise",
     "validation": [
@@ -2200,7 +2201,8 @@
       "On 2026-08-26, applied the Diataxis testing how-to boundary and re-read the complete guide after native GUI evidence became retained; 54 focused contract tests and a live 0.7.27 GUI/MCP run validated two PNGs through their typed paths, sizes, dimensions, and SHA-256 values.",
       "On 2026-08-26, re-read the complete testing how-to after source-candidate root-wheel identity began deriving from the package version authority; the documented build order and publication-independent evidence lanes remain accurate.",
       "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete guide after the installed GUI canary gained background function-catalogue readiness proof; a cold installed wheel completed launch, catalogue resolution, packaged MCP control, and retained screenshots within one end-to-end deadline.",
-      "On 2026-08-26, re-read the complete testing how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; one installed-GUI timing declaration now derives both operation and process limits, 106 focused release and installer tests passed, and a fresh 0.8.0 wheel produced two visually inspected native screenshots after resolving its 263-function catalogue."
+    "On 2026-08-26, re-read the complete testing how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; one installed-GUI timing declaration now derives both operation and process limits, 106 focused release and installer tests passed, and a fresh 0.8.0 wheel produced two visually inspected native screenshots after resolving its 263-function catalogue.",
+    "On 2026-08-26, applied the Diataxis testing how-to boundary and re-read the complete guide after the packaged GUI canary began applying LoggingConfig and validating its live endpoint-advertised log; 61 focused smoke, workflow, and installer tests passed, and a live UI/MCP run produced two inspected screenshots plus a non-empty execution-server log."
     ]
   },
   {

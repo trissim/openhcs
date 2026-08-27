@@ -64,17 +64,18 @@ from outside the checkout. The MCP smoke test asserts that:
 
 The GUI smoke allocates isolated execution and authenticated UI-bridge endpoints
 through the configured transport declaration, constructs the installed
-application, and waits for its painted-ready boundary. It also requires the
-background execution endpoint to return a complete, revisioned function
-catalogue and resolves one returned function reference. A packaged desktop MCP
-session then verifies health and version identity, discovers the live main and
-Plate Manager windows, and invokes the declared Plate Manager code action. The
-probe requires the resulting window to appear, then captures the main window
-and opened editor through the production MCP snapshot capability. It verifies
-each PNG's path, dimensions, byte size, and SHA-256 before closing the GUI,
-removing the bridge descriptor, and terminating only its allocated execution
-endpoint. An existing desktop server cannot influence this resolved-package
-test.
+application with its declared logging configuration, and waits for its
+painted-ready boundary. It requires the background execution endpoint to return
+a complete, revisioned function catalogue, resolves one returned function
+reference, and verifies that the ready endpoint's advertised log is readable
+and contains output. A packaged desktop MCP session then verifies health and
+version identity, discovers the live main and Plate Manager windows, and invokes
+the declared Plate Manager code action. The probe requires the resulting window
+to appear, then captures the main window and opened editor through the
+production MCP snapshot capability. It verifies each PNG's path, dimensions,
+byte size, and SHA-256 before closing the GUI, removing the bridge descriptor,
+and terminating only its allocated execution endpoint. An existing desktop
+server cannot influence this resolved-package test.
 
 Client artifacts
 ----------------
@@ -130,8 +131,9 @@ the code that is actually on ``main``. The Linux wheel-candidate job runs the
 live GUI/MCP probe before its installed integration suite. A complementary
 desktop candidate matrix builds the same recursively recorded first-party
 wheels and runs that probe on Windows and both macOS architectures. Each job
-retains its typed JSON result and native Qt screenshots for 14 days, together
-with execution-server startup evidence when the probe fails. It has no
+retains its typed JSON result, native Qt screenshots, and isolated GUI and
+execution-server logs for 14 days. The probe fails when the exact log advertised
+by its ready execution endpoint is absent or empty. It has no
 dependency on the PyPI readiness job, so every supported desktop release
 boundary proves the candidate before the first dependency is published.
 The native Windows and dual-architecture macOS installer matrix is independent

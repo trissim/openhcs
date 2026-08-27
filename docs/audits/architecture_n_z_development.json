@@ -2747,7 +2747,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "8b86289a4d007e3471858e1e6bfbe6d0d8abe8dae4136c03ef1444cdb5ea428a",
+    "source_sha256": "19408874c477c33c856fd6b7047859376d691ce61f4b821326d925bb5b2185bd",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2826,13 +2826,13 @@
       },
       {
         "path": "scripts/smoke_installed_gui.py",
-        "sha256": "f64816d7f61c1b92d9ce6a896918352bfd0a43c974d1776599d63becd4418dfe",
-        "role": "Owns the installed-GUI acceptance timing, constructs the application on declaration-allocated endpoints, proves the background function catalogue is usable, drives the GUI through packaged MCP, validates retained window snapshots, and cleans up exact owned resources outside the checkout."
+        "sha256": "572f0d0d7457fc97430872c882726c375771cc9b723aa35a6c32c73576c3152a",
+        "role": "Owns the installed-GUI acceptance timing, applies the declared logging configuration, constructs the application on declaration-allocated endpoints, proves the background function catalogue and advertised endpoint log are usable, drives the GUI through packaged MCP, validates retained window snapshots, and cleans up exact owned resources outside the checkout."
       },
       {
         "path": "tests/unit/test_smoke_installed_gui.py",
-        "sha256": "0c3bef0dd15aa1b75a4e3109195071290ee6535984152921aef6e4175980f314",
-        "role": "Proves source-checkout rejection, one derived smoke timing policy, deadline-owner error preservation, declaration-owned endpoint allocation, function-catalogue readiness, snapshot CLI projection, and emitted PNG identity validation for the installed GUI/MCP probe."
+        "sha256": "54cf260939cf4966ddf601d84aabdd2e24969934f4fbc39be43839df751d7998",
+        "role": "Proves source-checkout rejection, one derived smoke timing policy, deadline-owner error preservation, declaration-owned endpoint allocation, function-catalogue readiness, advertised execution-log validation, snapshot CLI projection, and emitted PNG identity validation for the installed GUI/MCP probe."
       },
       {
         "path": ".github/dependabot.yml",
@@ -2889,7 +2889,8 @@
       "Installed GUI and MCP package checks terminated before either operated the other; the source-wheel, publication, and scheduled canaries now keep the packaged GUI live while the packaged desktop MCP discovers it and invokes a declared UI action.",
       "The fixed desktop candidate was operated before publication only on Linux, while Windows and macOS evidence remained behind the unpublished-dependency gate; a complementary source-candidate matrix now proves Windows and both macOS architectures alongside the Linux wheel lane.",
       "The native source-candidate matrix still depended on published first-party tags, so the real installer and staged-update jobs were skipped exactly while those dependency releases were being prepared; the native lane now builds its complete wheelhouse from metadata-discovered submodules while the separate PyPI lane remains fail-closed on publication readiness.",
-      "Cross-platform GUI canaries proved readiness and MCP actions but discarded the rendered UI, leaving native theming regressions outside retained evidence; candidate and published-package jobs now upload typed, hash-verified window snapshots."
+    "Cross-platform GUI canaries proved readiness and MCP actions but discarded the rendered UI, leaving native theming regressions outside retained evidence; candidate and published-package jobs now upload typed, hash-verified window snapshots.",
+    "The installed-GUI canary constructed the application below the production logging boundary, so a successful endpoint could advertise an empty log; the probe now applies its declared logging configuration and fails unless the exact advertised log contains output."
     ],
     "disposition": "revise",
     "validation": [
@@ -2926,7 +2927,8 @@
       "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after native GUI evidence became retained; 54 focused contract tests and a live 0.7.27 GUI/MCP run validated two PNGs through their typed paths, sizes, dimensions, and SHA-256 values.",
       "On 2026-08-26, re-read the complete release how-to against the 0.8.0 version authority and regenerated MCP metadata; the source-candidate test now derives the root wheel identity from that authority, and 73 focused release tests plus wheel metadata validation passed.",
       "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after the installed GUI canary gained background function-catalogue readiness proof; a cold installed wheel completed launch, catalogue resolution, packaged MCP control, and retained screenshots within one end-to-end deadline.",
-      "On 2026-08-26, re-read the complete release how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; one installed-GUI timing declaration now derives the operation and process budgets, 106 focused release and installer tests passed, and a fresh 0.8.0 wheel completed cold launch, 263-function catalogue resolution, packaged MCP control, and two visually inspected native screenshots."
+    "On 2026-08-26, re-read the complete release how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; one installed-GUI timing declaration now derives the operation and process budgets, 106 focused release and installer tests passed, and a fresh 0.8.0 wheel completed cold launch, 263-function catalogue resolution, packaged MCP control, and two visually inspected native screenshots.",
+    "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after the packaged GUI canary began applying LoggingConfig and validating its live endpoint-advertised log; 61 focused smoke, workflow, and installer tests passed, and a live UI/MCP run produced two inspected screenshots plus a non-empty execution-server log."
     ]
   },
   {
