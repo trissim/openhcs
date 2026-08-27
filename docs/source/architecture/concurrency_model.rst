@@ -13,6 +13,11 @@ Source discovery determines the available axis values; compiler stages create
 the corresponding typed step plans. Workers receive one compiled context at a
 time and never share mutable compiler state.
 
+Each frozen ``ProcessingContext`` owns its multiprocessing ``axis_id``. Mapping
+keys distinguish runtime contexts, including sequential combinations, but do
+not encode an axis contract. Bundle projections and worker-lane grouping read
+the context-owned identity instead of parsing those keys.
+
 ``compiled_plate_execution`` owns the plate-level execution lifecycle.
 ``worker_execution`` owns executor construction, bundle installation, task
 submission, result collection, cancellation, and cleanup. ``worker_lanes``

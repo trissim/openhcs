@@ -146,9 +146,12 @@ Execution bundle
 ``CompiledExecutionBundle`` includes ``CompiledRuntimeEnvironmentPlan``. That
 plan records the selected multiprocessing start method and its reason, threading
 mode, server mode, GPU enablement facts, and configured worker count. The bundle
-also owns the axis-to-worker assignments. Framework-local device bindings remain
-on the compiled step plans that derived them. Workers consume these compiled
-decisions instead of resolving global configuration again.
+also owns the axis-to-worker assignments and projects its axis identities from
+the compiled ``ProcessingContext`` values. Runtime-context mapping keys identify
+individual contexts and must not be parsed as a second axis authority.
+Framework-local device bindings remain on the compiled step plans that derived
+them. Workers consume these compiled decisions instead of resolving global
+configuration again.
 
 Execution scopes
 ----------------

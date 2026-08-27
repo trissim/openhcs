@@ -16,7 +16,6 @@ from openhcs.core.debug import (
 from openhcs.core.orchestrator.execution_result import RuntimeObservationMode
 from openhcs.core.progress import ProgressExecutionContext
 
-
 TransportAxisContexts: TypeAlias = List[tuple[str, ProcessingContext]]
 ForkAxisContextKeys: TypeAlias = List[str]
 LaneAxisContextPayload: TypeAlias = TransportAxisContexts | ForkAxisContextKeys
@@ -164,9 +163,8 @@ class CompiledContextLanePlanner:
         contexts_snapshot: Mapping[str, ProcessingContext],
     ) -> Dict[str, List[str]]:
         contexts_by_axis: dict[str, list[str]] = defaultdict(list)
-        for context_key in contexts_snapshot:
-            axis_id = context_key.split("__combo_")[0]
-            contexts_by_axis[axis_id].append(context_key)
+        for context_key, context in contexts_snapshot.items():
+            contexts_by_axis[context.require_axis_id()].append(context_key)
         return dict(contexts_by_axis)
 
     def _resolved_assignments(

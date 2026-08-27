@@ -10,6 +10,7 @@ from openhcs.core.compiled_execution import (
     CompiledWorkerStartPlan,
 )
 from openhcs.core.config import MultiprocessingStartMethod
+from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.debug import NoOpDebugExecutionPolicy
 from openhcs.core.orchestrator import (
     analysis_consolidation as analysis_consolidation_module,
@@ -68,6 +69,10 @@ PROGRESS_CONTEXT = ProgressExecutionContext(
     execution_id="exec",
     plate_id="plate",
 )
+
+
+def _compiled_context(axis_id: str) -> ProcessingContext:
+    return ProcessingContext(axis_id=axis_id)
 
 
 def _runtime_environment(
@@ -179,12 +184,16 @@ def test_lane_planner_generates_stable_default_assignments_and_groups_combos():
         fork_inherited_execution=False,
     )
 
+    b_context = _compiled_context("B01")
+    a0_context = _compiled_context("A01")
+    a1_context = _compiled_context("A01")
+    c_context = _compiled_context("C01")
     plan = planner.plan(
         {
-            "B01": "b-context",
-            "A01__combo_0": "a0-context",
-            "A01__combo_1": "a1-context",
-            "C01": "c-context",
+            "opaque-b": b_context,
+            "opaque-a0": a0_context,
+            "opaque-a1": a1_context,
+            "opaque-c": c_context,
         },
         worker_assignments=None,
     )
@@ -198,13 +207,13 @@ def test_lane_planner_generates_stable_default_assignments_and_groups_combos():
             (
                 "A01",
                 [
-                    ("A01__combo_0", "a0-context"),
-                    ("A01__combo_1", "a1-context"),
+                    ("opaque-a0", a0_context),
+                    ("opaque-a1", a1_context),
                 ],
             ),
-            ("C01", [("C01", "c-context")]),
+            ("C01", [("opaque-c", c_context)]),
         ],
-        "worker_1": [("B01", [("B01", "b-context")])],
+        "worker_1": [("B01", [("opaque-b", b_context)])],
     }
 
 
@@ -305,16 +314,16 @@ def test_lane_planner_preserves_fork_lane_payload_as_context_keys():
 
     plan = planner.plan(
         {
-            "A01__combo_0": "runtime-a0",
-            "A01__combo_1": "runtime-a1",
-            "B01": "runtime-b",
+            "opaque-a0": _compiled_context("A01"),
+            "opaque-a1": _compiled_context("A01"),
+            "opaque-b": _compiled_context("B01"),
         },
         worker_assignments={"worker_0": ["A01"], "worker_1": ["B01"]},
     )
 
     assert plan.lane_axis_contexts == {
-        "worker_0": [("A01", ["A01__combo_0", "A01__combo_1"])],
-        "worker_1": [("B01", ["B01"])],
+        "worker_0": [("A01", ["opaque-a0", "opaque-a1"])],
+        "worker_1": [("B01", ["opaque-b"])],
     }
 
 
@@ -326,7 +335,10 @@ def test_lane_planner_rejects_duplicate_axis_ownership():
 
     with pytest.raises(RuntimeError, match="Duplicate axis ownership"):
         planner.plan(
-            {"A01": "a-context", "B01": "b-context"},
+            {
+                "context-a": _compiled_context("A01"),
+                "context-b": _compiled_context("B01"),
+            },
             worker_assignments={"worker_0": ["A01"], "worker_1": ["A01", "B01"]},
         )
 
@@ -339,7 +351,10 @@ def test_lane_planner_rejects_missing_axis_ownership():
 
     with pytest.raises(RuntimeError, match="worker_assignments mismatch"):
         planner.plan(
-            {"A01": "a-context", "B01": "b-context"},
+            {
+                "context-a": _compiled_context("A01"),
+                "context-b": _compiled_context("B01"),
+            },
             worker_assignments={"worker_0": ["A01"]},
         )
 

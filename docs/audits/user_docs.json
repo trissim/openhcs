@@ -26,12 +26,12 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
+        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
         "role": "Declares the frozen compiled execution bundle consumed by workers after compilation."
       },
       {
         "path": "tests/unit/test_compiled_execution.py",
-        "sha256": "e46c7c9ef269a2b5c2c5098cef0a76ed90da5020585c8b98edbea32782870807",
+        "sha256": "63638cf29d6ce30076198ea110c220e7c1262fcd51fcb8a9e8e9e4a7d28d6054",
         "role": "Proves compilation produces immutable step plans and execution bundles with the expected resolved values."
       },
       {
@@ -92,7 +92,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
+        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
         "role": "Declares the nominal processing-contract members defined by the glossary."
       }
     ],
@@ -201,7 +201,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
+        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -283,7 +283,7 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
+        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
         "role": "Declares the frozen compiled execution bundle consumed by workers after compilation."
       },
       {
@@ -340,7 +340,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
+        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -476,7 +476,7 @@
     "authority": [
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
+        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -516,7 +516,7 @@
       },
       {
         "path": "tests/unit/test_library_registry_discovery.py",
-        "sha256": "5561ecf3aa8013d5a1eaa98e8c67d304a7c3c31fc785a8e7aa3ae6a2a6a1b2a9",
+        "sha256": "2e7163761aa16e60b9f600166d3dc46f329583e9b1d7b22790c08d2156131b51",
         "role": "Proves declaration-derived catalogue discovery and process policy filtering."
       }
     ],
@@ -651,7 +651,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
+        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -1182,7 +1182,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
+        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -2015,12 +2015,12 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
+        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
         "role": "Declares the frozen compiled execution bundle consumed by workers after compilation."
       },
       {
         "path": "tests/unit/test_compiled_execution.py",
-        "sha256": "e46c7c9ef269a2b5c2c5098cef0a76ed90da5020585c8b98edbea32782870807",
+        "sha256": "63638cf29d6ce30076198ea110c220e7c1262fcd51fcb8a9e8e9e4a7d28d6054",
         "role": "Proves compilation produces immutable step plans and execution bundles with the expected resolved values."
       },
       {
@@ -2450,7 +2450,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
+        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -2803,7 +2803,7 @@
       },
       {
         "path": "tests/unit/test_library_registry_discovery.py",
-        "sha256": "5561ecf3aa8013d5a1eaa98e8c67d304a7c3c31fc785a8e7aa3ae6a2a6a1b2a9",
+        "sha256": "2e7163761aa16e60b9f600166d3dc46f329583e9b1d7b22790c08d2156131b51",
         "role": "Proves backend discovery and availability filtering produce the expected callable registry."
       },
       {
@@ -2929,7 +2929,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
+        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {

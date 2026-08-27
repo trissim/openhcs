@@ -451,22 +451,28 @@ def test_openhcs_registry_cache_invalidates_when_scanned_modules_change(
 
 
 def test_openhcs_registry_cache_identity_includes_memory_import_policy(
+    tmp_path,
     monkeypatch,
 ) -> None:
     registry = OpenHCSRegistry()
+    registry._cache_path = tmp_path / "openhcs_function_metadata.json"
     registry.MODULES_TO_SCAN = []
 
     monkeypatch.setenv(OpenHCSProcessEnvironment.cpu_only_key, "true")
     cpu_only_signature = json.loads(registry.get_discovery_signature())
+    cpu_only_path = registry.persistent_cache_path()
 
     monkeypatch.delenv(OpenHCSProcessEnvironment.cpu_only_key)
     gpu_enabled_signature = json.loads(registry.get_discovery_signature())
+    gpu_enabled_path = registry.persistent_cache_path()
 
     assert cpu_only_signature["context"]["allowed_memory_types"] == [
         MemoryType.NUMPY.value
     ]
     assert gpu_enabled_signature["context"]["allowed_memory_types"] is None
     assert cpu_only_signature != gpu_enabled_signature
+    assert cpu_only_path != gpu_enabled_path
+    assert cpu_only_path.parent == gpu_enabled_path.parent == tmp_path
 
 
 def test_openhcs_registry_cache_identity_includes_framework_packages(

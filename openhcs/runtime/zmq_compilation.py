@@ -24,25 +24,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def extract_compiled_axis_ids(
-    compiled_contexts: Mapping[str, ProcessingContext],
-) -> list[str]:
-    """Extract unique multiprocessing axis ids from compiled context keys."""
-
-    axis_ids: list[str] = []
-    seen: set[str] = set()
-    for context_key in compiled_contexts.keys():
-        axis_id = (
-            context_key.split("__combo_", 1)[0]
-            if "__combo_" in context_key
-            else context_key
-        )
-        if axis_id not in seen:
-            seen.add(axis_id)
-            axis_ids.append(axis_id)
-    return sorted(axis_ids)
-
-
 def extract_compiled_step_names(
     compiled_contexts: Mapping[str, ProcessingContext],
 ) -> list[str]:
@@ -150,7 +131,7 @@ class ZMQCompilationRequest:
             worker_slot: list(axis_ids)
             for worker_slot, axis_ids in execution_bundle.worker_assignments.items()
         }
-        compiled_axis_ids = extract_compiled_axis_ids(compiled_contexts)
+        compiled_axis_ids = list(execution_bundle.axis_ids)
         compiled_step_names = extract_compiled_step_names(compiled_contexts)
         self.progress_emitter.artifact_init_started(
             compiled_axis_ids=compiled_axis_ids,
@@ -200,7 +181,7 @@ class ZMQCompilationRequest:
             worker_slot: list(axis_ids)
             for worker_slot, axis_ids in execution_bundle.worker_assignments.items()
         }
-        compiled_axis_ids = extract_compiled_axis_ids(compiled_contexts)
+        compiled_axis_ids = list(execution_bundle.axis_ids)
         compiled_step_names = extract_compiled_step_names(compiled_contexts)
         self.progress_emitter.compiled_init_started(
             compiled_axis_ids=compiled_axis_ids,

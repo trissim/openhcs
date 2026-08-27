@@ -498,7 +498,7 @@ def execute_plate_scoped_steps(
                     **kwargs,
                     **runtime_kwargs,
                 )
-                owner_axis_id = _require_context_axis_id(owner_context)
+                owner_axis_id = owner_context.require_axis_id()
                 runtime_value = RuntimeValue.normalize(
                     resolved_output_plan,
                     result,
@@ -752,12 +752,12 @@ def _plate_artifact_batch(
         OrderedDict[tuple[object, RuntimeArtifactLocation], StoredRuntimeValue],
     ] = OrderedDict()
     for context in compiled_contexts.values():
-        selected.setdefault(_require_context_axis_id(context), OrderedDict())
+        selected.setdefault(context.require_axis_id(), OrderedDict())
 
     for input_spec in contract.artifact_inputs:
         selected_for_spec = 0
         for context in compiled_contexts.values():
-            axis_id = _require_context_axis_id(context)
+            axis_id = context.require_axis_id()
             step_plan = context.step_plans[step_index]
             invocation = step_plan.compiled_function_pattern.default_group.invocations[
                 invocation_position
@@ -825,12 +825,6 @@ def _records_with_output(
     existing[(record.key, record.location)] = record
     updated[axis_id] = tuple(existing.values())
     return MappingProxyType(dict(updated))
-
-
-def _require_context_axis_id(context: ProcessingContext) -> str:
-    if not context.axis_id:
-        raise ValueError("Plate-scoped execution requires a compiled context axis_id.")
-    return str(context.axis_id)
 
 
 def actual_max_workers(

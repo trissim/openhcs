@@ -130,6 +130,7 @@ def _runtime_environment() -> CompiledRuntimeEnvironmentPlan:
 
 def _compiled_context(axis_id: str) -> ProcessingContext:
     return ProcessingContext(
+        axis_id=axis_id,
         step_plans={
             1: CompiledStepPlan(
                 step_index=1,
@@ -143,7 +144,7 @@ def _compiled_context(axis_id: str) -> ProcessingContext:
                 step_type="FunctionStep",
                 axis_id=axis_id,
             ),
-        }
+        },
     )
 
 
@@ -151,7 +152,7 @@ def test_reused_compile_artifact_reads_step_names_from_compiled_plans() -> None:
     progress_emitter = _ProgressEmitter()
     bundle = CompiledExecutionBundle(
         pipeline_definition=(_StrippedStepShell(),),
-        runtime_contexts={"A01": _compiled_context("A01")},
+        runtime_contexts={"opaque-context-key": _compiled_context("A01")},
         transport_contexts={},
         worker_assignments={"worker_0": ["A01"]},
         runtime_environment=_runtime_environment(),

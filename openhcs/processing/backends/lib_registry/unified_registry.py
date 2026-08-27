@@ -20,6 +20,7 @@ Architecture:
 - Integrated caching system using existing cache_utils.py patterns
 """
 
+import hashlib
 import importlib
 import inspect
 import json
@@ -1955,19 +1956,18 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
 
     def _load_from_cache(self) -> Optional[Dict[str, FunctionMetadata]]:
         """Load function metadata from cache with validation."""
+        cache_path = self.persistent_cache_path()
         logger.debug(f"📂 LOAD FROM CACHE: Checking cache for {self.library_name}")
 
-        if not self._cache_path.exists():
-            logger.debug(
-                f"📂 LOAD FROM CACHE: No cache file exists at {self._cache_path}"
-            )
+        if not cache_path.exists():
+            logger.debug(f"📂 LOAD FROM CACHE: No cache file exists at {cache_path}")
             return None
 
         try:
-            with open(self._cache_path, "r") as f:
+            with open(cache_path, "r") as f:
                 cache_data = json.load(f)
         except json.JSONDecodeError:
-            logger.warning(f"Corrupt cache file {self._cache_path}, rebuilding")
+            logger.warning(f"Corrupt cache file {cache_path}, rebuilding")
             return None
 
         if "functions" not in cache_data:
@@ -2065,6 +2065,21 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
 
         return {}
 
+    def persistent_cache_path(self) -> Path:
+        """Project the discovery context into its persistent cache identity."""
+
+        context_source = json.dumps(
+            self.cache_discovery_context(),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if context_source == "{}":
+            return self._cache_path
+        context_fingerprint = hashlib.sha256(context_source.encode()).hexdigest()
+        return self._cache_path.with_name(
+            f"{self._cache_path.stem}.{context_fingerprint}{self._cache_path.suffix}"
+        )
+
     def cache_source_mtimes(self) -> Dict[str, float]:
         """Return implementation source mtimes that own discovery semantics."""
 
@@ -2080,12 +2095,13 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
 
     def _save_to_cache(self, functions: Dict[str, FunctionMetadata]) -> None:
         """Save function metadata to cache."""
+        cache_path = self.persistent_cache_path()
         writable_parent = self._writable_cache_parent()
         if writable_parent is None:
             logger.warning(
                 "Registry cache path %s is not writable; using discovered "
                 "%s functions without refreshing the disk cache.",
-                self._cache_path,
+                cache_path,
                 self.library_name,
             )
             return
@@ -2109,13 +2125,13 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             },
         }
 
-        atomic_write_json(self._cache_path, cache_data)
+        atomic_write_json(cache_path, cache_data)
 
         logger.info(f"💾 Saved {len(functions)} {self.library_name} functions to cache")
 
     def _writable_cache_parent(self) -> Optional[str]:
         """Return the nearest existing writable cache parent, or None."""
-        parent = self._cache_path.parent
+        parent = self.persistent_cache_path().parent
         while not parent.exists():
             if parent.parent == parent:
                 return None

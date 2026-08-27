@@ -235,6 +235,7 @@ def test_registry_cache_publication_uses_atomic_storage_owner(
     writes: list[tuple[Path, dict[str, Any]]] = []
     registry = SimpleNamespace(
         _cache_path=cache_path,
+        persistent_cache_path=lambda: cache_path,
         library_name="test",
         CACHE_FORMAT_VERSION="1.1",
         _writable_cache_parent=lambda: str(tmp_path),

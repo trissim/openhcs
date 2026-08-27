@@ -130,6 +130,19 @@ class CompiledExecutionBundle:
     worker_assignments: Mapping[str, list[str]]
     runtime_environment: CompiledRuntimeEnvironmentPlan
 
+    @property
+    def axis_ids(self) -> tuple[str, ...]:
+        """Return the context-owned multiprocessing-axis identities."""
+
+        return tuple(
+            sorted(
+                {
+                    context.require_axis_id()
+                    for context in self.runtime_contexts.values()
+                }
+            )
+        )
+
     @classmethod
     def from_runtime_contexts(
         cls,

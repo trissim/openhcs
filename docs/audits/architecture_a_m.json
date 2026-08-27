@@ -143,7 +143,7 @@
       },
       {
         "path": "tests/unit/test_orchestrator_lane_planning.py",
-        "sha256": "c8ba3d0a8650b3904b4852ff9fd8e36f22a889d5d69d02257e874e311b4ea820",
+        "sha256": "fcf8dd3ae582e2deadc69228a9e5ce00e72c34996cc94a0259ce6130849c801b",
         "role": "Exercises orchestrator lane planning and post-execution analysis boundaries used by consolidation."
       },
       {
@@ -455,7 +455,7 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
+        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
         "role": "Assembles and validates worker-safe execution bundles without a process-global GPU registry."
       }
     ],
@@ -670,7 +670,7 @@
   },
   {
     "path": "docs/source/architecture/concurrency_model.rst",
-    "source_sha256": "5689b871ae564fde07b58f3f6b1c95cb10223a4b7a1407be74cbdc3ea9611b8c",
+    "source_sha256": "e8d985a9b5d1e63e1d7ea436e5c714dec2a50dce51711be556e0aa4bd2a8c8c2",
     "audience": [
       "OpenHCS runtime and multiprocessing maintainers"
     ],
@@ -679,8 +679,23 @@
     "authority": [
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
-        "role": "Defines the worker-safe CompiledExecutionBundle and validates its declaration-derived execution facts."
+        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
+        "role": "Defines the worker-safe CompiledExecutionBundle and its context-derived axis projection."
+      },
+      {
+        "path": "openhcs/core/context/processing_context.py",
+        "sha256": "52277cdc9ab672d147f2d0b3b7d79d6dc0cb747ab4956c187891732d2613c6a3",
+        "role": "Owns the compiled multiprocessing-axis identity for one processing context."
+      },
+      {
+        "path": "openhcs/core/orchestrator/worker_lanes.py",
+        "sha256": "93bf6c3cb89ecbf8745cb9a1dc6342c5df2b0dd810400e94af2ebbb928636c3a",
+        "role": "Groups runtime contexts into worker lanes from their declared axis identity."
+      },
+      {
+        "path": "tests/unit/test_orchestrator_lane_planning.py",
+        "sha256": "fcf8dd3ae582e2deadc69228a9e5ce00e72c34996cc94a0259ce6130849c801b",
+        "role": "Verifies that worker-lane grouping remains correct when context mapping keys do not encode axis identity."
       },
       {
         "path": "openhcs/core/orchestrator/worker_execution.py",
@@ -704,7 +719,8 @@
       }
     ],
     "findings": [
-      "The cancellation explanation did not distinguish generic terminal status ownership, cooperative thread boundaries, and process-worker interruption."
+      "The cancellation explanation did not distinguish generic terminal status ownership, cooperative thread boundaries, and process-worker interruption.",
+      "The execution-unit explanation left axis identity implicit and did not distinguish context-owned identity from context mapping keys."
     ],
     "disposition": "revise",
     "validation": [
@@ -712,7 +728,8 @@
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/compiled_execution.py; openhcs/core/orchestrator/worker_execution.py; openhcs/core/orchestrator/cancellation.py; openhcs/core/worker_start_policy.py; tests/unit/test_worker_start_policy.py.",
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-26, re-read the complete page against ProcessingContext, CompiledExecutionBundle, worker-lane planning, and opaque-key regression evidence; revised it to identify the nominal axis owner."
     ]
   },
   {
@@ -1510,7 +1527,7 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
+        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
         "role": "Defines the worker-safe runtime bundle boundary without a process-global GPU registry."
       }
     ],
@@ -1943,7 +1960,7 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
+        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
         "role": "Assembles and validates the one worker-safe execution bundle without a process-global GPU registry."
       },
       {

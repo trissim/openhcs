@@ -14,6 +14,7 @@ from openhcs.core.compiled_execution import (
 )
 from openhcs.core.compiled_step_plan import FrameworkDeviceAssignment
 from openhcs.core.config import MultiprocessingStartMethod
+from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.debug import NoOpDebugExecutionPolicy
 from openhcs.core.measurement_row_materialization import (
     MeasurementSparseColumnarRows,
@@ -87,6 +88,22 @@ def test_compiled_execution_bundle_exports_bundle_only_compilation_result():
 
     assert result["execution_bundle"] is bundle
     assert tuple(result) == ("execution_bundle",)
+
+
+def test_compiled_execution_bundle_derives_axis_ids_from_contexts() -> None:
+    bundle = CompiledExecutionBundle(
+        pipeline_definition=(),
+        runtime_contexts={
+            "opaque-context-2": ProcessingContext(axis_id="B01"),
+            "opaque-context-1": ProcessingContext(axis_id="A01"),
+            "opaque-context-3": ProcessingContext(axis_id="A01"),
+        },
+        transport_contexts={},
+        worker_assignments={},
+        runtime_environment=_runtime_environment(),
+    )
+
+    assert bundle.axis_ids == ("A01", "B01")
 
 
 def test_runtime_execution_observation_merges_into_parent_contexts():

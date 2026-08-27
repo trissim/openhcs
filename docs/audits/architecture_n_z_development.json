@@ -205,7 +205,7 @@
     "authority": [
       {
         "path": "openhcs/core/orchestrator/compiled_plate_execution.py",
-        "sha256": "8c5349414461754ab24b9ded3919e3a6635dbe74914fe87d8a012d0324dfe0d3",
+        "sha256": "b9d7c0b857b7869d7a9e6c75969843a13d9e3213d17ef1af7a33d8965c5668bd",
         "role": "Parent compiled-plate execution, terminal steps, viewer settlement, evidence, and cleanup ordering."
       },
       {
@@ -240,7 +240,7 @@
       },
       {
         "path": "tests/unit/test_orchestrator_lane_planning.py",
-        "sha256": "c8ba3d0a8650b3904b4852ff9fd8e36f22a889d5d69d02257e874e311b4ea820",
+        "sha256": "fcf8dd3ae582e2deadc69228a9e5ce00e72c34996cc94a0259ce6130849c801b",
         "role": "Proves partial viewer acquisition and readiness failures roll back every acquired viewer."
       }
     ],
@@ -492,7 +492,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
+        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
         "role": "Processing-contract execution and registry-owned catalogue admission and cache semantics."
       }
     ],
@@ -511,7 +511,7 @@
   },
   {
     "path": "docs/source/architecture/pipeline_compilation_system.rst",
-    "source_sha256": "c39322c58cae5175fcaeb265a3d08bd503b83bd9bfee2863a5ee21d748c6aa13",
+    "source_sha256": "c487caecb2568b0cd19ca1ece47ea8d48442b7633e9dcccf50a85b6039bd5a76",
     "audience": [
       "OpenHCS compiler, runtime, and extension maintainers"
     ],
@@ -530,12 +530,22 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
-        "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
+        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
+        "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts and context-derived axis identities remain separate from per-step framework devices."
+      },
+      {
+        "path": "openhcs/core/context/processing_context.py",
+        "sha256": "52277cdc9ab672d147f2d0b3b7d79d6dc0cb747ab4956c187891732d2613c6a3",
+        "role": "Owns the compiled multiprocessing-axis identity carried by each runtime context."
+      },
+      {
+        "path": "tests/unit/test_compiled_execution.py",
+        "sha256": "63638cf29d6ce30076198ea110c220e7c1262fcd51fcb8a9e8e9e4a7d28d6054",
+        "role": "Verifies that bundle axis projection derives from context declarations rather than mapping-key syntax."
       },
       {
         "path": "openhcs/core/orchestrator/compiled_plate_execution.py",
-        "sha256": "8c5349414461754ab24b9ded3919e3a6635dbe74914fe87d8a012d0324dfe0d3",
+        "sha256": "b9d7c0b857b7869d7a9e6c75969843a13d9e3213d17ef1af7a33d8965c5668bd",
         "role": "Parent execution ordering for plate-scoped work, completed-output metadata projection, and viewer settlement."
       },
       {
@@ -576,7 +586,8 @@
     ],
     "findings": [
       "The typed-plan inventory still described a global GPU assignment and did not explain declaration-owned native catalogue placement.",
-      "The execution explanation did not state when multi-axis output metadata becomes a complete plate projection."
+      "The execution explanation did not state when multi-axis output metadata becomes a complete plate projection.",
+      "The execution-bundle explanation did not distinguish context-owned axis identity from runtime-context mapping keys."
     ],
     "disposition": "revise",
     "validation": [
@@ -586,7 +597,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-24, re-read the complete explanation against the completed-plate metadata owner; 336 focused tests passed and a live four-well run produced eight indexed images across all wells.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-26, re-read the complete page against the compiled context and execution bundle owners; revised the execution boundary to make context-owned axis identity explicit."
     ]
   },
   {
@@ -761,7 +773,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
+        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
         "role": "Processing-contract execution and registry-owned catalogue admission and cache semantics."
       },
       {
@@ -1370,7 +1382,7 @@
       },
       {
         "path": "openhcs/core/orchestrator/compiled_plate_execution.py",
-        "sha256": "8c5349414461754ab24b9ded3919e3a6635dbe74914fe87d8a012d0324dfe0d3",
+        "sha256": "b9d7c0b857b7869d7a9e6c75969843a13d9e3213d17ef1af7a33d8965c5668bd",
         "role": "Acquires required viewers transactionally and rolls back the exact acquired set on launch or readiness failure."
       },
       {
@@ -1405,7 +1417,7 @@
       },
       {
         "path": "tests/unit/test_orchestrator_lane_planning.py",
-        "sha256": "c8ba3d0a8650b3904b4852ff9fd8e36f22a889d5d69d02257e874e311b4ea820",
+        "sha256": "fcf8dd3ae582e2deadc69228a9e5ce00e72c34996cc94a0259ce6130849c801b",
         "role": "Proves multi-viewer bootstrap rollback after partial acquisition and readiness failure."
       }
     ],
@@ -1457,7 +1469,7 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
+        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
         "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
       }
     ],
@@ -1494,7 +1506,7 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
+        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
         "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
       },
       {
@@ -1690,7 +1702,7 @@
   },
   {
     "path": "docs/source/architecture/zmq_execution_service_extracted.rst",
-    "source_sha256": "b92dc867f1df63e59090a1f7472fbd076d95644f616a0bc1a6744494928c5130",
+    "source_sha256": "cad9c8ea7ddc69d41e38caf21841714483b56fa258f59e1289c08c27c581093b",
     "audience": [
       "OpenHCS contributors following the former local ZMQ execution-service URL"
     ],
@@ -1709,7 +1721,7 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
+        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
         "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
       },
       {
@@ -1789,7 +1801,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "5c2c8b760a5268f5108feb39ab86dafb606a5ac9904a2f55153d8549f65d20ed",
+        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
         "role": "Processing-contract execution and registry-owned catalogue admission and cache semantics."
       },
       {
@@ -1799,8 +1811,13 @@
       },
       {
         "path": "tests/unit/test_library_registry_discovery.py",
-        "sha256": "5561ecf3aa8013d5a1eaa98e8c67d304a7c3c31fc785a8e7aa3ae6a2a6a1b2a9",
+        "sha256": "2e7163761aa16e60b9f600166d3dc46f329583e9b1d7b22790c08d2156131b51",
         "role": "Proves source-revision cache invalidation, stable optional-runtime admission, declaration-owned projection, and no partial catalogue after failure."
+      },
+      {
+        "path": "tests/unit/test_cellprofiler_processing_backend.py",
+        "sha256": "a981e1dabd51845b1feeb588e2fcf5dc2c791fb07753bd175276a803f18b9eae",
+        "role": "Proves distinct persistent cache identities for CPU-only and GPU-capable function-catalogue admission contexts."
       },
       {
         "path": "openhcs/pyqt_gui/services/desktop_restart.py",
@@ -1889,7 +1906,8 @@
       "OpenHCS still selected IPC-versus-TCP cleanup behavior locally; pair cleanup and forced release now descend through the ZMQRuntime transport declaration.",
       "The endpoint-version restart transaction lacked direct failure-path evidence for executor shutdown, saved-session capture, and detached worker launch.",
       "Owner-requested connection-attempt cancellation was not a typed result, so GUI teardown could only surface it as a generic asynchronous failure; ZMQRuntime now owns the explicit cancellation outcome.",
-      "The execution reference omitted the shared MemoryType child environment and the public-only native catalogue projection."
+      "The execution reference omitted the shared MemoryType child environment and the public-only native catalogue projection.",
+      "The catalogue cache used one physical document for distinct framework-admission contexts, allowing concurrent CPU-only and GPU-capable preparation to replace each other's valid result."
     ],
     "disposition": "revise",
     "validation": [
@@ -1914,7 +1932,8 @@
       "On 2026-08-25, re-read the complete transition reference after formatting the custom-function runtime authority; the formatting-only change leaves its atomic catalogue projection and the documented ownership boundary unchanged.",
       "On 2026-08-26, re-read the complete transition reference after the installed desktop verifier began retaining MCP window snapshots; its declaration-allocated endpoint, exact cleanup, and transport-ownership claims remain unchanged.",
       "On 2026-08-26, re-read and revised the complete reference after a Windows boundary run exhausted the former shared five-second budget during request serialisation; the OpenHCS configuration declaration now owns a dedicated submission default, 98 focused tests passed, and the exact CometAssay ZMQ path passed in 93.82 seconds.",
-      "On 2026-08-26, re-read the complete transition reference after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; the acceptance harness now derives its outer limit from one timing owner without replacing ZMQRuntime's progress-aware endpoint inactivity semantics, and a fresh 0.8.0 wheel completed the cold 263-function catalogue path."
+      "On 2026-08-26, re-read the complete transition reference after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; the acceptance harness now derives its outer limit from one timing owner without replacing ZMQRuntime's progress-aware endpoint inactivity semantics, and a fresh 0.8.0 wheel completed the cold 263-function catalogue path.",
+      "On 2026-08-26, re-read and revised the complete catalogue boundary after a 6,336-test parallel run exposed cross-profile cache replacement; 20 focused registry tests passed with admission-context-owned persistent paths."
     ]
   },
   {
@@ -2448,7 +2467,7 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
+        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
         "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
       },
       {
@@ -3260,7 +3279,7 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "a4da6ab00ce2ba7c4586e65792d3c2aeba672763ae99e5f2b384ca17012944b3",
+        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
         "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
       },
       {

@@ -225,6 +225,13 @@ class ProcessingContext:
 
         self._is_frozen = True
 
+    def require_axis_id(self) -> str:
+        """Return the compiled multiprocessing-axis identity."""
+
+        if not self.axis_id:
+            raise ValueError("Compiled ProcessingContext requires an axis_id.")
+        return self.axis_id
+
     def is_frozen(self) -> bool:
         """
         Check if the context is frozen.

@@ -75,13 +75,16 @@ For native callables, local nominal declarations own any catalogue-module
 projection. Only declarations on that module's public surface enter the
 browsable catalogue; an explicitly transported private decorated callable can
 still be reconstructed from its own contract. Cache identity includes the
-current source revision and framework admission context; a failed projection
-publishes no partial catalogue, and PolyStore's atomic JSON writer replaces the
-persistent cache as one complete document. A reader that encounters an older or
-invalid document leaves the path intact while fresh preparation publishes its
-replacement. Clearing the service removes every derived lookup view. The
-transport service therefore consumes one declaration-derived catalogue instead
-of synchronizing a second function registry.
+current source revision and framework admission context. Distinct admission
+contexts, such as CPU-only and GPU-capable sessions, own distinct persistent
+cache documents and therefore cannot replace one another during concurrent
+preparation. A failed projection publishes no partial catalogue, and PolyStore's
+atomic JSON writer replaces one cache as a complete document. A reader that
+encounters an older or invalid document leaves the path intact while fresh
+preparation publishes its replacement. Clearing the service removes every
+derived lookup view. The transport service therefore consumes one
+declaration-derived catalogue instead of synchronizing a second function
+registry.
 
 Catalogue control messages preserve the endpoint's complete membership revision
 across full and filtered pages. Detail reads and callable-reference reads require
