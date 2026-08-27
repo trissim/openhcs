@@ -2077,7 +2077,7 @@
       },
       {
         "path": "scripts/macos_installer_window_probe.swift",
-        "sha256": "80629f64632006f783f01eb30f5815a1353e6e3b3129acf8a9dede4e71700d55",
+        "sha256": "a2eb9796cfdc4b46a66973a7056a5ac5af0886f15ebc422bded5213999647fc9",
         "role": "Queries the macOS window server for one exact on-screen installer window and projects its native identity and bounds."
       },
       {

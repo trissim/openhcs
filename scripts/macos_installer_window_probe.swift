@@ -22,8 +22,10 @@ let matchingWindows = windowRecords.compactMap { record -> [String: Any]? in
           layer == 0,
           let title = record[kCGWindowName as String] as? String,
           title == expectedTitle,
-          let boundsPayload = record[kCGWindowBounds as String] as? CFDictionary,
-          let bounds = CGRect(dictionaryRepresentation: boundsPayload),
+          let boundsPayload = record[kCGWindowBounds as String] as? [String: Any],
+          let bounds = CGRect(
+              dictionaryRepresentation: boundsPayload as CFDictionary
+          ),
           bounds.width >= 600,
           bounds.height >= 500,
           let windowID = record[kCGWindowNumber as String] as? Int else {
