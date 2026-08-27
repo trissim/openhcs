@@ -451,11 +451,7 @@ class SecondarySegmentationStrategy(
         self, request: SecondarySegmentationRequest
     ) -> BackendProviderInput:
         """Return this method's backend provider when the caller requests default."""
-        if (
-            request.propagation_backend_provider is None
-            or request.propagation_backend_provider
-            is DEFAULT_CELLPROFILER_BACKEND_SELECTION
-        ):
+        if request.propagation_backend_provider is None:
             return self.default_propagation_backend_provider
         return request.propagation_backend_provider
 

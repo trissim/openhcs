@@ -9,6 +9,7 @@ are handled internally without leaking into the ABC.
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from enum import Enum
 from typing import List, Tuple
 
@@ -105,10 +106,11 @@ class PyclesperantoRegistry(RuntimeTestingRegistryBase):
 
     def runtime_owned_parameter_names(
         self,
-        signature: inspect.Signature,
+        func: Callable,
     ) -> tuple[str, ...]:
         """Keep output allocation and device selection at library defaults."""
 
+        signature = inspect.signature(func)
         return tuple(
             name
             for parameter in PyclesperantoRuntimeParameter

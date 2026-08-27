@@ -8,9 +8,11 @@ are handled internally without leaking into the ABC.
 
 from __future__ import annotations
 
-from typing import List, Tuple
+from collections.abc import Callable as CallableABC
+from typing import Any, Callable, List, Tuple, get_args, get_origin
 
 import numpy as np
+from python_introspect import is_union_type, resolve_annotated
 
 from openhcs.constants import MemoryType
 from openhcs.utils.import_utils import optional_import_placeholder
@@ -85,6 +87,41 @@ class SkimageRegistry(RuntimeTestingRegistryBase):
     def _postprocess_output(self, result, original_image, func_name: str):
         # ProcessingContract system handles dimensional behavior - no categorization needed
         return result
+
+    def runtime_owned_parameter_names(
+        self,
+        func: Callable,
+    ) -> tuple[str, ...]:
+        """Keep parameters without a writable declared type at library defaults."""
+
+        from python_introspect import SignatureAnalyzer
+        from skimage._shared.utils import DEPRECATED
+
+        return tuple(
+            parameter_name
+            for parameter_name, parameter_info in SignatureAnalyzer.analyze(
+                func,
+                skip_first_param=False,
+            ).items()
+            if not self._annotation_has_authored_value(parameter_info.param_type)
+            or parameter_info.default_value is DEPRECATED
+        )
+
+    @classmethod
+    def _annotation_has_authored_value(
+        cls,
+        annotation: object,
+    ) -> bool:
+        """Return whether an inferred annotation contains a non-callable value."""
+
+        resolved = resolve_annotated(annotation)
+        if is_union_type(resolved):
+            return any(
+                member is not type(None)
+                and cls._annotation_has_authored_value(member)
+                for member in get_args(resolved)
+            )
+        return resolved is not Any and get_origin(resolved) is not CallableABC
 
     # ===== LIBRARY-SPECIFIC IMPLEMENTATIONS =====
     def _generate_function_name(self, name: str, module_name: str) -> str:

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Mapping, get_type_hints
 from arraybridge import MemoryContractAttribute, MemoryType
 from python_introspect import (
     RuntimeParameterDeclarationABC,
+    add_parameter_exclusions,
     declared_enum_type,
     validate_annotation_value,
 )
@@ -1316,6 +1317,17 @@ def attach_callable_contract_metadata(
         _mutable_callable_namespace(func)[
             FunctionContractAttribute.runtime_image_execution_mode
         ] = runtime_image_execution_mode
+
+    _project_runtime_owned_parameter_exclusions(func)
+
+
+def _project_runtime_owned_parameter_exclusions(func: Any) -> None:
+    """Project contract-owned runtime parameters into generic introspection."""
+
+    add_parameter_exclusions(
+        func,
+        CallableContract.from_callable(func).runtime_owned_parameter_names,
+    )
 
 
 def _attach_nominal_processing_contract_if_supported(

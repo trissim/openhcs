@@ -19,7 +19,9 @@ from typing import Any, List, Optional, Tuple
 
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.core.artifacts import ArtifactSpec, ImageArtifactType
 from openhcs.core.memory import torch as torch_func
+from openhcs.core.pipeline.function_contracts import artifact_inputs
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.processing.backends.processors.method_axes import (
     StackProjectionMethod,
@@ -449,6 +451,7 @@ def create_composite(
     return composite.reshape(1, height, width)
 
 
+@artifact_inputs(ArtifactSpec.input("mask", ImageArtifactType, parameter_name="mask"))
 @torch_func
 def apply_mask(image: "torch.Tensor", mask: "torch.Tensor") -> "torch.Tensor":
     """

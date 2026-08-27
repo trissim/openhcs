@@ -23,8 +23,10 @@ from skimage import exposure, filters
 from skimage import morphology as morph
 from skimage import transform as trans
 
+from openhcs.core.artifacts import ArtifactSpec, ImageArtifactType
 # Use direct import from core memory decorators to avoid circular imports
 from openhcs.core.memory import numpy as numpy_func
+from openhcs.core.pipeline.function_contracts import artifact_inputs
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_array_values import RuntimeArrayPayload
 from openhcs.processing.backends.processors.method_axes import (
@@ -362,6 +364,7 @@ def create_composite(
     return composite_slice[0]
 
 
+@artifact_inputs(ArtifactSpec.input("mask", ImageArtifactType, parameter_name="mask"))
 @numpy_func
 def apply_mask(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """

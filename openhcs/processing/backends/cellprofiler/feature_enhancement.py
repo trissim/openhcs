@@ -26,7 +26,8 @@ from openhcs.core.runtime_image_values import (
     image_payload_mask,
     image_payload_metadata,
 )
-from openhcs.core.artifacts import ImageArtifactType
+from openhcs.core.artifacts import ArtifactSpec, ImageArtifactType
+from openhcs.core.pipeline.function_contracts import artifact_inputs
 
 if TYPE_CHECKING:
     from openhcs.interop.cellprofiler.parser import ModuleBlock
@@ -152,6 +153,14 @@ class EnhanceOrSuppressFeaturesModule(
         )
 
 
+@artifact_inputs(
+    ArtifactSpec.input(
+        "template",
+        ImageArtifactType,
+        parameter_name="template",
+        required=False,
+    )
+)
 @numpy(contract=ProcessingContract.PURE_3D)
 def match_template(
     image: np.ndarray, template: np.ndarray | None = None, pad_input: bool = True

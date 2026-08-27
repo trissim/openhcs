@@ -192,14 +192,16 @@ class ExplicitCellProfilerBackendProviderSelection(CellProfilerBackendProviderSe
         return (("provider", self.provider.value),)
 
 
-DEFAULT_CELLPROFILER_BACKEND_SELECTION = (
-    DefaultCellProfilerBackendProviderSelection()
-)
 BackendProviderInput: TypeAlias = Annotated[
-    CellProfilerBackendProvider | CellProfilerBackendProviderSelection | None,
+    CellProfilerBackendProvider | None,
     "Processing implementation selection for the parameter's named "
     "CellProfiler operation; leave the default to use its registered implementation.",
 ]
+BackendProviderSelectionInput: TypeAlias = (
+    CellProfilerBackendProvider | CellProfilerBackendProviderSelection | None
+)
+DEFAULT_CELLPROFILER_BACKEND_SELECTION: BackendProviderInput = None
+_DEFAULT_CELLPROFILER_BACKEND_POLICY = DefaultCellProfilerBackendProviderSelection()
 
 
 class CellProfilerBackendAuthority:
@@ -232,11 +234,13 @@ class CellProfilerBackendAuthority:
     @classmethod
     def provider_selection(
         cls,
-        backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+        backend_provider: BackendProviderSelectionInput = (
+            DEFAULT_CELLPROFILER_BACKEND_SELECTION
+        ),
     ) -> CellProfilerBackendProviderSelection:
         """Return the nominal backend-provider selection policy."""
         if backend_provider is None:
-            return DEFAULT_CELLPROFILER_BACKEND_SELECTION
+            return _DEFAULT_CELLPROFILER_BACKEND_POLICY
         if isinstance(backend_provider, CellProfilerBackendProviderSelection):
             return backend_provider
         return ExplicitCellProfilerBackendProviderSelection(
@@ -246,7 +250,9 @@ class CellProfilerBackendAuthority:
     @classmethod
     def selection_identity(
         cls,
-        backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+        backend_provider: BackendProviderSelectionInput = (
+            DEFAULT_CELLPROFILER_BACKEND_SELECTION
+        ),
     ) -> BackendProviderSelectionIdentity:
         """Return the semantic identity for a backend-provider selection input."""
         return cls.provider_selection(backend_provider).semantic_identity()
@@ -309,7 +315,9 @@ class CellProfilerBackendStrategyMixin(CompilerPreparedAutoRegisterFamily):
         cls: type[BackendStrategyT],
         memory_type: MemoryType = MemoryType.NUMPY,
         *,
-        backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+        backend_provider: BackendProviderSelectionInput = (
+            DEFAULT_CELLPROFILER_BACKEND_SELECTION
+        ),
     ) -> BackendStrategyT:
         """Instantiate the exact backend for ``memory_type`` and provider.
 
@@ -323,7 +331,9 @@ class CellProfilerBackendStrategyMixin(CompilerPreparedAutoRegisterFamily):
         cls: type[BackendStrategyT],
         func: object,
         *,
-        backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+        backend_provider: BackendProviderSelectionInput = (
+            DEFAULT_CELLPROFILER_BACKEND_SELECTION
+        ),
     ) -> BackendStrategyT:
         """Instantiate a backend using a function's OpenHCS memory contract."""
         contract = CallableContract.from_callable(func)
@@ -361,7 +371,7 @@ class CellProfilerBackendStrategyMixin(CompilerPreparedAutoRegisterFamily):
     def _resolve_backend_class(
         cls: type[BackendStrategyT],
         memory_type: MemoryType,
-        backend_provider: BackendProviderInput,
+        backend_provider: BackendProviderSelectionInput,
     ) -> type[BackendStrategyT]:
         snapshot = CellProfilerBackendRegistrySnapshot.for_family(
             cls,
@@ -402,6 +412,7 @@ __all__ = [
     "DEFAULT_CELLPROFILER_BACKEND_PROVIDER",
     "DEFAULT_CELLPROFILER_BACKEND_SELECTION",
     "BackendProviderInput",
+    "BackendProviderSelectionInput",
     "BackendProviderSelectionIdentity",
     "CellProfilerBackendAuthority",
     "CellProfilerBackendProvider",

@@ -18,8 +18,10 @@ from typing import Any, List, Optional, Tuple
 from metaclass_registry import AutoRegisterMeta
 from packaging.version import parse as parse_version
 
+from openhcs.core.artifacts import ArtifactSpec, ImageArtifactType
 from openhcs.core.memory import tensorflow as tensorflow_func
 from openhcs.core.lazy_gpu_imports import tf
+from openhcs.core.pipeline.function_contracts import artifact_inputs
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.processing.backends.processors.method_axes import (
     StackProjectionMethod,
@@ -428,6 +430,7 @@ def create_composite(
 
     return composite
 
+@artifact_inputs(ArtifactSpec.input("mask", ImageArtifactType, parameter_name="mask"))
 @tensorflow_func
 def apply_mask(image: "tf.Tensor", mask: "tf.Tensor") -> "tf.Tensor":
     """

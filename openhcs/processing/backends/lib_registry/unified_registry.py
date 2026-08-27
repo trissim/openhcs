@@ -2288,7 +2288,7 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
 
     def runtime_owned_parameter_names(
         self,
-        signature: inspect.Signature,
+        func: Callable[..., Any],
     ) -> tuple[str, ...]:
         """Return library-declared parameters owned by adapter execution.
 
@@ -2298,7 +2298,7 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         instead of becoming authored pipeline values.
         """
 
-        del signature
+        del func
         return ()
 
     def create_library_adapter(
@@ -2356,7 +2356,7 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         _set_registry_runtime_parameter_exclusions(
             wrapped_adapter,
             original_sig,
-            self.runtime_owned_parameter_names(original_sig),
+            self.runtime_owned_parameter_names(wrapped_adapter),
             source=original_func,
         )
 
@@ -2364,110 +2364,23 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
 
     def _enhance_annotations_from_docstring(
         self, wrapped_func: Callable, original_func: Callable
-    ):
-        """Extract type hints from docstring using mathematical simplification approach."""
-        try:
-            # Import from shared UI utilities (no circular dependency)
-            import numpy as np
+    ) -> None:
+        """Project generic signature analysis onto an unannotated library wrapper."""
 
-            from openhcs.introspection import SignatureAnalyzer
+        from python_introspect import SignatureAnalyzer
 
-            logger.debug(
-                f"🔍 ENHANCE ANNOTATIONS: {original_func.__name__} from {original_func.__module__}"
-            )
-
-            # Unified type extraction with compatibility validation (mathematical simplification)
-            TYPE_PATTERNS = {
-                "ndarray": np.ndarray,
-                "array": np.ndarray,
-                "array_like": np.ndarray,
-                "int": int,
-                "integer": int,
-                "float": float,
-                "scalar": float,
-                "bool": bool,
-                "boolean": bool,
-                "str": str,
-                "string": str,
-                "tuple": tuple,
-                "list": list,
-                "dict": dict,
-                "sequence": list,
+        inferred = SignatureAnalyzer.analyze(
+            original_func,
+            skip_first_param=False,
+        )
+        wrapped_func.__annotations__.update(
+            {
+                parameter_name: parameter_info.param_type
+                for parameter_name, parameter_info in inferred.items()
+                if parameter_name not in wrapped_func.__annotations__
+                and parameter_info.param_type is not Any
             }
-
-            COMPATIBLE_DEFAULTS = {
-                float: (int, float, range),
-                int: (int, float),
-                list: (list, tuple, range),
-                tuple: (list, tuple, range),
-            }
-
-            param_info = SignatureAnalyzer.analyze(
-                original_func, skip_first_param=False
-            )
-
-            # Inline type extraction and validation (single-use function inlining rule)
-            enhanced_count = 0
-            for param_name, info in param_info.items():
-                if param_name not in wrapped_func.__annotations__ and info.description:
-                    # Extract first line of description (NumPy/SciPy convention: type is always on first line)
-                    # This avoids false matches from type keywords appearing later in the description
-                    first_line = info.description.split("\n")[0].strip().lower()
-                    # Remove optional markers and split on 'or' for union types
-                    first_line = (
-                        first_line.replace(", optional", "")
-                        .replace(" optional", "")
-                        .split(" or ")[0]
-                        .strip()
-                    )
-
-                    # Type extraction with priority patterns
-                    python_type = (
-                        str
-                        if first_line.startswith("{") and "}" in first_line
-                        else (
-                            list
-                            if any(
-                                p in first_line
-                                for p in ["sequence", "iterable", "array of", "list of"]
-                            )
-                            else next(
-                                (
-                                    t
-                                    for pattern, t in TYPE_PATTERNS.items()
-                                    if pattern in first_line
-                                ),
-                                None,
-                            )
-                        )
-                    )
-
-                    # Inline compatibility check (single-use function inlining rule)
-                    if python_type and (
-                        info.default_value is None
-                        or type(info.default_value)
-                        in COMPATIBLE_DEFAULTS.get(python_type, (python_type,))
-                    ):
-                        logger.debug(
-                            f"  ✓ Enhanced {param_name}: {python_type} (from first_line='{first_line[:50]}')"
-                        )
-                        wrapped_func.__annotations__[param_name] = python_type
-                        enhanced_count += 1
-                    elif info.description:
-                        logger.debug(
-                            f"  ✗ Could not enhance {param_name}: first_line='{first_line[:50]}', extracted_type={python_type}"
-                        )
-
-            if enhanced_count > 0:
-                logger.debug(
-                    f"  📝 Enhanced {enhanced_count} annotations for {original_func.__name__}"
-                )
-                logger.debug(f"  Final annotations: {wrapped_func.__annotations__}")
-        except Exception as e:
-            logger.error(
-                f"  ❌ Error enhancing annotations for {original_func.__name__}: {e}",
-                exc_info=True,
-            )
+        )
 
     @abstractmethod
     def _preprocess_input(self, image, func_name: str):

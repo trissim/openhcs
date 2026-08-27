@@ -35,7 +35,12 @@ from openhcs.core.runtime_object_label_building import (
 from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
 from openhcs.interop.cellprofiler.settings_binder import SettingToKeywordBinding
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.core.artifacts import ImageArtifactType, ObjectLabelsArtifactType
+from openhcs.core.artifacts import (
+    ArtifactSpec,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+)
+from openhcs.core.pipeline.function_contracts import artifact_inputs
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +54,13 @@ class ManualObjectStats:
     mean_centroid_y: float
 
 
+@artifact_inputs(
+    ArtifactSpec.input(
+        "labels_input",
+        ObjectLabelsArtifactType,
+        parameter_name="labels_input",
+    )
+)
 @numpy(contract=ProcessingContract.PURE_2D)
 def identify_objects_manually(
     image: np.ndarray,

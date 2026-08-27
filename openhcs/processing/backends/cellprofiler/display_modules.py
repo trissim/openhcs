@@ -312,8 +312,6 @@ class DisplayDataOnImageRequest:
     color_map_scale_max: float
     use_scientific_notation: bool
     image_measurement_value: Optional[float]
-    center_x: Optional[np.ndarray]
-    center_y: Optional[np.ndarray]
 
 
 @dataclass(frozen=True)
@@ -449,11 +447,8 @@ class DisplayDataOnImageRenderer:
             else:
                 # Text mode
                 # Get object centers
-                if request.center_x is None or request.center_y is None:
-                    props = regionprops(labels)
-                    centers = [(p.centroid[1], p.centroid[0]) for p in props]
-                else:
-                    centers = list(zip(request.center_x, request.center_y))
+                props = regionprops(labels)
+                centers = [(p.centroid[1], p.centroid[0]) for p in props]
 
                 # Convert to uint8 for cv2
                 output = (background * 255).astype(np.uint8)
@@ -514,8 +509,6 @@ def display_data_on_image(
     color_map_scale_max: float = 1.0,
     use_scientific_notation: bool = False,
     image_measurement_value: Optional[float] = None,
-    center_x: Optional[np.ndarray] = None,
-    center_y: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """
     Display measurement data on top of an image.
@@ -541,8 +534,6 @@ def display_data_on_image(
         color_map_scale_max: Manual maximum for color scale
         use_scientific_notation: Display values in scientific notation
         image_measurement_value: Single value for image-level measurement
-        center_x: X coordinates of object centers
-        center_y: Y coordinates of object centers
 
     Returns:
         RGB image with measurements displayed, shape (D, H, W, 3) or (H, W, 3)
@@ -564,8 +555,6 @@ def display_data_on_image(
         color_map_scale_max=color_map_scale_max,
         use_scientific_notation=use_scientific_notation,
         image_measurement_value=image_measurement_value,
-        center_x=center_x,
-        center_y=center_y,
     )
 
     output = DisplayDataOnImageRenderer(request).render_slice()

@@ -19,8 +19,10 @@ from typing import Any, List, Optional, Tuple
 from metaclass_registry import AutoRegisterMeta
 
 # Import JAX as an optional dependency
+from openhcs.core.artifacts import ArtifactSpec, ImageArtifactType
 from openhcs.core.lazy_gpu_imports import jax
 from openhcs.core.memory import jax as jax_func
+from openhcs.core.pipeline.function_contracts import artifact_inputs
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.processing.backends.processors.method_axes import (
     StackProjectionMethod,
@@ -412,6 +414,7 @@ def create_composite(
     return composite_slice
 
 
+@artifact_inputs(ArtifactSpec.input("mask", ImageArtifactType, parameter_name="mask"))
 @jax_func
 def apply_mask(image: "jnp.ndarray", mask: "jnp.ndarray") -> "jnp.ndarray":
     """

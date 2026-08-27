@@ -13,8 +13,11 @@ from enum import Enum
 from typing import List, Optional
 
 from metaclass_registry import AutoRegisterMeta
+
 # Import OpenHCS decorator
+from openhcs.core.artifacts import ArtifactSpec, ImageArtifactType
 from openhcs.core.memory import pyclesperanto as pyclesperanto_func
+from openhcs.core.pipeline.function_contracts import artifact_inputs
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.processing.backends.processors.method_axes import (
     StackProjectionMethod,
@@ -451,6 +454,8 @@ def tophat(
 
     return gpu_result
 
+
+@artifact_inputs(ArtifactSpec.input("mask", ImageArtifactType, parameter_name="mask"))
 @pyclesperanto_func
 def apply_mask(image: "cle.Array", mask: "cle.Array") -> "cle.Array":
     """

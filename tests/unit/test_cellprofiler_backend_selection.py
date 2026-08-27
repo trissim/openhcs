@@ -4,18 +4,18 @@ import inspect
 import pkgutil
 
 from openhcs.processing.backends.cellprofiler._backend import (
-    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
+    DefaultCellProfilerBackendProviderSelection,
     ExplicitCellProfilerBackendProviderSelection,
     CellProfilerBackendAuthority,
 )
 
 
 def test_absent_backend_provider_uses_default_selection_policy() -> None:
-    assert (
-        CellProfilerBackendAuthority.provider_selection(None)
-        is DEFAULT_CELLPROFILER_BACKEND_SELECTION
+    assert isinstance(
+        CellProfilerBackendAuthority.provider_selection(None),
+        DefaultCellProfilerBackendProviderSelection,
     )
 
 

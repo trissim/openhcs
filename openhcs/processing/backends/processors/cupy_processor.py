@@ -19,7 +19,9 @@ from typing import Any, List, Optional, Tuple
 
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.core.artifacts import ArtifactSpec, ImageArtifactType
 from openhcs.core.memory import cupy as cupy_func
+from openhcs.core.pipeline.function_contracts import artifact_inputs
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.processing.backends.processors.method_axes import (
     EdgeMagnitudeMethod,
@@ -360,6 +362,7 @@ def create_composite(
     return composite_slice
 
 
+@artifact_inputs(ArtifactSpec.input("mask", ImageArtifactType, parameter_name="mask"))
 @cupy_func
 def apply_mask(image: "cp.ndarray", mask: "cp.ndarray") -> "cp.ndarray":
     """
@@ -1167,6 +1170,14 @@ def edge_magnitude(
     )
 
 
+@artifact_inputs(
+    ArtifactSpec.input(
+        "mask",
+        ImageArtifactType,
+        required=False,
+        parameter_name="mask",
+    )
+)
 @cupy_func
 def sobel(
     image: "cp.ndarray",

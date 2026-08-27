@@ -27,6 +27,7 @@ from openhcs.constants.constants import MemoryType, VariableComponents
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.callable_contract import runtime_image_execution_mode
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline.function_contracts import artifact_inputs
 from openhcs.core.measurement_row_materialization import (
     DataclassMeasurementColumnarRows,
     MeasurementSparseColumnarRows,
@@ -2647,6 +2648,14 @@ class ThresholdResult(AdaptiveObjectThresholdResult):
         )
 
 
+@artifact_inputs(
+    ArtifactSpec.input(
+        "mask",
+        ImageArtifactType,
+        parameter_name="mask",
+        required=False,
+    )
+)
 @runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
 @numpy(contract=ProcessingContract.PURE_2D)
 def threshold(

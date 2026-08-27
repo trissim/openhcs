@@ -23,6 +23,7 @@ from openhcs.core.callable_contract import (
     runtime_image_execution_mode,
 )
 from openhcs.core.config import LazyDtypeConfig
+from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.core.function_reference import RegistryFunctionReference
 from openhcs.core.memory.decorators import numpy
@@ -182,6 +183,20 @@ def test_memory_wrapper_preserves_declared_parameter_exclusions() -> None:
         return image
 
     assert "mask" in parameter_exclusions(process)
+
+
+def test_callable_contract_projects_runtime_context_exclusion() -> None:
+    """Generic forms derive hidden runtime context from the callable contract."""
+
+    @numpy(contract=ProcessingContract.PURE_2D)
+    def process(image, *, context: ProcessingContext):
+        del context
+        return image
+
+    assert "context" in parameter_exclusions(process)
+    assert CallableContract.from_callable(process).runtime_owned_parameter_names == (
+        frozenset({"context", "dtype_config"})
+    )
 
 
 def test_callable_contract_reads_required_variable_components() -> None:
