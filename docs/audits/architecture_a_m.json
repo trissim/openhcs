@@ -253,8 +253,8 @@
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/zmq_server_scan_service.py",
-        "sha256": "470ffb31f4881652474272c3b90b6c7f333827373f19c3269979f6fe14a0d1dd",
-        "role": "Owns the immutable endpoint observation snapshot and derives per-port status without stored connection flags."
+        "sha256": "ae12092dfd8b85a3354b87a708f3c32aef787c2f9fd0402158d32d14b654c7de",
+        "role": "Owns the immutable endpoint observation snapshot, derives per-port status without stored connection flags, and projects startup presentation through the lifecycle declaration."
       },
       {
         "path": "tests/unit/pyqt_gui/test_main_zmq_window_routing.py",
@@ -295,7 +295,8 @@
       "On 2026-08-24, re-read the complete explanation against ZMQRuntime 0.2.17 and the OpenHCS client teardown path; 149 generic tests, 58 focused OpenHCS regressions, and a fresh real-GUI close during endpoint startup passed without a retained process or false failure.",
       "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; revised its startup wording and confirmed the remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete explanation against the shared endpoint catalogue service and its single revision/projection state; focused unit tests and a live Function Selector probe confirmed non-blocking preparation and exact selected-reference resolution.",
-      "On 2026-08-26, re-read the complete page after ZMQRuntime allowed the catalog preparation owner to carry one cancellation authority through endpoint startup and request polling; the documented GUI cleanup and prewarm lifecycle remains accurate."
+      "On 2026-08-26, re-read the complete page after ZMQRuntime allowed the catalog preparation owner to carry one cancellation authority through endpoint startup and request polling; the documented GUI cleanup and prewarm lifecycle remains accurate.",
+      "On 2026-08-27, re-read the complete explanation and endpoint observation owner after startup rows began projecting each typed lifecycle phase through its nominal declaration; the page already describes the snapshot as the single status and browser-row input, so its ownership claims remain accurate."
     ]
   },
   {

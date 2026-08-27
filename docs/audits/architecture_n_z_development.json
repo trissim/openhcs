@@ -1955,8 +1955,8 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/widgets/shared/zmq_server_manager.py",
-        "sha256": "d79cd65e02d183bdbe4a54eede148d67f94d9196858fe594efb83ab1b3d35db4",
-        "role": "OpenHCS server-browser adapter and live tree synchronisation wiring."
+        "sha256": "47eee690cb4fffcc1013719a8e820e37e1d25f840ce403f141e1b9e9077c8fdc",
+        "role": "OpenHCS server-browser adapter and live tree synchronisation wiring, including execution-row projection from the generic lifecycle observation."
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/server_browser/progress_projection.py",
@@ -1965,13 +1965,13 @@
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/widgets/shared/zmq_server_browser_widget.py",
-        "sha256": "ed10b8105f18b0b9b146bf507a1c6c1b460d4dc19643a63031b4e4894815a02b",
-        "role": "Generic browser widget, scan lifecycle, tree rebuild, and selection behaviour."
+        "sha256": "2429bc96ce089f2173022ce4bf6df21dd64961eec9da7a93fce94fabde43fca3",
+        "role": "Generic browser widget, typed lifecycle-row presentation, scan lifecycle, tree rebuild, and selection behaviour."
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/zmq_server_scan_service.py",
-        "sha256": "470ffb31f4881652474272c3b90b6c7f333827373f19c3269979f6fe14a0d1dd",
-        "role": "Owns the immutable endpoint observation snapshot, startup reconciliation, and derived per-port status."
+        "sha256": "ae12092dfd8b85a3354b87a708f3c32aef787c2f9fd0402158d32d14b654c7de",
+        "role": "Owns the immutable endpoint observation snapshot, startup reconciliation, derived per-port status, and nominal lifecycle presentation projection."
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/server_browser/live_tree_sync.py",
@@ -2024,7 +2024,8 @@
       "On 2026-08-22, rechecked the complete reference after formatter-only changes to its status-routing regression; browser and presentation ownership remain unchanged.",
       "On 2026-08-24, re-read the complete reference after launching-viewer rows became current snapshot projections with nominal endpoint-port identity; the focused browser regression proves payload refresh and removal without introducing a second lifecycle authority.",
       "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate.",
-      "On 2026-08-26, re-read the complete page after endpoint attempts gained caller-owned cancellation; browser observation remains a projection over ZMQRuntime-owned connection lifecycle."
+      "On 2026-08-26, re-read the complete page after endpoint attempts gained caller-owned cancellation; browser observation remains a projection over ZMQRuntime-owned connection lifecycle.",
+      "On 2026-08-27, re-read the complete reference and all three changed browser authorities after startup observations began projecting their typed lifecycle phase into both generic and OpenHCS rows; the documented snapshot boundary and nominal presentation ownership remain accurate."
     ]
   },
   {
@@ -2521,7 +2522,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "17859d7a63130c5d09a632f4fe8a4e6fe51a464878f5bb7928be4a8feb7e156c",
+        "sha256": "cc8536df92bc69acc73c30d802d67bbff7f983209b2b50219b7bc81b9a236d3d",
         "role": "Owns the nominal gallery scenario lattice, capture targets, derivative inventory, source evidence, card rendering, and generated release record."
       },
       {
@@ -2545,7 +2546,8 @@
       "Passed python -m scripts.capture_media_gallery catalog and verified all six declaration-owned scenario ids; python -m scripts.gallery_catalog --check confirmed the checked-in release projection.",
       "Passed 42 focused capture and website tests, including a real FFmpeg derivative build and independent revalidation.",
       "Passed scripts/validate_docs.py docs/source and a warning-as-error Sphinx build after adding the page to the focused development-guide navigation.",
-      "On 2026-08-26, re-read the complete how-to after trusted UI snapshot capture switched from a deleted duplicate command-profile name to the canonical declaration-derived UI bridge timeout policy; the documented timeout, capture, validation, and no-overwrite behavior remains unchanged, and all 23 gallery capture tests passed."
+      "On 2026-08-26, re-read the complete how-to after trusted UI snapshot capture switched from a deleted duplicate command-profile name to the canonical declaration-derived UI bridge timeout policy; the documented timeout, capture, validation, and no-overwrite behavior remains unchanged, and all 23 gallery capture tests passed.",
+      "On 2026-08-27, re-read the complete how-to and gallery declaration after the endpoint-startup source evidence and published derivatives were recaptured; the workflow, ownership, and reproducibility guidance remains accurate, and the declaration-derived record passed its focused gallery and website validation."
     ]
   },
   {
