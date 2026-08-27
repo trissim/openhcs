@@ -630,12 +630,16 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
         smoke_step
     )
     assert "function Invoke-OpenHcsInstallerWorker" in smoke_step
+    assert "Set-StrictMode -Version Latest" in smoke_step
     assert "$installerStartInfo.ArgumentList.Add([string]$argument)" in smoke_step
     assert "$installerProcess.WaitForExit()" in smoke_step
     assert "$installerProcess.ExitCode" in smoke_step
     assert "--no-config pip install" not in smoke_step
     assert "--reinstall-package openhcs" not in smoke_step
     assert "$env:GITHUB_WORKSPACE" not in smoke_step
+    assert "$managedUvExecutable = Join-Path `" in smoke_step
+    assert smoke_step.count("$env:OPENHCS_UV_EXECUTABLE = $managedUvExecutable") == 3
+    assert "$installerUv" not in smoke_step
     assert "$deploymentReport.restart_executable -ne $summary.application_path" in (
         smoke_step
     )

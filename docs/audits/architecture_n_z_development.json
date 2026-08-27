@@ -2818,7 +2818,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "3243b4061d71a7226b54095ec1de91532a8718a24b0aa09affce8b95158dd493",
+        "sha256": "bb14c123815ea3a227835e6b8bfba7558d8e4202e15e73118128f89fa0d31650",
         "role": "Cross-platform source-candidate and published-dependency readiness, installed-wheel live GUI/MCP operation with retained native screenshots, three-stage native-installer workflow proof, signing-helper parse, and staged-update validation matrix."
       },
       {
@@ -2962,7 +2962,8 @@
       "On 2026-08-27, re-read the complete release how-to after Windows failure retention expanded to include the exact wizard state and every installer-owned log boundary; its native evidence claims remain accurate.",
       "On 2026-08-27, re-read the complete release how-to after retained native evidence disproved cross-process destination editing; the smoke now supplies the spaced destination through the shipping installer's declared InstallRoot input and verifies its UI projection before installation.",
       "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after Intel native evidence exposed APFS synthesized-volume teardown and Windows evidence exposed a pip configuration misused as uv TOML; the DMG now uses one HFS+ device lifecycle without retry dispatch and each hostile package-manager fixture uses its native syntax, while the documented release procedure remains accurate.",
-      "On 2026-08-27, re-read the complete release how-to after Windows native evidence exposed a stale raw-uv and checkout-reinstall path; removing that parallel installation path leaves the metadata-discovered candidate wheelhouse as the single installed artifact authority and strengthens the documented candidate proof."
+      "On 2026-08-27, re-read the complete release how-to after Windows native evidence exposed a stale raw-uv and checkout-reinstall path; removing that parallel installation path leaves the metadata-discovered candidate wheelhouse as the single installed artifact authority and strengthens the documented candidate proof.",
+      "On 2026-08-27, rechecked the complete release how-to after strict PowerShell acceptance exposed an undeclared test-fixture alias; the managed candidate, staged-update, and publication boundaries remain unchanged."
     ]
   },
   {
@@ -3021,7 +3022,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "3243b4061d71a7226b54095ec1de91532a8718a24b0aa09affce8b95158dd493",
+        "sha256": "bb14c123815ea3a227835e6b8bfba7558d8e4202e15e73118128f89fa0d31650",
         "role": "Runs explicitly selected live OMERO variants and preserves component and table-service diagnostics on failure."
       }
     ],
@@ -3060,7 +3061,8 @@
       "On 2026-08-27, re-read the complete OMERO testing how-to after shared Windows installer diagnostics changed; its independent live-service selection and ownership guidance remains accurate.",
       "On 2026-08-27, rechecked the complete OMERO testing how-to after the native Windows lane began passing its destination through the installer's declared input; the independent OMERO lane and its owner boundaries remain unchanged.",
       "On 2026-08-27, re-read the complete OMERO testing how-to after the macOS installer DMG stopped creating an APFS synthesized-volume lifecycle; the independent OMERO matrix and its storage and deployment ownership guidance remain unchanged.",
-      "On 2026-08-27, rechecked the complete OMERO testing how-to after Windows native acceptance stopped replacing its installed candidate wheel from the checkout; the independent OMERO lane and owner boundaries remain unchanged."
+      "On 2026-08-27, rechecked the complete OMERO testing how-to after Windows native acceptance stopped replacing its installed candidate wheel from the checkout; the independent OMERO lane and owner boundaries remain unchanged.",
+      "On 2026-08-27, rechecked the complete OMERO testing how-to after strict mode was added to the independent Windows installer acceptance script; OMERO selection, diagnostics, and lifecycle ownership remain unchanged."
     ]
   },
   {
