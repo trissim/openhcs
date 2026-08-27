@@ -803,7 +803,7 @@
   },
   {
     "path": "docs/source/getting_started/getting_started.rst",
-    "source_sha256": "fe312655e18f7ee6428119e11ec74bd822ff55ca4b15b8ec9493b0af28ccaba4",
+    "source_sha256": "4df7bb06440fad690a9aff30183034996b664ccad4f648a66c407c75c46838ce",
     "audience": [
       "new desktop users",
       "Python installers"
@@ -828,7 +828,7 @@
       },
       {
         "path": "openhcs/desktop_installation.py",
-        "sha256": "63f0babc633b123b3ac9b1ed4f10320915029946fffb8a48a2046bf7496bc8f6",
+        "sha256": "c12660067688ffc3a7cbd49b37cbb03971b5409b49001d048eef670f91c8a62b",
         "role": "Nominally owns only the desktop extras, Python, binary-wheel, and uv policy shared by native installation and staged updates."
       },
       {
@@ -838,12 +838,12 @@
       },
       {
         "path": "packaging/installers/windows/Install-OpenHCS.ps1",
-        "sha256": "96a9e0773f8b931f7c59af303ba46c9b57f7dff4c260a27d2bb4a9d95b6c5049",
+        "sha256": "d55aa3e451344c80f6c643f070e5bf2f8dc98a73a3b80a9710baddd971e622f2",
         "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
       },
       {
         "path": "packaging/installers/macos/install-openhcs.sh",
-        "sha256": "84a98fe7a7c6ef7d191bbd5d13982915431c76395f78fe68f9212517a9416e35",
+        "sha256": "80100b62f0911b60a2ba50d8a0cbf3e01b93a5fd73af2f9aa53dd201e275390f",
         "role": "Implements the macOS application installer, managed environment creation, package installation, and launcher setup."
       },
       {
@@ -858,12 +858,12 @@
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "60b381318cb10710d1770b025c19598984780cc96337baaddea54b53b291e85d",
+        "sha256": "504f9e7d76de50da6ded308f138d6471fbb8e25065c62357494555c93cfead31",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, environment, and declaration-derived GUI operation and process-exit budgets to the installed verifiers."
       },
       {
         "path": "tests/installer/test_installer_contract.py",
-        "sha256": "ddfa9578d0b86d012b00a9e6db5381fd3b3c4dcdac39ffd038922cae0fe9dd77",
+        "sha256": "7bb32b9e243778d442409213eaa9a80d3b04a1ff6411223cb4bd40772a640d6b",
         "role": "Proves both native installers and staged updates consume the same declaration-owned package and binary-wheel policy."
       },
       {
@@ -873,7 +873,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/services/desktop_update_worker.py",
-        "sha256": "dc7f9c4fbd30859ab0656ebd7409c2b10d1507b7c9a600fb78a52f2335c6e528",
+        "sha256": "5c42013c3aa8f5fa8902366aa55048101cbca7f6da7d3c6434f448886689cbfd",
         "role": "Creates and verifies a sibling replacement environment before publishing it and preserves the previous environment."
       },
       {
@@ -893,12 +893,12 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_desktop_update_worker.py",
-        "sha256": "2930b3c70304768192c7f3fa521b9395e783d04621b7cd74520eafea8e20265f",
+        "sha256": "3b9413927b18633c449e6ba84cc15d3a160d61fb5a66fddb83aaecde7c85e44d",
         "role": "Proves staged installation, verification, publication, rollback, and restart behaviour."
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "a84c7acce66678e634a7593a55b65fbf5b413d6da20e8b379744e515032acf1c",
+        "sha256": "53eeda5da6148c5679f1899a73ced83e0219b5fdc7d68eeb4547b11216615737",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -950,7 +950,8 @@
       "On 2026-08-26, re-read the complete installation how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; installed GUI acceptance now owns one operation budget and derives a bounded outer process-exit grace, while a fresh 0.8.0 wheel completed cold launch, 263-function catalogue resolution, packaged MCP control, and two validated native screenshots.",
       "On 2026-08-26, re-read the complete installation how-to after CI began opening and retaining the shipping native installer welcome windows; the user-facing install, launch, verification, and update procedure remains accurate.",
       "On 2026-08-26, applied the Diataxis installation how-to boundary and re-read the complete page after removing PowerShell progress serialization from the live transcript and retaining the durable log; the task flow now tells users where both forms of feedback appear.",
-      "On 2026-08-26, re-read the complete installation how-to after installed desktop probes gained durable lifecycle evidence and timeout diagnostics; the user-facing install, launch, and log instructions remain accurate."
+      "On 2026-08-26, re-read the complete installation how-to after installed desktop probes gained durable lifecycle evidence and timeout diagnostics; the user-facing install, launch, and log instructions remain accurate.",
+      "On 2026-08-27, re-read the complete installation how-to against the uv-owned installer and updater lifecycle, declaration-derived package-index isolation, and direct native logging; revised the relevant user-facing behavior and confirmed the remaining instructions."
     ]
   },
   {
@@ -1325,12 +1326,12 @@
       },
       {
         "path": "packaging/installers/windows/Install-OpenHCS.ps1",
-        "sha256": "96a9e0773f8b931f7c59af303ba46c9b57f7dff4c260a27d2bb4a9d95b6c5049",
+        "sha256": "d55aa3e451344c80f6c643f070e5bf2f8dc98a73a3b80a9710baddd971e622f2",
         "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
       },
       {
         "path": "packaging/installers/macos/install-openhcs.sh",
-        "sha256": "84a98fe7a7c6ef7d191bbd5d13982915431c76395f78fe68f9212517a9416e35",
+        "sha256": "80100b62f0911b60a2ba50d8a0cbf3e01b93a5fd73af2f9aa53dd201e275390f",
         "role": "Implements the macOS application installer, managed environment creation, package installation, and launcher setup."
       }
     ],
@@ -1351,7 +1352,8 @@
       "On 2026-08-25, re-read the complete compatibility page after both native installers changed their package-index isolation; retaining one redirect remains correct and avoids a second installation procedure.",
       "On 2026-08-25, documentation validation and the warning-clean Sphinx build passed with the compatibility redirect intact.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
+      "On 2026-08-27, re-read the complete installation redirect against both native installer implementations; its destination and scope remain accurate."
     ]
   },
   {
@@ -1519,7 +1521,7 @@
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "60b381318cb10710d1770b025c19598984780cc96337baaddea54b53b291e85d",
+        "sha256": "504f9e7d76de50da6ded308f138d6471fbb8e25065c62357494555c93cfead31",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, environment, and declaration-derived GUI operation and process-exit budgets to the installed verifiers."
       },
       {
@@ -1574,7 +1576,8 @@
       "On 2026-08-26, re-read the complete troubleshooting how-to after the installed desktop smoke added retained native screenshots; endpoint, catalogue, viewer, and restart guidance remain current.",
       "On 2026-08-26, re-read and revised the complete troubleshooting how-to after a busy Windows runner exposed the former shared submission deadline; the recovery path now distinguishes the dedicated preparation budget from short control requests and preserves the known-versus-unknown dispatch outcome.",
       "On 2026-08-26, re-read the complete troubleshooting how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; product-owned catalogue timeout errors remain distinct from the acceptance harness deadline, and a fresh 0.8.0 wheel completed the cold catalogue and packaged MCP path.",
-      "On 2026-08-26, re-read the complete troubleshooting page after catalog request cancellation began covering endpoint startup and installed probes retained partial phase journals; the selector and endpoint diagnosis remains accurate."
+      "On 2026-08-26, re-read the complete troubleshooting page after catalog request cancellation began covering endpoint startup and installed probes retained partial phase journals; the selector and endpoint diagnosis remains accurate.",
+      "On 2026-08-27, re-read the complete troubleshooting page against the changed installed-desktop evidence harness; its selector, endpoint, and log guidance remains accurate."
     ]
   },
   {
@@ -2047,7 +2050,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "21a90e287ed1debd1f6328ad8f04765c3683f5625598b0e864811f0beca4daf0",
+    "source_sha256": "d5fbbd30e6074ef080f53b5ce39589a9699db28f8a2a132f3c3e4755bb5c2caf",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -2067,7 +2070,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "a84c7acce66678e634a7593a55b65fbf5b413d6da20e8b379744e515032acf1c",
+        "sha256": "53eeda5da6148c5679f1899a73ced83e0219b5fdc7d68eeb4547b11216615737",
         "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, retained application and three-stage installer screenshot artifacts, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
@@ -2127,7 +2130,7 @@
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "60b381318cb10710d1770b025c19598984780cc96337baaddea54b53b291e85d",
+        "sha256": "504f9e7d76de50da6ded308f138d6471fbb8e25065c62357494555c93cfead31",
         "role": "Proves platform smoke orchestration passes the exact installed Python, isolated runtime, evidence directory, and declaration-derived GUI timing to the installed verifiers."
       },
       {
@@ -2228,7 +2231,8 @@
     "On 2026-08-26, applied the Diataxis testing how-to boundary and re-read the complete guide after native installer acceptance began opening the shipping Windows and macOS applications before worker execution; 71 focused installer tests plus workflow, shell, formatting, and diff validation passed locally.",
     "On 2026-08-26, applied the Diataxis testing how-to boundary and re-read the complete guide after both native UI probes began retaining the durable transcript beside their welcome, progress, and completion evidence; 71 focused installer tests passed.",
     "On 2026-08-26, applied the Diataxis testing how-to boundary and re-read the complete guide after native installer artifacts gained per-pass phase journals and live GUI snapshots and catalog startup became teardown-cancellable; the updated evidence description matches the exact workflow.",
-    "On 2026-08-27, re-read the complete testing how-to after the installed-GUI harness replaced competing timeout, failure, and success fields with one terminal completion authority; focused regression and forced cold-deadline wheel probes confirmed the documented partial-journal behavior."
+      "On 2026-08-27, re-read the complete testing how-to after the installed-GUI harness replaced competing timeout, failure, and success fields with one terminal completion authority; focused regression and forced cold-deadline wheel probes confirmed the documented partial-journal behavior.",
+      "On 2026-08-27, re-read the complete testing how-to against the hostile pip and uv source overrides, direct Windows native logging, and retained three-pass installer evidence; revised the relevant test description and confirmed the remaining commands."
     ]
   },
   {
@@ -2375,12 +2379,12 @@
       },
       {
         "path": "packaging/installers/windows/Install-OpenHCS.ps1",
-        "sha256": "96a9e0773f8b931f7c59af303ba46c9b57f7dff4c260a27d2bb4a9d95b6c5049",
+        "sha256": "d55aa3e451344c80f6c643f070e5bf2f8dc98a73a3b80a9710baddd971e622f2",
         "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
       },
       {
         "path": "packaging/installers/macos/install-openhcs.sh",
-        "sha256": "84a98fe7a7c6ef7d191bbd5d13982915431c76395f78fe68f9212517a9416e35",
+        "sha256": "80100b62f0911b60a2ba50d8a0cbf3e01b93a5fd73af2f9aa53dd201e275390f",
         "role": "Implements the macOS application installer, managed environment creation, package installation, and launcher setup."
       }
     ],
@@ -2401,7 +2405,8 @@
       "On 2026-08-25, re-read the complete compatibility page after both native installers changed their package-index isolation; retaining one redirect remains correct and avoids duplicated installer behaviour.",
       "On 2026-08-25, documentation validation and the warning-clean Sphinx build passed with the compatibility redirect intact.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
+      "On 2026-08-27, re-read the complete installation redirect against both native installer implementations; its destination and scope remain accurate."
     ]
   },
   {

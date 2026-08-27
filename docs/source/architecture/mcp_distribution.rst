@@ -268,10 +268,13 @@ behaviour.
 The native installer contract is also a generated boundary rather than a
 second product declaration. ``DESKTOP_INSTALL_PROFILE`` in
 ``openhcs.desktop_installation`` owns only installer-specific Python, extras,
-binary-wheel, and uv policy. The renderer combines it with the package name and
-entry points from ``pyproject.toml`` and the product name from the brand
-declaration, then pins the resulting contract to the exact release version
-embedded in each native installer.
+binary-wheel, package-index isolation, and uv policy. The renderer combines it
+with the package name and entry points from ``pyproject.toml`` and the product
+name from the brand declaration, then pins the resulting contract to the exact
+release version embedded in each native installer. Native installation and
+in-app replacement environments use that declared uv executable to create,
+populate, and verify the candidate without introducing a second seeded package
+manager.
 
 Canonical MCP knowledge documents remain in the documentation tree. The wheel
 build deterministically projects the manifest-declared sources into package

@@ -62,11 +62,12 @@ product_name=$(contract_value product_name)
 python_version=$(contract_value python_version)
 package_requirement=$(contract_value package_requirement)
 binary_only_packages=$(contract_value binary_only_packages)
+package_index_override_variables=$(contract_value package_index_override_variables)
 entry_point=$(contract_value entry_point)
 uv_version=$(contract_value uv_release.version)
 uv_base_url=$(contract_value uv_release.base_url)
 
-if [[ "$schema_version" != 'openhcs.installer.v2' ]]; then
+if [[ "$schema_version" != 'openhcs.installer.v3' ]]; then
     printf 'Unsupported installer contract schema: %s\n' "$schema_version" >&2
     exit 2
 fi
@@ -84,6 +85,10 @@ if [[ ! "$package_requirement" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*(\[[A-Za-z0-9_.-]+(
 fi
 if [[ ! "$binary_only_packages" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*(,[A-Za-z0-9][A-Za-z0-9_.-]*)*$ ]]; then
     printf 'Unsafe binary_only_packages in installer contract.\n' >&2
+    exit 2
+fi
+if [[ ! "$package_index_override_variables" =~ ^[A-Z][A-Z0-9_]*(,[A-Z][A-Z0-9_]*)*$ ]]; then
+    printf 'Unsafe package_index_override_variables in installer contract.\n' >&2
     exit 2
 fi
 if [[ ! "$entry_point" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
@@ -227,10 +232,12 @@ export UV_NO_MODIFY_PATH=1
 export UV_NO_CONFIG=1
 export UV_PYTHON_INSTALL_DIR="$python_root"
 # Keep the managed environment independent of workstation package indexes.
-# /dev/null suppresses every pip configuration file; the unset variables leave
-# pip's own default index authoritative.
+# /dev/null suppresses every pip configuration file. The declaration-owned
+# override list leaves the package manager's default index authoritative.
 export PIP_CONFIG_FILE=/dev/null
-unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL
+while IFS= read -r variable; do
+    unset "$variable"
+done < <(printf '%s\n' "$package_index_override_variables" | /usr/bin/tr ',' '\n')
 report_progress 'Preparing the private package manager…'
 run_cancellable /bin/sh "$temporary_uv_installer"
 
@@ -244,16 +251,16 @@ report_progress 'Installing a private Python environment…'
 run_cancellable "$uv_executable" --no-config python install "$python_version"
 report_progress 'Creating the application environment…'
 run_cancellable "$uv_executable" --no-config venv \
-    --python "$python_version" --seed "$new_environment"
+    --python "$python_version" "$new_environment"
 environment_python="$new_environment/bin/python"
 report_progress "Installing $product_name and its desktop features…"
-run_cancellable "$environment_python" -m pip install \
-    --disable-pip-version-check --no-input \
-    --no-cache-dir --prefer-binary \
+run_cancellable "$uv_executable" --no-config pip install \
+    --python "$environment_python" --no-cache \
     --only-binary "$binary_only_packages" \
     --upgrade "$package_requirement"
 report_progress 'Verifying the installed application…'
-run_cancellable "$environment_python" -m pip check --disable-pip-version-check
+run_cancellable "$uv_executable" --no-config pip check \
+    --python "$environment_python"
 
 installed_entry="$new_environment/bin/$entry_point"
 if [[ ! -x "$installed_entry" ]]; then

@@ -15,6 +15,7 @@ from packaging.version import Version
 from openhcs.desktop_installation import (
     DESKTOP_INSTALL_PROFILE,
     DesktopInstallerContract,
+    DesktopPackageIndexOverrideVariable,
     DesktopUvRelease,
 )
 from scripts.render_installer_contract import render_contract
@@ -41,7 +42,7 @@ def test_installer_profile_owns_only_native_install_policy(tmp_path: Path) -> No
     requirement = Requirement(contract.package_requirement)
     python_version = Version(profile.python_version)
 
-    assert contract.schema_version == "openhcs.installer.v2"
+    assert contract.schema_version == "openhcs.installer.v3"
     assert contract.product_name == "OpenHCS"
     assert requirement.name == project["name"]
     assert requirement.extras == {extra.value for extra in profile.package_extras}
@@ -49,6 +50,9 @@ def test_installer_profile_owns_only_native_install_policy(tmp_path: Path) -> No
     assert requirement.extras <= project["optional-dependencies"].keys()
     assert contract.binary_only_packages == ",".join(
         package.value for package in profile.binary_only_packages
+    )
+    assert contract.package_index_override_variables == ",".join(
+        variable.value for variable in profile.package_index_override_variables
     )
     assert contract.entry_point == project["name"]
     assert contract.entry_point in project["scripts"]
@@ -194,6 +198,9 @@ def test_render_contract_writes_declaration_derived_projection(tmp_path: Path) -
     assert loaded["package_requirement"] == (
         "openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.5.22"
     )
+    assert loaded["package_index_override_variables"] == ",".join(
+        variable.value for variable in DesktopPackageIndexOverrideVariable
+    )
 
 
 def test_clean_checkout_workflows_execute_renderer_through_package_namespace() -> None:
@@ -210,6 +217,7 @@ def test_clean_checkout_workflows_execute_renderer_through_package_namespace() -
         ("python_version", "python3"),
         ("package_extras", ("gui", "gui")),
         ("binary_only_packages", ("not safe",)),
+        ("package_index_override_variables", ("UV_INDEX",)),
     ],
 )
 def test_installer_profile_rejects_malformed_policy(
@@ -241,6 +249,7 @@ def test_installer_profile_rejects_malformed_uv_release(
         ("product_name", "OpenHCS; rm -rf"),
         ("entry_point", "openhcs-gui && nope"),
         ("gui_entry_point", "openhcs-gui && nope"),
+        ("package_index_override_variables", "UV_INDEX;NOPE"),
     ],
 )
 def test_installer_contract_rejects_malformed_command_data(

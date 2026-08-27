@@ -841,7 +841,7 @@ jobs:
           $stage = Join-Path $env:RUNNER_TEMP "OpenHCS-Windows-Smoke"
           $installRoot = Join-Path `
             ([Environment]::GetFolderPath("LocalApplicationData")) `
-            "OpenHCS"
+            "OpenHCS Installer Smoke"
           $contractPath = Join-Path $env:RUNNER_TEMP "installer_contract.json"
           New-Item -ItemType Directory -Path $stage | Out-Null
           python -m scripts.render_installer_contract `
@@ -914,6 +914,10 @@ jobs:
           $env:PIP_CONFIG_FILE = $hostilePipConfig
           $env:PIP_INDEX_URL = $hostilePipIndex
           $env:PIP_EXTRA_INDEX_URL = $hostilePipIndex
+          $env:UV_DEFAULT_INDEX = $hostilePipIndex
+          $env:UV_INDEX = $hostilePipIndex
+          $env:UV_INDEX_URL = $hostilePipIndex
+          $env:UV_EXTRA_INDEX_URL = $hostilePipIndex
           $env:PIP_RETRIES = "0"
           $env:PIP_TIMEOUT = "1"
           $env:CODEX_HOME = Join-Path $env:RUNNER_TEMP "codex-home"
@@ -1004,6 +1008,15 @@ jobs:
             (Get-Content -LiteralPath $installerLog -Raw).Contains($hostilePipIndex)
           ) {
             throw "Windows installer update inherited a host package index."
+          }
+          $installerLogText = Get-Content -LiteralPath $installerLog -Raw
+          foreach ($serializedProgressMarker in @("#< CLIXML", "<Objs Version=")) {
+            if ($installerLogText.Contains($serializedProgressMarker)) {
+              throw (
+                "Windows installer log contains serialized PowerShell progress: " +
+                $serializedProgressMarker
+              )
+            }
           }
           if (Test-Path -LiteralPath $staleEnvironment) {
             throw "Windows installer update left the long-path stale environment behind."
@@ -1533,6 +1546,10 @@ jobs:
           export PIP_CONFIG_FILE="$hostile_pip_config"
           export PIP_INDEX_URL="$hostile_pip_index"
           export PIP_EXTRA_INDEX_URL="$hostile_pip_index"
+          export UV_DEFAULT_INDEX="$hostile_pip_index"
+          export UV_INDEX="$hostile_pip_index"
+          export UV_INDEX_URL="$hostile_pip_index"
+          export UV_EXTRA_INDEX_URL="$hostile_pip_index"
           export PIP_RETRIES=0
           export PIP_TIMEOUT=1
           installer_log="$HOME/Library/Logs/$product_name/installer.log"

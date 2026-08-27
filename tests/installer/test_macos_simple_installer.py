@@ -11,7 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from openhcs.desktop_installation import DESKTOP_INSTALL_PROFILE
+from openhcs.desktop_installation import (
+    DESKTOP_INSTALL_PROFILE,
+    DesktopPackageIndexOverrideVariable,
+)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER_ROOT = REPOSITORY_ROOT / "packaging" / "installers"
@@ -59,7 +62,7 @@ def test_macos_installer_fails_closed_on_validated_shared_contract() -> None:
 
     assert "plutil -extract" in source
     assert "entry_point=$(contract_value entry_point)" in source
-    assert "openhcs.installer.v2" in source
+    assert "openhcs.installer.v3" in source
     assert "'https://astral.sh/uv'" in source
     assert 'uv_installer_url="$uv_base_url/$uv_version/install.sh"' in source
     assert "==[A-Za-z0-9][A-Za-z0-9.*+!_-]*$" in source
@@ -68,7 +71,7 @@ def test_macos_installer_fails_closed_on_validated_shared_contract() -> None:
         assert value not in source
 
 
-def test_macos_installer_uses_uv_for_python_and_pip_for_packages() -> None:
+def test_macos_installer_uses_uv_for_the_environment_lifecycle() -> None:
     source = _bootstrap()
 
     assert "UV_INSTALL_DIR" in source
@@ -76,14 +79,20 @@ def test_macos_installer_uses_uv_for_python_and_pip_for_packages() -> None:
     assert "UV_NO_MODIFY_PATH=1" in source
     assert "UV_NO_CONFIG=1" in source
     assert "PIP_CONFIG_FILE=/dev/null" in source
-    assert "unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL" in source
+    assert "package_index_override_variables=$(contract_value" in source
+    assert 'unset "$variable"' in source
+    for variable in DesktopPackageIndexOverrideVariable:
+        assert variable.value not in source
     for command in ("python install", "venv"):
         assert f'run_cancellable "$uv_executable" --no-config {command}' in source
-    assert '--python "$python_version" --seed "$new_environment"' in source
-    assert 'run_cancellable "$environment_python" -m pip install' in source
+    assert '--python "$python_version" "$new_environment"' in source
+    assert "--seed" not in source
+    assert 'run_cancellable "$uv_executable" --no-config pip install' in source
+    assert '--python "$environment_python" --no-cache' in source
     assert "binary_only_packages=$(contract_value binary_only_packages)" in source
     assert '--only-binary "$binary_only_packages"' in source
-    assert 'run_cancellable "$environment_python" -m pip check' in source
+    assert 'run_cancellable "$uv_executable" --no-config pip check' in source
+    assert '--python "$environment_python"' in source
     assert "--prerelease" not in source
     assert "Preparing the execution catalog" not in source
     assert "--prepare-capabilities" not in source
@@ -96,7 +105,7 @@ def test_macos_installer_uses_uv_for_python_and_pip_for_packages() -> None:
 def test_macos_update_switches_only_after_verification() -> None:
     source = _bootstrap()
 
-    verify_position = source.index("-m pip check")
+    verify_position = source.index("--no-config pip check")
     entry_position = source.index('if [[ ! -x "$installed_entry" ]]')
     state_switch_position = source.index("-m openhcs.desktop_deployment_cli")
 
@@ -500,6 +509,8 @@ def test_macos_installer_registers_agent_clients_through_stable_launcher() -> No
         ) : workflow.index("      - name: Show macOS installer log on failure")
     ]
     assert 'export PIP_FIND_LINKS="$UV_FIND_LINKS"' in macos_smoke
+    for variable in DesktopPackageIndexOverrideVariable:
+        assert f'export {variable.value}="$hostile_pip_index"' in macos_smoke
     assert 'codex_config="$HOME/.codex/config.toml"' in macos_smoke
     assert "stable_launcher=" in macos_smoke
     assert "['mcp']" in macos_smoke

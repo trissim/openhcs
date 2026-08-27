@@ -20,6 +20,8 @@ from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
+from openhcs.desktop_installation import DESKTOP_INSTALL_PROFILE
+
 
 class DesktopUpdatePhase(Enum):
     """Closed worker phases projected to the detached progress surface."""
@@ -247,6 +249,47 @@ class DesktopUpdatePlan:
         self.validate()
         path.write_text(json.dumps(asdict(self), sort_keys=True), encoding="utf-8")
 
+    def create_environment_command(self) -> list[str]:
+        """Create the empty candidate through the declared package manager."""
+
+        return [
+            self.update_executable,
+            "--no-config",
+            "venv",
+            "--python",
+            self.base_python_executable,
+            self.candidate_environment,
+        ]
+
+    def install_command(self) -> list[str]:
+        """Install the pinned product into the candidate through uv."""
+
+        return [
+            self.update_executable,
+            "--no-config",
+            "pip",
+            "install",
+            "--python",
+            self.candidate_python_executable,
+            "--no-cache",
+            "--only-binary",
+            self.binary_only_packages,
+            "--upgrade",
+            self.package_requirement,
+        ]
+
+    def dependency_check_command(self) -> list[str]:
+        """Verify the candidate through the same package-manager authority."""
+
+        return [
+            self.update_executable,
+            "--no-config",
+            "pip",
+            "check",
+            "--python",
+            self.candidate_python_executable,
+        ]
+
     @classmethod
     def read(cls, path: Path) -> DesktopUpdatePlan:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -367,15 +410,7 @@ def _run_update(
     try:
         progress.phase(DesktopUpdatePhase.PREPARING_ENVIRONMENT)
         _run_required_stage(
-            [
-                plan.update_executable,
-                "--no-config",
-                "venv",
-                "--python",
-                plan.base_python_executable,
-                "--seed",
-                plan.candidate_environment,
-            ],
+            plan.create_environment_command(),
             failure_message="OpenHCS could not create the replacement environment",
             launch_spec=launch_spec,
             progress=progress,
@@ -383,20 +418,7 @@ def _run_update(
 
         progress.phase(DesktopUpdatePhase.INSTALLING)
         _run_required_stage(
-            [
-                plan.candidate_python_executable,
-                "-m",
-                "pip",
-                "install",
-                "--disable-pip-version-check",
-                "--no-input",
-                "--no-cache-dir",
-                "--prefer-binary",
-                "--only-binary",
-                plan.binary_only_packages,
-                "--upgrade",
-                plan.package_requirement,
-            ],
+            plan.install_command(),
             failure_message="OpenHCS update failed",
             launch_spec=launch_spec,
             progress=progress,
@@ -405,13 +427,7 @@ def _run_update(
         progress.phase(DesktopUpdatePhase.VERIFYING)
         for command, failure_message in (
             (
-                [
-                    plan.candidate_python_executable,
-                    "-m",
-                    "pip",
-                    "check",
-                    "--disable-pip-version-check",
-                ],
+                plan.dependency_check_command(),
                 "The replacement environment has inconsistent dependencies",
             ),
             (
@@ -491,8 +507,8 @@ def _run_process_with_progress(
 
     environment = os.environ.copy()
     environment["PIP_CONFIG_FILE"] = os.devnull
-    environment.pop("PIP_INDEX_URL", None)
-    environment.pop("PIP_EXTRA_INDEX_URL", None)
+    for variable in DESKTOP_INSTALL_PROFILE.package_index_override_variables:
+        environment.pop(variable.value, None)
     process = subprocess.Popen(
         command,
         env=environment,

@@ -1862,7 +1862,7 @@
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "60b381318cb10710d1770b025c19598984780cc96337baaddea54b53b291e85d",
+        "sha256": "504f9e7d76de50da6ded308f138d6471fbb8e25065c62357494555c93cfead31",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, environment, and declaration-derived GUI operation and process-exit budgets to the installed verifiers."
       },
       {
@@ -1935,7 +1935,8 @@
       "On 2026-08-26, re-read and revised the complete reference after a Windows boundary run exhausted the former shared five-second budget during request serialisation; the OpenHCS configuration declaration now owns a dedicated submission default, 98 focused tests passed, and the exact CometAssay ZMQ path passed in 93.82 seconds.",
       "On 2026-08-26, re-read the complete transition reference after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; the acceptance harness now derives its outer limit from one timing owner without replacing ZMQRuntime's progress-aware endpoint inactivity semantics, and a fresh 0.8.0 wheel completed the cold 263-function catalogue path.",
       "On 2026-08-26, re-read and revised the complete catalogue boundary after a 6,336-test parallel run exposed cross-profile cache replacement; 20 focused registry tests passed with admission-context-owned persistent paths.",
-      "On 2026-08-26, re-read and revised the complete page after one caller-owned cancellation authority began spanning function-catalog endpoint startup and request polling; the updated text matches ZMQRuntime and the OpenHCS execution client."
+      "On 2026-08-26, re-read and revised the complete page after one caller-owned cancellation authority began spanning function-catalog endpoint startup and request polling; the updated text matches ZMQRuntime and the OpenHCS execution client.",
+      "On 2026-08-27, re-read the complete transition reference against the changed installed-desktop evidence authority; its ZMQ ownership and lifecycle claims remain accurate."
     ]
   },
   {
@@ -2751,7 +2752,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "761873c29b7c44ec8d80ee067bf4aeccfacd7373780c4d53f97a5498448042f4",
+    "source_sha256": "15ccd3d7566d201daacbeb10d6a55daa61bed475ef6c5c5b9462cae3c0488ca8",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2815,7 +2816,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "a84c7acce66678e634a7593a55b65fbf5b413d6da20e8b379744e515032acf1c",
+        "sha256": "53eeda5da6148c5679f1899a73ced83e0219b5fdc7d68eeb4547b11216615737",
         "role": "Cross-platform source-candidate and published-dependency readiness, installed-wheel live GUI/MCP operation with retained native screenshots, three-stage native-installer workflow proof, signing-helper parse, and staged-update validation matrix."
       },
       {
@@ -2952,7 +2953,8 @@
     "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete page after native installer acceptance began opening the shipping Windows and macOS applications before worker execution; 71 focused installer tests plus workflow, shell, formatting, and diff validation passed locally.",
     "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after native installer evidence began retaining the exact durable transcript beside its three window states; the revised evidence description matches both platform probes and 71 focused installer tests passed.",
     "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after native installer acceptance retained per-pass phase journals and live GUI snapshots and catalog startup became teardown-cancellable; the evidence and ownership descriptions now match the exact workflow.",
-    "On 2026-08-27, re-read the complete release how-to after the installed-GUI harness replaced competing timeout, failure, and success fields with one terminal completion authority; focused regression and forced cold-deadline wheel probes confirmed the documented partial-journal behavior."
+      "On 2026-08-27, re-read the complete release how-to after the installed-GUI harness replaced competing timeout, failure, and success fields with one terminal completion authority; focused regression and forced cold-deadline wheel probes confirmed the documented partial-journal behavior.",
+      "On 2026-08-27, re-read the complete release how-to against the uv-owned native installer and updater lifecycle, hostile pip and uv index overrides, direct Windows native-command logging, and retained installed-desktop evidence; revised the release gate where needed."
     ]
   },
   {
@@ -3011,7 +3013,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "a84c7acce66678e634a7593a55b65fbf5b413d6da20e8b379744e515032acf1c",
+        "sha256": "53eeda5da6148c5679f1899a73ced83e0219b5fdc7d68eeb4547b11216615737",
         "role": "Runs explicitly selected live OMERO variants and preserves component and table-service diagnostics on failure."
       }
     ],
@@ -3043,7 +3045,8 @@
       "On 2026-08-26, re-read the full how-to after the native installer matrix began building current-source wheels independently; clarified that OMERO source evidence remains separate from the PyPI installation lane without changing its test selection or lifecycle ownership.",
       "On 2026-08-26, re-read the complete OMERO testing how-to after the shared integration workflow began retaining desktop GUI screenshots; OMERO selection, readiness, diagnostics, and lifecycle ownership are unchanged.",
       "On 2026-08-26, re-read the complete OMERO testing guide after the shared integration workflow gained native installer window evidence; OMERO selection, readiness, diagnostics, and lifecycle ownership remain unchanged.",
-      "On 2026-08-26, re-read the complete OMERO testing how-to after native installer workflow evidence changed; the independent OMERO lane and owner boundaries remain accurate."
+      "On 2026-08-26, re-read the complete OMERO testing how-to after native installer workflow evidence changed; the independent OMERO lane and owner boundaries remain accurate.",
+      "On 2026-08-27, re-read the complete OMERO testing how-to against the changed integration workflow; the independent OMERO lane and its owner boundaries remain accurate."
     ]
   },
   {

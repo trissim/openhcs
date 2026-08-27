@@ -195,10 +195,12 @@ prevent known drift from being published.
 
 The native installer lanes resolve the prepared first-party candidates from
 their metadata-discovered local wheelhouse while injecting an unreachable
-workstation pip configuration and unreachable primary and extra index
-overrides. The Windows installation, reinstall, and staged-update paths and the
-macOS installation must complete without contacting that index, proving that
-release behaviour does not depend on a runner's package-index settings.
+workstation pip configuration and unreachable pip and uv primary and extra
+index overrides. The Windows installation, reinstall, and staged-update paths
+and the macOS installation must complete without contacting that index,
+proving that release behaviour does not depend on a runner's package-index
+settings. The Windows lane also rejects serialized PowerShell progress records
+in the durable installer log.
 
 Tag and publish
 ---------------

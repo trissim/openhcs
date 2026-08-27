@@ -124,19 +124,21 @@ valid but breaks application startup or desktop-agent operation. Its
 
 The native installer jobs build one metadata-discovered wheelhouse from the
 recorded first-party submodules, then deliberately provide an unreachable pip
-configuration file and unreachable primary and extra index overrides. Windows
-installation and reinstall, macOS installation, and the staged-update worker
-must resolve the prepared candidates from that wheelhouse without contacting
-the injected index. This proves both the unreleased dependency graph and that a
-workstation's package-index settings cannot redirect a managed desktop
-installation. Each job opens the actual Windows or macOS installer, captures
-its welcome state, activates its primary control, and requires visible progress
-and successful completion before testing the installed desktop and staged
-update. The three window records and screenshots, plus the complete durable
-installer log, are retained for 14 days as ``native-installer-ui-*`` evidence.
-Each installed desktop pass adds its flushed phase journal and native GUI
-snapshots to that artifact, so a timeout identifies the last completed lifecycle
-boundary instead of discarding the child process output.
+configuration file and unreachable pip and uv primary and extra index
+overrides. Windows installation and reinstall, macOS installation, and the
+staged-update worker must resolve the prepared candidates from that wheelhouse
+without contacting the injected index. This proves both the unreleased
+dependency graph and that a workstation's package-index settings cannot
+redirect a managed desktop installation. Each job opens the actual Windows or
+macOS installer, captures its welcome state, activates its primary control, and
+requires visible progress and successful completion before testing the
+installed desktop and staged update. The Windows lane also rejects serialized
+PowerShell progress records in the durable log. The three window records and
+screenshots, plus the complete durable installer log, are retained for 14 days
+as ``native-installer-ui-*`` evidence. Each installed desktop pass adds its
+flushed phase journal and native GUI snapshots to that artifact, so a timeout
+identifies the last completed lifecycle boundary instead of discarding the
+child process output.
 
 On ``main``, the Python quality job checks the cumulative change set since the
 most recent successful Integration Tests head. A failed Python change remains

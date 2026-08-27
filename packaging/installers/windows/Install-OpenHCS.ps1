@@ -12,7 +12,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$script:SupportedContractSchema = "openhcs.installer.v2"
+$script:SupportedContractSchema = "openhcs.installer.v3"
 $script:ManagedEnvironmentIdLength = 8
 $script:ManagedEnvironmentNamePattern = (
     "^env-(?:[a-f0-9]{$($script:ManagedEnvironmentIdLength)}|" +
@@ -139,6 +139,8 @@ function Read-InstallerContract {
     $pythonVersion = Get-RequiredTextProperty $contract "python_version"
     $packageRequirement = Get-RequiredTextProperty $contract "package_requirement"
     $binaryOnlyPackages = Get-RequiredTextProperty $contract "binary_only_packages"
+    $packageIndexOverrideVariables = Get-RequiredTextProperty `
+        $contract "package_index_override_variables"
     $entryPoint = Get-RequiredTextProperty $contract "entry_point"
     $guiEntryPoint = Get-RequiredTextProperty $contract "gui_entry_point"
 
@@ -164,6 +166,14 @@ function Read-InstallerContract {
         "(,[A-Za-z0-9][A-Za-z0-9_.-]*)*$"
     )) {
         throw "Installer contract binary_only_packages has an unsafe format."
+    }
+    if ($packageIndexOverrideVariables -notmatch (
+        "^[A-Z][A-Z0-9_]*(,[A-Z][A-Z0-9_]*)*$"
+    )) {
+        throw (
+            "Installer contract package_index_override_variables has an unsafe " +
+            "format."
+        )
     }
     if ($entryPoint -notmatch "^[A-Za-z0-9][A-Za-z0-9_.-]*$") {
         throw "Installer contract entry_point has an unsafe executable-name format."
@@ -214,6 +224,7 @@ function Read-InstallerContract {
         PythonVersion = $pythonVersion
         PackageRequirement = $packageRequirement
         BinaryOnlyPackages = $binaryOnlyPackages
+        PackageIndexOverrideVariables = $packageIndexOverrideVariables
         EntryPoint = $entryPoint
         GuiEntryPoint = $guiEntryPoint
         UvVersion = $uvVersion
@@ -486,6 +497,46 @@ function Stop-InstallerChildProcess {
     }
 }
 
+function ConvertTo-WindowsCommandLineArgument {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Argument
+    )
+
+    if ($Argument.Length -gt 0 -and $Argument -notmatch '[\s"]') {
+        return $Argument
+    }
+
+    $quotedArgument = New-Object Text.StringBuilder
+    [void]$quotedArgument.Append('"')
+    $backslashCount = 0
+    foreach ($character in $Argument.ToCharArray()) {
+        if ($character -eq [char]'\') {
+            $backslashCount += 1
+            continue
+        }
+        if ($character -eq [char]'"') {
+            [void]$quotedArgument.Append(
+                [char]'\', (($backslashCount * 2) + 1)
+            )
+            [void]$quotedArgument.Append($character)
+            $backslashCount = 0
+            continue
+        }
+        if ($backslashCount -gt 0) {
+            [void]$quotedArgument.Append([char]'\', $backslashCount)
+            $backslashCount = 0
+        }
+        [void]$quotedArgument.Append($character)
+    }
+    if ($backslashCount -gt 0) {
+        [void]$quotedArgument.Append([char]'\', ($backslashCount * 2))
+    }
+    [void]$quotedArgument.Append('"')
+    return $quotedArgument.ToString()
+}
+
 function Invoke-LoggedCommand {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
@@ -497,29 +548,13 @@ function Invoke-LoggedCommand {
 
     Assert-InstallerCancellationNotRequested $CancellationPath
     Write-InstallLog "START: $Description"
-    $payload = [PSCustomObject]@{
-        FilePath = $FilePath
-        ArgumentList = @($ArgumentList)
-    } | ConvertTo-Json -Compress
-    $payloadBase64 = [Convert]::ToBase64String(
-        [Text.Encoding]::UTF8.GetBytes($payload)
-    )
-    $childCommand = @"
-`$payload = [Text.Encoding]::UTF8.GetString(
-    [Convert]::FromBase64String('$payloadBase64')
-) | ConvertFrom-Json
-& ([string]`$payload.FilePath) @([string[]]`$payload.ArgumentList)
-exit `$LASTEXITCODE
-"@
-    $encodedCommand = [Convert]::ToBase64String(
-        [Text.Encoding]::Unicode.GetBytes($childCommand)
-    )
     $startInfo = New-Object Diagnostics.ProcessStartInfo
-    $startInfo.FileName = Get-WindowsPowerShellExecutable
-    $startInfo.Arguments = (
-        "-NoProfile -ExecutionPolicy Bypass -EncodedCommand {0}" -f
-        $encodedCommand
-    )
+    $startInfo.FileName = $FilePath
+    $startInfo.Arguments = (@(
+        $ArgumentList | ForEach-Object {
+            ConvertTo-WindowsCommandLineArgument ([string]$_)
+        }
+    ) -join " ")
     $startInfo.WorkingDirectory = $PSScriptRoot
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
@@ -886,14 +921,13 @@ function Invoke-WorkerInstall {
         )
 
         # The managed desktop environment must not inherit a workstation's
-        # package indexes.  PIP_CONFIG_FILE=nul makes pip skip global, user,
-        # and virtual-environment configuration files; removing the two index
-        # environment variables leaves pip's own default index authoritative.
+        # package indexes. PIP_CONFIG_FILE=nul suppresses pip configuration
+        # files while both pip and uv index overrides are removed. UV_FIND_LINKS
+        # remains available as an explicit candidate-wheel source in CI.
         $env:PIP_CONFIG_FILE = "nul"
-        [Environment]::SetEnvironmentVariable("PIP_INDEX_URL", $null, "Process")
-        [Environment]::SetEnvironmentVariable(
-            "PIP_EXTRA_INDEX_URL", $null, "Process"
-        )
+        foreach ($variable in $Contract.PackageIndexOverrideVariables -split ",") {
+            [Environment]::SetEnvironmentVariable($variable, $null, "Process")
+        }
 
         $bootstrapRoot = [IO.Path]::Combine($resolvedRoot, "bootstrap")
         $uvInstallRoot = [IO.Path]::Combine($bootstrapRoot, "uv")
@@ -934,8 +968,12 @@ function Invoke-WorkerInstall {
                 -FilePath (Get-WindowsPowerShellExecutable) `
                 -ArgumentList @(
                     "-NoProfile",
+                    "-NonInteractive",
                     "-ExecutionPolicy", "Bypass",
-                    "-File", $temporaryUvInstaller
+                    "-Command", (
+                        "`$ProgressPreference = 'SilentlyContinue'; & '{0}'" -f
+                        $temporaryUvInstaller.Replace("'", "''")
+                    )
                 ) `
                 -Description "Install uv" `
                 -CancellationPath $resolvedCancellationPath
@@ -967,23 +1005,23 @@ function Invoke-WorkerInstall {
 
         Invoke-LoggedCommand -FilePath $uvExecutable -ArgumentList @(
             "--no-config", "venv", "--python",
-            $Contract.PythonVersion, "--seed", $newEnvironmentPath
+            $Contract.PythonVersion, $newEnvironmentPath
         ) -Description "Create a candidate virtual environment" `
             -CancellationPath $resolvedCancellationPath
 
         $environmentPython = [IO.Path]::Combine(
             $newEnvironmentPath, "Scripts", "python.exe"
         )
-        Invoke-LoggedCommand -FilePath $environmentPython -ArgumentList @(
-            "-m", "pip", "install", "--disable-pip-version-check", "--no-input",
-            "--no-cache-dir", "--prefer-binary", "--only-binary",
+        Invoke-LoggedCommand -FilePath $uvExecutable -ArgumentList @(
+            "--no-config", "pip", "install", "--python", $environmentPython,
+            "--no-cache", "--only-binary",
             $Contract.BinaryOnlyPackages, "--upgrade",
             $Contract.PackageRequirement
         ) -Description "Install $($Contract.PackageRequirement)" `
             -CancellationPath $resolvedCancellationPath
 
-        Invoke-LoggedCommand -FilePath $environmentPython -ArgumentList @(
-            "-m", "pip", "check", "--disable-pip-version-check"
+        Invoke-LoggedCommand -FilePath $uvExecutable -ArgumentList @(
+            "--no-config", "pip", "check", "--python", $environmentPython
         ) -Description "Verify installed dependencies" `
             -CancellationPath $resolvedCancellationPath
 

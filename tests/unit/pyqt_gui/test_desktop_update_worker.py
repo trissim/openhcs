@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from openhcs.desktop_installation import DESKTOP_INSTALL_PROFILE
 from openhcs.pyqt_gui.services import desktop_update_worker
 from openhcs.resources.brand import BrandAsset, brand_asset_path
 
@@ -313,6 +314,8 @@ def test_worker_stages_and_verifies_replacement_environment(
         "PIP_EXTRA_INDEX_URL",
         "https://secondary.example.invalid/simple",
     )
+    monkeypatch.setenv("UV_DEFAULT_INDEX", "https://uv.example.invalid/simple")
+    monkeypatch.setenv("UV_INDEX", "https://uv-extra.example.invalid/simple")
     calls = []
     progress = _ProgressProbe()
     processes = iter(
@@ -351,12 +354,30 @@ def test_worker_stages_and_verifies_replacement_environment(
         "venv",
         "--python",
         plan.base_python_executable,
-        "--seed",
         plan.candidate_environment,
     ]
+    assert calls[1][0] == [
+        plan.update_executable,
+        "--no-config",
+        "pip",
+        "install",
+        "--python",
+        plan.candidate_python_executable,
+        "--no-cache",
+        "--only-binary",
+        plan.binary_only_packages,
+        "--upgrade",
+        plan.package_requirement,
+    ]
     assert calls[1][0][-1] == plan.package_requirement
-    assert "--prefer-binary" in calls[1][0]
-    assert calls[2][0][1:4] == ["-m", "pip", "check"]
+    assert calls[2][0] == [
+        plan.update_executable,
+        "--no-config",
+        "pip",
+        "check",
+        "--python",
+        plan.candidate_python_executable,
+    ]
     assert calls[3][0][0] == plan.candidate_python_executable
     assert calls[3][0][-1] == "0.7.1"
     assert calls[4][0][-2:] == [
@@ -368,8 +389,8 @@ def test_worker_stages_and_verifies_replacement_environment(
     for _command, arguments in calls:
         environment = arguments["env"]
         assert environment["PIP_CONFIG_FILE"] == os.devnull
-        assert "PIP_INDEX_URL" not in environment
-        assert "PIP_EXTRA_INDEX_URL" not in environment
+        for variable in DESKTOP_INSTALL_PROFILE.package_index_override_variables:
+            assert variable.value not in environment
     assert progress.phases == [
         desktop_update_worker.DesktopUpdatePhase.PREPARING_ENVIRONMENT,
         desktop_update_worker.DesktopUpdatePhase.INSTALLING,
@@ -390,7 +411,7 @@ def test_worker_stages_and_verifies_replacement_environment(
     assert Path(plan.candidate_environment).is_dir()
 
 
-def test_worker_child_process_ignores_host_pip_indexes(
+def test_worker_child_process_ignores_host_package_indexes(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -405,6 +426,10 @@ def test_worker_child_process_ignores_host_pip_indexes(
     monkeypatch.setenv("PIP_CONFIG_FILE", str(hostile_config))
     monkeypatch.setenv("PIP_INDEX_URL", hostile_index)
     monkeypatch.setenv("PIP_EXTRA_INDEX_URL", hostile_index)
+    monkeypatch.setenv("UV_DEFAULT_INDEX", hostile_index)
+    monkeypatch.setenv("UV_INDEX", hostile_index)
+    monkeypatch.setenv("UV_INDEX_URL", hostile_index)
+    monkeypatch.setenv("UV_EXTRA_INDEX_URL", hostile_index)
     progress = _ProgressProbe()
 
     returncode, output = desktop_update_worker._run_process_with_progress(
@@ -897,9 +922,7 @@ args.marker.write_text(
         "import sys\n"
         "from pathlib import Path\n"
         f"update_marker = Path({str(update_marker)!r})\n"
-        "if sys.argv[1:4] == ['-m', 'pip', 'install']:\n"
-        "    update_marker.write_text('updated', encoding='utf-8')\n"
-        "elif 'openhcs.desktop_deployment_cli' in sys.argv:\n"
+        "if 'openhcs.desktop_deployment_cli' in sys.argv:\n"
         f"    print(json.dumps({{'restart_executable': {sys.executable!r}}}))\n"
     )
     fake_uv.write_text(
@@ -907,11 +930,15 @@ args.marker.write_text(
             f"#!{sys.executable}\n"
             "import sys\n"
             "from pathlib import Path\n"
-            "candidate = Path(sys.argv[-1])\n"
-            "python = candidate / 'bin' / 'python'\n"
-            "python.parent.mkdir(parents=True, exist_ok=True)\n"
-            f"python.write_text({candidate_source!r}, encoding='utf-8')\n"
-            "python.chmod(0o755)\n"
+            f"update_marker = Path({str(update_marker)!r})\n"
+            "if sys.argv[1:3] == ['--no-config', 'venv']:\n"
+            "    candidate = Path(sys.argv[-1])\n"
+            "    python = candidate / 'bin' / 'python'\n"
+            "    python.parent.mkdir(parents=True, exist_ok=True)\n"
+            f"    python.write_text({candidate_source!r}, encoding='utf-8')\n"
+            "    python.chmod(0o755)\n"
+            "elif sys.argv[1:4] == ['--no-config', 'pip', 'install']:\n"
+            "    update_marker.write_text('updated', encoding='utf-8')\n"
         ),
         encoding="utf-8",
     )

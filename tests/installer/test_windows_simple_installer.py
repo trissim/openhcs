@@ -5,7 +5,10 @@ from __future__ import annotations
 import re
 from pathlib import Path, PureWindowsPath
 
-from openhcs.desktop_installation import DESKTOP_INSTALL_PROFILE
+from openhcs.desktop_installation import (
+    DESKTOP_INSTALL_PROFILE,
+    DesktopPackageIndexOverrideVariable,
+)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER_ROOT = REPOSITORY_ROOT / "packaging" / "installers"
@@ -136,7 +139,7 @@ def test_windows_installer_fails_closed_on_validated_shared_contract() -> None:
     assert "ConvertFrom-Json" in source
     assert 'Get-RequiredTextProperty $contract "entry_point"' in source
     assert 'Get-RequiredTextProperty $contract "gui_entry_point"' in source
-    assert '"openhcs.installer.v2"' in source
+    assert '"openhcs.installer.v3"' in source
     assert "Expected exactly one installer_contract.json" in source
     assert "Uri]::TryCreate" in source
     assert "UriSchemeHttps" in source
@@ -152,7 +155,7 @@ def test_windows_installer_fails_closed_on_validated_shared_contract() -> None:
         assert value not in source
 
 
-def test_windows_installer_uses_uv_for_python_and_pip_for_packages() -> None:
+def test_windows_installer_uses_uv_for_the_environment_lifecycle() -> None:
     source = _source()
 
     assert "function Get-WindowsPowerShellExecutable" in source
@@ -169,27 +172,26 @@ def test_windows_installer_uses_uv_for_python_and_pip_for_packages() -> None:
     assert "Invoke-Expression" not in source
     assert re.search(r'"--no-config", "python", "install"', source)
     assert re.search(r'"--no-config", "venv", "--python"', source)
-    assert '"--seed"' in source
+    assert '"--seed"' not in source
     assert '"venv", "--clear"' not in source
-    assert '"-m", "pip", "install"' in source
+    assert '"--no-config", "pip", "install", "--python"' in source
     assert (
         '$binaryOnlyPackages = Get-RequiredTextProperty $contract "binary_only_packages"'
         in source
     )
-    assert '"--no-cache-dir", "--prefer-binary", "--only-binary"' in source
+    assert '"--no-cache", "--only-binary"' in source
     assert "$Contract.BinaryOnlyPackages" in source
-    assert '"-m", "pip", "check"' in source
+    assert '"--no-config", "pip", "check", "--python"' in source
     assert '"--prerelease"' not in source
     assert '"--prepare-capabilities"' not in source
     assert '-Description "Prepare the execution catalog"' not in source
     assert "$env:UV_INSTALL_DIR" in source
     assert "$env:UV_NO_MODIFY_PATH" in source
     assert '$env:PIP_CONFIG_FILE = "nul"' in source
-    assert (
-        '[Environment]::SetEnvironmentVariable("PIP_INDEX_URL", $null, "Process")'
-        in source
-    )
-    assert '"PIP_EXTRA_INDEX_URL", $null, "Process"' in source
+    assert '"package_index_override_variables"' in source
+    assert "$Contract.PackageIndexOverrideVariables -split" in source
+    for variable in DesktopPackageIndexOverrideVariable:
+        assert variable.value not in source
     assert "pinned official uv $($Contract.UvVersion)" in source
     assert "[Environment]::OSVersion.VersionString" in source
     assert "$env:PROCESSOR_ARCHITECTURE" in source
@@ -197,13 +199,11 @@ def test_windows_installer_uses_uv_for_python_and_pip_for_packages() -> None:
 
     # Contract values remain individual native arguments even when paths contain spaces.
     assert "[string[]]$ArgumentList" in source
-    assert "FilePath = $FilePath" in source
-    assert "ArgumentList = @($ArgumentList)" in source
-    assert "ConvertTo-Json -Compress" in source
-    assert "[Text.Encoding]::UTF8.GetBytes($payload)" in source
-    assert (
-        "& ([string]`$payload.FilePath) @([string[]]`$payload.ArgumentList)" in source
-    )
+    assert "function ConvertTo-WindowsCommandLineArgument" in source
+    assert "$backslashCount * 2" in source
+    assert "[char]'\\', (($backslashCount * 2) + 1)" in source
+    assert "$startInfo.FileName = $FilePath" in source
+    assert "ConvertTo-WindowsCommandLineArgument ([string]$_)" in source
     assert "$startInfo.RedirectStandardOutput = $true" in source
     assert "$startInfo.RedirectStandardError = $true" in source
     assert "$process.StandardOutput.ReadLineAsync()" in source
@@ -219,6 +219,8 @@ def test_windows_installer_uses_uv_for_python_and_pip_for_packages() -> None:
             "function Get-StableLauncherPath"
         )
     ]
+    assert "Get-WindowsPowerShellExecutable" not in command
+    assert "EncodedCommand" not in command
     assert "cmd.exe" not in command
     assert "/c " not in command.lower()
 
@@ -595,6 +597,11 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
     assert "        timeout-minutes: 30" in smoke_step
     assert "Build-InstallerLauncher.ps1" in smoke_step
     assert "$env:PIP_FIND_LINKS = $env:UV_FIND_LINKS" in smoke_step
+    for variable in DesktopPackageIndexOverrideVariable:
+        assert f"$env:{variable.value} = $hostilePipIndex" in smoke_step
+    assert '"OpenHCS Installer Smoke"' in smoke_step
+    assert '"#< CLIXML"' in smoke_step
+    assert '"<Objs Version="' in smoke_step
     assert '"OpenHCS-Windows-Installer.exe"' in smoke_step
     assert "GUI-subsystem executable" in smoke_step
     assert "Length -gt 2MB" in smoke_step

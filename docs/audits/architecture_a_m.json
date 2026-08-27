@@ -1593,7 +1593,7 @@
   },
   {
     "path": "docs/source/architecture/mcp_distribution.rst",
-    "source_sha256": "32f301f22698d3a30b623b3ee517b44eb9a978ccf39b21b658f788517ed26138",
+    "source_sha256": "aba6ec44b855e7b2521080d987e9a56310eb6306eb52ac39a4ed11401d842576",
     "audience": [
       "OpenHCS MCP maintainers",
       "packaging and hosted-deployment integrators"
@@ -1708,7 +1708,7 @@
       },
       {
         "path": "openhcs/desktop_installation.py",
-        "sha256": "63f0babc633b123b3ac9b1ed4f10320915029946fffb8a48a2046bf7496bc8f6",
+        "sha256": "c12660067688ffc3a7cbd49b37cbb03971b5409b49001d048eef670f91c8a62b",
         "role": "Nominally declares and validates native install policy, then projects one exact package selection for installers and staged updates."
       },
       {
@@ -1772,7 +1772,8 @@
       "On 2026-08-26, re-read the complete distribution explanation against the changed capability, server, timeout-policy, client-registration, and regression-test authorities; 342 focused tests passed, and NRA no longer reports the former transport, timeout-profile, or Claude platform redispatch.",
       "On 2026-08-26, re-read the complete explanation after the stdio bootstrap regression isolated its spawned process from pytest-cov instrumentation; product transport, capability, and distribution semantics remain unchanged.",
       "On 2026-08-26, re-read the complete distribution explanation after the platform authority began preserving declared temporary roots across the local MCP process boundary; focused regressions and a packaged macOS-style nonstandard TMPDIR GUI/MCP probe passed, and the documented transport and snapshot ownership remain accurate.",
-      "On 2026-08-26, re-read the complete distribution explanation after the shared MCP regression began proving the declaration-owned execution submission default; capability, transport, packaging, and projection ownership remain accurate."
+      "On 2026-08-26, re-read the complete distribution explanation after the shared MCP regression began proving the declaration-owned execution submission default; capability, transport, packaging, and projection ownership remain accurate.",
+      "On 2026-08-27, re-read the complete distribution explanation against the uv-owned desktop environment lifecycle and declaration-derived package-index isolation; revised its packaging explanation and confirmed the remaining ownership claims."
     ]
   },
   {

@@ -22,7 +22,7 @@
       },
       {
         "path": "openhcs/desktop_installation.py",
-        "sha256": "63f0babc633b123b3ac9b1ed4f10320915029946fffb8a48a2046bf7496bc8f6",
+        "sha256": "c12660067688ffc3a7cbd49b37cbb03971b5409b49001d048eef670f91c8a62b",
         "role": "Nominally declares the CPU-safe desktop extras and native installation policy without copying project or brand declarations."
       },
       {
@@ -89,7 +89,8 @@
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete project overview after capability surfaces gained declaration-derived development-client preflight; the public product, installation, and agent-workflow claims remain accurate.",
       "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
-      "On 2026-08-26, re-read the complete project overview against the changed capability and client-registration owners; transport instruction and platform-path extraction are internal ownership changes, so the public feature, client, installation, and safety claims remain accurate."
+      "On 2026-08-26, re-read the complete project overview against the changed capability and client-registration owners; transport instruction and platform-path extraction are internal ownership changes, so the public feature, client, installation, and safety claims remain accurate.",
+      "On 2026-08-27, re-read the complete project overview against the uv-owned installer and updater lifecycle; its public installation and capability claims remain accurate."
     ]
   }
 ]
