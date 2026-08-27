@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import List
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QTreeWidgetItem
@@ -20,6 +19,9 @@ from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared import (
     TreeSyncAdapter,
     ZMQServerBrowserWidgetABC,
+)
+from pyqt_reactive.widgets.shared.zmq_server_browser_widget import (
+    EndpointStartupTreeItemPresentation,
 )
 from zmqruntime.progress import EventRegistryMutation
 from zmqruntime.viewer_state import ViewerStateManager
@@ -73,7 +75,7 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
 
     def __init__(
         self,
-        ports_to_scan: List[int],
+        ports_to_scan: list[int],
         config: OpenHCSZMQConfig,
         progress_config: ProgressUIConfig,
         color_scheme: ColorScheme,
@@ -97,7 +99,7 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
                     "refresh_launching_viewers_only",
                     Qt.ConnectionType.QueuedConnection,
                 )
-            except Exception as error:
+            except RuntimeError as error:
                 logger.debug("Viewer state callback invocation failed: %s", error)
 
         mgr = ViewerStateManager.get_instance()
@@ -147,7 +149,7 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
     def set_zmq_config(
         self,
         config: OpenHCSZMQConfig,
-        ports_to_scan: List[int],
+        ports_to_scan: list[int],
     ) -> None:
         """Apply one resolved transport config to browser and progress clients."""
 
@@ -213,7 +215,7 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         data = item.data(0, Qt.ItemDataRole.UserRole)
         return isinstance(data, BaseServerInfo) and data.ready
 
-    def populate_tree(self, parsed_servers: List[BaseServerInfo]) -> None:
+    def populate_tree(self, parsed_servers: list[BaseServerInfo]) -> None:
         """Populate tree with servers, avoiding duplicates since tree.clear() is bypassed."""
         self._live_tree_sync.populate_tree(parsed_servers)
 
@@ -247,8 +249,7 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
             item = QTreeWidgetItem()
             self.server_tree.addTopLevelItem(item)
         item.setText(0, f"Port {observation.port} - Execution Server")
-        item.setText(1, "🚀 Starting")
-        item.setText(2, observation.status.message)
+        observation.present(EndpointStartupTreeItemPresentation(item))
         item.setData(0, Qt.ItemDataRole.UserRole, observation)
 
     def _sync_server_item(self, server_info: BaseServerInfo) -> None:
@@ -340,8 +341,8 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
                 data = item.data(0, Qt.ItemDataRole.UserRole)
                 if isinstance(data, ExecutionServerInfo):
                     self._progress_renderer.update_execution_server_item(item, data)
-        except Exception as error:
-            logger.exception("Error updating from progress: %s", error)
+        except Exception:
+            logger.exception("Error updating from progress")
 
     def _create_tree_item(
         self, display: str, status: str, info: str, data: BaseServerInfo

@@ -14,13 +14,18 @@ from pyqt_reactive.services.zmq_server_info import (
     BaseServerInfo,
     ExecutionServerInfo,
 )
+from pyqt_reactive.services.zmq_server_scan_service import StartingEndpointObservation
 from zmqruntime.messages import PongResponse
+from zmqruntime.startup import EndpointStartupPhase, EndpointStartupStatus
 
 from openhcs.core.streaming_config_declarations import ViewerType
 from openhcs.pyqt_gui.widgets.shared.server_browser import live_tree_sync
 from openhcs.pyqt_gui.widgets.shared.server_browser.live_tree_sync import (
     LaunchingViewerServerInfo,
     LiveServerTreeSync,
+)
+from openhcs.pyqt_gui.widgets.shared.zmq_server_manager import (
+    ZMQServerManagerWidget,
 )
 
 
@@ -87,6 +92,30 @@ def _sync(tree):
         sync_server_item=lambda _server_info: None,
         sync_startup_endpoint=lambda _observation: None,
     )
+
+
+@pytest.mark.skipif(not PYQT_AVAILABLE, reason="PyQt6 not available")
+def test_connected_startup_observation_projects_connected_execution_row() -> None:
+    tree = _FakeTree()
+    manager = SimpleNamespace(
+        server_tree=tree,
+        _find_existing_server_item=lambda _port: None,
+    )
+    observation = StartingEndpointObservation(
+        endpoint_port=7777,
+        startup_status=EndpointStartupStatus(
+            phase=EndpointStartupPhase.CONNECTED,
+            message="Connected to server endpoint on port 7777",
+        ),
+    )
+
+    ZMQServerManagerWidget._sync_startup_endpoint(manager, observation)
+
+    row = tree.topLevelItem(0)
+    assert row.text(0) == "Port 7777 - Execution Server"
+    assert row.text(1) == "✅ Connected"
+    assert row.text(2) == "Connected to server endpoint on port 7777"
+    assert row.data(0, Qt.ItemDataRole.UserRole) is observation
 
 
 @pytest.mark.skipif(not PYQT_AVAILABLE, reason="PyQt6 not available")
