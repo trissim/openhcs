@@ -17,6 +17,7 @@ from python_introspect import (
     enum_member_names,
     parameter_exclusions,
 )
+from zmqruntime import OperationCancellation
 
 import openhcs.processing.custom_functions.manager as custom_function_manager
 from openhcs.agent.dto.common import SCHEMA_VERSION
@@ -494,6 +495,7 @@ class FunctionCatalogServiceABC(ABC):
         *,
         compact_signatures: bool = False,
         status_callback: Callable[[str], None] | None = None,
+        cancellation: OperationCancellation | None = None,
     ) -> FunctionCatalogPage:
         """Return the complete authoritative callable catalog."""
 
@@ -604,6 +606,7 @@ class FunctionCatalogService(FunctionCatalogServiceABC):
         *,
         compact_signatures: bool = False,
         status_callback: Callable[[str], None] | None = None,
+        cancellation: OperationCancellation | None = None,
     ) -> FunctionCatalogPage:
         """Return the complete authoritative registered-function catalog."""
         catalog_entries, entries = self._matching_entries(
@@ -611,6 +614,7 @@ class FunctionCatalogService(FunctionCatalogServiceABC):
             library=None,
             compact_signatures=compact_signatures,
             status_callback=status_callback,
+            cancellation=cancellation,
         )
         return catalog_page(
             items=entries,
@@ -628,6 +632,7 @@ class FunctionCatalogService(FunctionCatalogServiceABC):
         library: str | None,
         compact_signatures: bool,
         status_callback: Callable[[str], None] | None = None,
+        cancellation: OperationCancellation | None = None,
     ) -> tuple[
         tuple[FunctionCatalogEntry, ...],
         tuple[FunctionCatalogEntry, ...],
@@ -639,7 +644,10 @@ class FunctionCatalogService(FunctionCatalogServiceABC):
             SignatureView.COMPACT if compact_signatures else SignatureView.FULL
         )
         summary_view = SummaryView.COMPACT if compact_signatures else SummaryView.FULL
-        metadata_by_id = self._all_metadata(status_callback=status_callback)
+        metadata_by_id = self._all_metadata(
+            status_callback=status_callback,
+            cancellation=cancellation,
+        )
         projections = self._search_projections(
             metadata_by_id,
             signature_view=signature_view,
@@ -844,6 +852,7 @@ class FunctionCatalogService(FunctionCatalogServiceABC):
         self,
         *,
         status_callback: Callable[[str], None] | None = None,
+        cancellation: OperationCancellation | None = None,
     ) -> dict[str, FunctionMetadata]:
         from openhcs.processing.func_registry import (
             synchronize_custom_function_sources,
@@ -852,6 +861,7 @@ class FunctionCatalogService(FunctionCatalogServiceABC):
         synchronize_custom_function_sources()
         return RegistryService.get_all_functions_with_metadata(
             status_callback=status_callback,
+            cancellation=cancellation,
         )
 
     def _metadata(self, function_id: str) -> FunctionMetadata:

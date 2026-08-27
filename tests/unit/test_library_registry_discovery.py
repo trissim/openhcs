@@ -7,6 +7,7 @@ import subprocess
 import sys
 import textwrap
 from collections.abc import Callable
+from concurrent.futures import CancelledError
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -245,7 +246,11 @@ def test_registry_cache_miss_is_prepared_out_of_process(monkeypatch) -> None:
     monkeypatch.setattr(
         RegistryService,
         "_prepare_persistent_catalog",
-        classmethod(lambda cls, *, status_callback=None: prepared.append(True)),
+        classmethod(
+            lambda cls, *, status_callback=None, cancellation=None: prepared.append(
+                True
+            )
+        ),
     )
 
     assert RegistryService.get_all_functions_with_metadata() is cached_catalog
@@ -421,11 +426,26 @@ def test_registry_preparation_uses_background_process_policy(monkeypatch) -> Non
         ),
     )
 
-    def run(command, **kwargs):
-        calls.append((tuple(command), kwargs))
-        return subprocess.CompletedProcess(command, 0, "", "")
+    process = object()
 
-    monkeypatch.setattr(registry_service.subprocess, "run", run)
+    def popen(command, **kwargs):
+        calls.append((tuple(command), kwargs))
+        return process
+
+    class OwnedProcess:
+        def wait_for_exit(self, timeout):
+            assert timeout == 0.1
+            return SimpleNamespace(returncode=0)
+
+        def is_alive(self) -> bool:
+            return False
+
+    monkeypatch.setattr(registry_service.subprocess, "Popen", popen)
+    monkeypatch.setattr(
+        registry_service,
+        "endpoint_process",
+        lambda source: OwnedProcess() if source is process else None,
+    )
 
     registry_service.RegistryService._prepare_persistent_catalog()
 
@@ -437,6 +457,49 @@ def test_registry_preparation_uses_background_process_policy(monkeypatch) -> Non
     )
     assert calls[0][1]["creationflags"] == 73
     assert calls[0][1]["env"] is subprocess_environment
+    assert calls[0][1]["stderr"] is subprocess.STDOUT
+
+
+def test_registry_preparation_cancels_its_exact_owned_process(monkeypatch) -> None:
+    """Endpoint shutdown terminates the cold-catalog child it owns."""
+
+    from zmqruntime import OperationCancellation
+
+    from openhcs.processing.backends.lib_registry import registry_service
+
+    cancellation = OperationCancellation()
+    process = object()
+    events: list[str] = []
+
+    class OwnedProcess:
+        def wait_for_exit(self, timeout):
+            assert timeout == 0.1
+            cancellation.cancel()
+            return None
+
+        def is_alive(self) -> bool:
+            return True
+
+        def stop(self) -> None:
+            events.append("stop")
+
+    monkeypatch.setattr(
+        registry_service.subprocess,
+        "Popen",
+        lambda *args, **kwargs: process,
+    )
+    monkeypatch.setattr(
+        registry_service,
+        "endpoint_process",
+        lambda source: OwnedProcess() if source is process else None,
+    )
+
+    with pytest.raises(CancelledError):
+        registry_service.RegistryService._prepare_persistent_catalog(
+            cancellation=cancellation,
+        )
+
+    assert events == ["stop"]
 
 
 def test_library_registry_discovery_is_stable_across_fresh_worker_processes(

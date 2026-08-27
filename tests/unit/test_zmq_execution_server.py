@@ -193,6 +193,9 @@ def test_zmq_server_stop_releases_process_resources_when_transport_stop_fails(
 ) -> None:
     server = object.__new__(ZMQExecutionServer)
     events: list[object] = []
+    server._function_catalog_preparation = SimpleNamespace(
+        cancel_and_join=lambda: events.append("catalog")
+    )
 
     def fail_transport_stop(_server) -> None:
         events.append("transport")
@@ -210,4 +213,4 @@ def test_zmq_server_stop_releases_process_resources_when_transport_stop_fails(
     with pytest.raises(RuntimeError, match="transport stop failed"):
         server.stop()
 
-    assert events == ["transport", ("process_resources", True)]
+    assert events == ["transport", "catalog", ("process_resources", True)]

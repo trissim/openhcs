@@ -9,12 +9,16 @@ import inspect
 import logging
 import subprocess
 import sys
+import tempfile
 import threading
 from collections.abc import Callable
+from concurrent.futures import CancelledError
 from typing import TYPE_CHECKING, Dict, Optional
 
 from arraybridge import MemoryType
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
+from zmqruntime import OperationCancellation
+from zmqruntime.client import endpoint_process
 
 from openhcs.utils.environment import OpenHCSProcessEnvironment
 
@@ -55,6 +59,7 @@ class RegistryService:
         cls,
         *,
         status_callback: RegistryPreparationCallback | None = None,
+        cancellation: OperationCancellation | None = None,
     ) -> Dict[str, FunctionMetadata]:
         """Get unified metadata for all functions from all registries."""
         if cls._metadata_cache is not None:
@@ -70,6 +75,7 @@ class RegistryService:
         if cached_functions is None:
             cls._prepare_persistent_catalog(
                 status_callback=emit_status,
+                cancellation=cancellation,
             )
             emit_status("Loading the prepared function catalog")
             cached_functions = cls._load_valid_persistent_catalog(registry_instances)
@@ -197,9 +203,12 @@ class RegistryService:
         cls,
         *,
         status_callback: RegistryPreparationCallback | None = None,
+        cancellation: OperationCancellation | None = None,
     ) -> None:
         """Run behavior probing in a dedicated interpreter main thread."""
 
+        if cancellation is not None and cancellation.requested():
+            raise CancelledError
         status_callback = status_callback or logger.debug
         status_callback("Discovering functions in an isolated execution process")
 
@@ -212,16 +221,29 @@ class RegistryService:
             "--log-level",
             "WARNING",
         )
-        completed = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            env=MemoryType.subprocess_environment(),
-            **policy.popen_arguments(),
-        )
-        if completed.returncode != 0:
-            detail = (completed.stderr or completed.stdout).strip()
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as output:
+            process = subprocess.Popen(
+                command,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=MemoryType.subprocess_environment(),
+                **policy.popen_arguments(),
+            )
+            owned_process = endpoint_process(process)
+            try:
+                process_exit = owned_process.wait_for_exit(0.1)
+                while process_exit is None:
+                    if cancellation is not None and cancellation.requested():
+                        raise CancelledError
+                    process_exit = owned_process.wait_for_exit(0.1)
+            except BaseException:
+                if owned_process.is_alive():
+                    owned_process.stop()
+                raise
+            output.seek(0)
+            detail = output.read().strip()
+        if process_exit.returncode != 0:
             raise RuntimeError(
                 "Function registry preparation process failed"
                 + (f": {detail[-4000:]}" if detail else ".")

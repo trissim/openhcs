@@ -8,8 +8,9 @@ import json
 import subprocess
 import sys
 
-import openhcs.mcp.dev_client as dev_client
 import pytest
+
+import openhcs.mcp.dev_client as dev_client
 
 
 def test_multi_call_command_honors_its_declared_timeout_floor() -> None:
@@ -150,6 +151,66 @@ def test_persistent_client_preserves_local_usage_errors(monkeypatch) -> None:
             client.execute(("viewer-state", "--json"))
 
 
+def test_persistent_client_timeout_is_transport_inactivity_not_total_duration(
+    monkeypatch,
+) -> None:
+    class ProgressAwareFakeMcpDevStdioSession:
+        def __init__(self, server_spec, server_stderr) -> None:
+            del server_stderr
+            self.server_spec = server_spec
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+            del exc_type, exc_value, traceback
+
+        async def initialize(self, *, timeout_seconds: float) -> None:
+            del timeout_seconds
+
+        async def call_tool(
+            self,
+            name: str,
+            arguments,
+            *,
+            timeout_seconds: float,
+        ):
+            assert name == "openhcs_health_check"
+            assert arguments == {}
+            assert timeout_seconds == 0.02
+            for _ in range(3):
+                await asyncio.sleep(0.01)
+            return {
+                "isError": False,
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps({"status": "ok"}),
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(
+        dev_client,
+        "McpDevStdioSession",
+        ProgressAwareFakeMcpDevStdioSession,
+    )
+    monkeypatch.setattr(
+        type(dev_client.McpDevCommandSpec.for_name("health")),
+        "default_timeout_seconds",
+        0.0,
+    )
+
+    with dev_client.McpDevClient(sys.executable) as client:
+        execution = client.execute(
+            ("health", "--json"),
+            timeout_seconds=0.02,
+        )
+
+    assert execution.returncode == 0
+    assert execution.payload["results"][0]["payloads"] == [{"status": "ok"}]
+
+
 def test_stdio_tool_call_requests_and_consumes_progress_notifications(monkeypatch):
     session = dev_client.McpDevStdioSession(
         dev_client.McpDevServerSpec(sys.executable),
@@ -196,6 +257,63 @@ def test_stdio_tool_call_requests_and_consumes_progress_notifications(monkeypatc
     assert "MCP progress: progress=10.0 message='still running'" in (
         session.server_stderr.getvalue()
     )
+
+
+def test_stdio_tool_call_progress_renews_inactivity_timeout(monkeypatch) -> None:
+    session = dev_client.McpDevStdioSession(
+        dev_client.McpDevServerSpec(sys.executable),
+        io.StringIO(),
+    )
+    responses = iter(
+        {
+            "jsonrpc": "2.0",
+            "method": "notifications/progress",
+            "params": {"progressToken": 1, "progress": progress},
+        }
+        for progress in (10.0, 20.0, 30.0)
+    )
+    final_response = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {"content": []},
+    }
+
+    async def fake_write_message(message):
+        del message
+
+    async def fake_read_message(*, timeout_seconds):
+        await asyncio.wait_for(asyncio.sleep(0.01), timeout=timeout_seconds)
+        return next(responses, final_response)
+
+    monkeypatch.setattr(session, "write_message", fake_write_message)
+    monkeypatch.setattr(session, "read_message", fake_read_message)
+
+    result = asyncio.run(
+        session.call_tool("openhcs_slow_tool", {}, timeout_seconds=0.02)
+    )
+
+    assert result == {"content": []}
+
+
+def test_stdio_session_times_out_when_no_message_activity_arrives() -> None:
+    session = dev_client.McpDevStdioSession(
+        dev_client.McpDevServerSpec(sys.executable),
+        io.StringIO(),
+    )
+
+    async def read_without_activity() -> None:
+        stdout = asyncio.StreamReader()
+
+        class FakeProcess:
+            pass
+
+        process = FakeProcess()
+        process.stdout = stdout
+        session.process = process
+        await session.read_message(timeout_seconds=0.01)
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(read_without_activity())
 
 
 def test_stdio_session_reads_json_message_larger_than_stream_separator_limit() -> None:

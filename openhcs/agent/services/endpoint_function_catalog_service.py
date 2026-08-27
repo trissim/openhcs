@@ -225,6 +225,7 @@ class ZMQFunctionCatalogService(FunctionCatalogServiceABC):
         *,
         compact_signatures: bool = True,
         status_callback: Callable[[str], None] | None = None,
+        cancellation: OperationCancellation | None = None,
     ) -> FunctionCatalogPage:
         self._cancel_preparation()
         endpoint = self._config_provider()
@@ -233,7 +234,8 @@ class ZMQFunctionCatalogService(FunctionCatalogServiceABC):
         page = self._client_for(endpoint).get_function_catalog(
             FunctionCatalogControlRequest(
                 compact_signatures=compact_signatures,
-            )
+            ),
+            cancellation=cancellation,
         )
         with self._state_lock:
             self._endpoint_state = FunctionCatalogProjection.from_page(

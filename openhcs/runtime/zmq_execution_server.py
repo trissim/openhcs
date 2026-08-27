@@ -252,7 +252,10 @@ class ZMQExecutionServer(ExecutionServer):
         try:
             super().stop()
         finally:
-            cleanup_backend_connections(include_process_resources=True)
+            try:
+                self._function_catalog_preparation.cancel_and_join()
+            finally:
+                cleanup_backend_connections(include_process_resources=True)
 
     def handle_control_message(self, message):
         if ZMQControlMessageRouter.handles(message):

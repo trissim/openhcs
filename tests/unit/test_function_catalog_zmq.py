@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import inspect
 import textwrap
+import threading
 from concurrent.futures import CancelledError, Future
 from dataclasses import replace
 
@@ -601,6 +602,66 @@ def test_execution_server_runtime_capability_preparation_uses_single_owner(
     assert events == [callback]
 
 
+def test_execution_server_stop_cancels_catalog_preparation_before_backend_cleanup(
+    monkeypatch,
+) -> None:
+    from openhcs.runtime import zmq_execution_server
+
+    events: list[str] = []
+    server = ZMQExecutionServer()
+    monkeypatch.setattr(
+        ExecutionServer,
+        "stop",
+        lambda self: events.append("transport"),
+    )
+    monkeypatch.setattr(
+        server._function_catalog_preparation,
+        "cancel_and_join",
+        lambda: events.append("catalog"),
+    )
+    monkeypatch.setattr(
+        zmq_execution_server,
+        "cleanup_backend_connections",
+        lambda *, include_process_resources: events.append(
+            f"backends:{include_process_resources}"
+        ),
+    )
+
+    server.stop()
+
+    assert events == ["transport", "catalog", "backends:True"]
+
+
+def test_function_catalog_preparation_cancellation_reaches_catalog_owner() -> None:
+    from openhcs.runtime.function_catalog_preparation import (
+        FunctionCatalogPreparation,
+    )
+
+    started = threading.Event()
+
+    class CancellableCatalog:
+        def catalog(
+            self,
+            *,
+            compact_signatures,
+            status_callback,
+            cancellation,
+        ) -> None:
+            assert compact_signatures is True
+            del status_callback
+            started.set()
+            cancellation.wait()
+            raise CancelledError
+
+    preparation = FunctionCatalogPreparation(CancellableCatalog())
+    future = preparation.ensure_started()
+    assert started.wait(timeout=1.0)
+
+    preparation.cancel_and_join()
+
+    assert future.cancelled()
+
+
 def test_persistent_capability_preparation_uses_registry_owner(
     monkeypatch,
 ) -> None:
@@ -641,10 +702,11 @@ def test_endpoint_catalog_reconciles_persisted_custom_function_sources(
         cls,
         *,
         status_callback=None,
+        cancellation=None,
     ):
         """Project only metadata attached by the real custom-function owner."""
 
-        del cls, status_callback
+        del cls, status_callback, cancellation
         metadata = CustomFunctionRuntimeRegistry.metadata_by_name().values()
         return {
             function_metadata.composite_key: function_metadata

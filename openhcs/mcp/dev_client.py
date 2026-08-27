@@ -157,14 +157,10 @@ class McpDevClient:
         self,
         command_spec: McpDevCommandSpec,
         args: argparse.Namespace,
-        timeout_seconds: float | None,
     ) -> McpDevToolBatchResponse | McpDevToolListResponse:
         for call in command_spec.calls_from_args(args):
             call.require_surface_profile(self.server_spec.surface_profile)
-        command = command_spec.run_session(self._session, args)
-        if timeout_seconds is None:
-            return await command
-        return await asyncio.wait_for(command, timeout=timeout_seconds)
+        return await command_spec.run_session(self._session, args)
 
     def execute(
         self,
@@ -172,16 +168,16 @@ class McpDevClient:
         *,
         timeout_seconds: float | None = None,
     ) -> McpDevCommandExecution:
-        """Parse and execute one command through the canonical command registry."""
+        """Execute one command with an optional transport-inactivity override."""
         if not self._session_started or self._closed:
             raise RuntimeError("MCP dev client is not active.")
         normalized_argv = tuple(argv)
         args = self._parser.parse_args(normalized_argv)
+        if timeout_seconds is not None:
+            args.timeout_seconds = timeout_seconds
         command_spec = McpDevCommandSpec.for_name(args.command)
         try:
-            response = self._runner.run(
-                self._execute_session(command_spec, args, timeout_seconds)
-            )
+            response = self._runner.run(self._execute_session(command_spec, args))
         except McpDevCliUsageError:
             raise
         except Exception as exc:

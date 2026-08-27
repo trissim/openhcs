@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import threading
 import time
-from concurrent.futures import Future
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from collections.abc import Callable
+from concurrent.futures import CancelledError, Future
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import TYPE_CHECKING
 
+from zmqruntime import OperationCancellation
 from zmqruntime.startup import EndpointStartupPhase, EndpointStartupStatus
 
 if TYPE_CHECKING:
-    from openhcs.agent.services.function_catalog_service import FunctionCatalogService
+    from openhcs.agent.services.function_catalog_service import (
+        FunctionCatalogServiceABC,
+    )
 
 
 class FunctionCatalogPreparation:
@@ -30,10 +33,12 @@ class FunctionCatalogPreparation:
 
     def __init__(
         self,
-        function_catalog: "FunctionCatalogService",
+        function_catalog: "FunctionCatalogServiceABC",
     ) -> None:
         self._lock = threading.RLock()
         self._future: Future[None] | None = None
+        self._thread: threading.Thread | None = None
+        self._cancellation = OperationCancellation()
         self._function_catalog = function_catalog
         self._snapshot = EndpointStartupStatus(
             sequence=0,
@@ -50,14 +55,28 @@ class FunctionCatalogPreparation:
                 return self._future
             future: Future[None] = Future()
             self._future = future
+            if self._cancellation.requested():
+                future.cancel()
+                return future
             self._set_message("Starting function catalog preparation")
-            threading.Thread(
+            thread = threading.Thread(
                 target=self._prepare,
                 args=(future,),
                 name="openhcs-function-catalog-preparation",
                 daemon=True,
-            ).start()
+            )
+            self._thread = thread
+            thread.start()
             return future
+
+    def cancel_and_join(self) -> None:
+        """Cancel and join the exact preparation operation owned here."""
+
+        self._cancellation.cancel()
+        with self._lock:
+            thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join()
 
     def wait_until_ready(
         self,
@@ -101,7 +120,10 @@ class FunctionCatalogPreparation:
             self._function_catalog.catalog(
                 compact_signatures=True,
                 status_callback=self._set_message,
+                cancellation=self._cancellation,
             )
+        except CancelledError:
+            future.cancel()
         except BaseException as error:
             future.set_exception(error)
         else:
