@@ -2077,8 +2077,8 @@
       },
       {
         "path": "scripts/macos_installer_window_probe.swift",
-        "sha256": "eefb75ab1b7ffbc1e494dd9f019f0b38ef0545336f5e33ddb0b111fa3fef25da",
-        "role": "Queries one exact macOS installer window, projects its native identity and bounds, and can activate its declared primary control through process-targeted input."
+        "sha256": "f02ea152cfa2f7342188396fc602ad59d42f2d1464a6f4c193477dc2f8206307",
+        "role": "Queries one exact macOS installer window, projects its native identity and bounds, and activates its declared primary control through foreground native input."
       },
       {
         "path": ".github/workflows/docs.yml",

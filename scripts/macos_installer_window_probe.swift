@@ -1,4 +1,4 @@
-import CoreGraphics
+import AppKit
 import Foundation
 
 private enum InstallerWindowOperation: String {
@@ -10,6 +10,30 @@ private enum InstallerWindowOperation: String {
         case .inspect:
             return
         case .pressPrimary:
+            guard
+                let application = NSRunningApplication(
+                    processIdentifier: processIdentifier
+                ),
+                application.activate(
+                    options: [.activateAllWindows, .activateIgnoringOtherApps]
+                )
+            else {
+                throw InstallerActivationError()
+            }
+            let activationDeadline = Date().addingTimeInterval(5)
+            while
+                NSWorkspace.shared.frontmostApplication?.processIdentifier
+                    != processIdentifier,
+                Date() < activationDeadline
+            {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            guard
+                NSWorkspace.shared.frontmostApplication?.processIdentifier
+                    == processIdentifier
+            else {
+                throw InstallerActivationError()
+            }
             let returnKeyCode = CGKeyCode(36)
             guard
                 let keyDown = CGEvent(
@@ -25,10 +49,15 @@ private enum InstallerWindowOperation: String {
             else {
                 throw KeyboardEventUnavailableError()
             }
-            keyDown.postToPid(processIdentifier)
-            keyUp.postToPid(processIdentifier)
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
         }
     }
+}
+
+private struct InstallerActivationError: LocalizedError {
+    let errorDescription: String? =
+        "macOS could not make the installer the foreground application."
 }
 
 private struct KeyboardEventUnavailableError: LocalizedError {

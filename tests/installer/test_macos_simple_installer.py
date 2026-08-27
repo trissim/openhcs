@@ -331,7 +331,11 @@ def test_macos_installer_ci_drives_and_captures_the_shipping_app() -> None:
     assert "title == expectedTitle" in probe
     assert "matchingWindows.count == 1" in probe
     assert "case pressPrimary" in probe
-    assert "keyDown.postToPid(processIdentifier)" in probe
+    assert "NSRunningApplication(" in probe
+    assert "NSWorkspace.shared.frontmostApplication?.processIdentifier" in probe
+    assert "application.activate(" in probe
+    assert "keyDown.post(tap: .cghidEventTap)" in probe
+    assert "postToPid" not in probe
 
     invocation = "scripts/smoke_macos_installer_window.sh"
     assert invocation in macos_step
