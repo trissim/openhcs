@@ -7,8 +7,8 @@ from typing import Any
 import numpy as np
 import pytest
 from arraybridge.decorators import (
-    DtypeConversionConfig,
     PRESERVE_INPUT_DTYPE_CONFIG,
+    DtypeConversionConfig,
 )
 from python_introspect import (
     Enableable,
@@ -17,26 +17,32 @@ from python_introspect import (
     parameter_exclusions,
 )
 
-from openhcs.core.memory import MEMORY_TYPE_NUMPY
 from openhcs.core.callable_contract import callable_request
 from openhcs.core.config import LazyDtypeConfig
-from openhcs.core.runtime_image_values import ImageMetadataPayload, ImagePayloadMetadata, image_payload_data, image_payload_metadata, image_payload_mask, with_image_payload_data
+from openhcs.core.memory import MEMORY_TYPE_NUMPY
 from openhcs.core.runtime_array_values import RuntimeArrayPayload
+from openhcs.core.runtime_image_values import (
+    ImageMetadataPayload,
+    ImagePayloadMetadata,
+    image_payload_data,
+    image_payload_mask,
+    image_payload_metadata,
+    with_image_payload_data,
+)
 from openhcs.core.runtime_object_label_domains import (
     ObjectLabelDomain,
     ObjectLabelDomainScope,
 )
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelPayload,
+    ObjectLabelVariantData,
+)
+from openhcs.core.runtime_plane_projection import RuntimePlaneAxis
 from openhcs.core.source_image_provenance import (
     SourceImageProvenancePlanes,
 )
-from openhcs.core.runtime_object_labels import (
-    ObjectLabelVariantData,
-    ObjectLabelPayload,
-)
-from openhcs.core.runtime_plane_projection import RuntimePlaneAxis
-from openhcs.processing.backends.processors.numpy_processor import (
-    create_projection,
-    gaussian_blur,
+from openhcs.processing.backends.lib_registry.pyclesperanto_registry import (
+    PyclesperantoRegistry,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import (
     LibraryRegistryBase,
@@ -44,6 +50,10 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
     RuntimeCallableInvocation,
     RuntimeCallableView,
     RuntimeInvocationKwargPolicy,
+)
+from openhcs.processing.backends.processors.numpy_processor import (
+    create_projection,
+    gaussian_blur,
 )
 
 
@@ -119,6 +129,39 @@ def test_contract_wrapper_exposes_enableable_but_hides_runtime_parameters() -> N
     assert "slice_by_slice" not in params
     assert "dtype_config" not in exclusions
     assert "slice_by_slice" in exclusions
+
+
+def test_pyclesperanto_adapter_owns_output_buffer_and_device_parameters() -> None:
+    """External execution controls never become writable function-pane fields."""
+
+    def external_filter(
+        input_image: np.ndarray,
+        output_image: np.ndarray | None = None,
+        output_image_matrix: np.ndarray | None = None,
+        sigma: float = 1.0,
+        device: object | None = None,
+    ) -> np.ndarray:
+        del output_image, output_image_matrix, sigma, device
+        return input_image
+
+    registry = object.__new__(PyclesperantoRegistry)
+    adapter = registry.create_library_adapter(
+        external_filter,
+        ProcessingContract.FLEXIBLE,
+    )
+    wrapped = registry.apply_contract_wrapper(
+        adapter,
+        ProcessingContract.FLEXIBLE,
+    )
+
+    visible_parameters = UnifiedParameterAnalyzer.analyze(wrapped)
+    exclusions = parameter_exclusions(wrapped)
+
+    assert "sigma" in visible_parameters
+    assert "output_image" not in visible_parameters
+    assert "output_image_matrix" not in visible_parameters
+    assert "device" not in visible_parameters
+    assert {"output_image", "output_image_matrix", "device"} <= exclusions
 
 
 def test_contract_wrapper_exposes_registered_lazy_runtime_config_signature() -> None:

@@ -2286,6 +2286,21 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         """Compare arrays. Library-specific implementation required."""
         pass
 
+    def runtime_owned_parameter_names(
+        self,
+        signature: inspect.Signature,
+    ) -> tuple[str, ...]:
+        """Return library-declared parameters owned by adapter execution.
+
+        Runtime-tested libraries may expose optional output buffers, device
+        handles, or comparable execution controls in their Python signature.
+        Their registry owns whether those parameters remain at library defaults
+        instead of becoming authored pipeline values.
+        """
+
+        del signature
+        return ()
+
     def create_library_adapter(
         self, original_func: Callable, contract: ProcessingContract
     ) -> Callable:
@@ -2337,6 +2352,13 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         if self.MEMORY_TYPE is not None:
             for attribute in MemoryContractAttribute:
                 attribute.write(wrapped_adapter, self.MEMORY_TYPE)
+
+        _set_registry_runtime_parameter_exclusions(
+            wrapped_adapter,
+            original_sig,
+            self.runtime_owned_parameter_names(original_sig),
+            source=original_func,
+        )
 
         return wrapped_adapter
 

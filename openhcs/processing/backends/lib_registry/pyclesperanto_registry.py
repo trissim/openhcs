@@ -9,6 +9,7 @@ are handled internally without leaking into the ABC.
 from __future__ import annotations
 
 import inspect
+from enum import Enum
 from typing import List, Tuple
 
 import numpy as np
@@ -17,6 +18,19 @@ from openhcs.constants import MemoryType
 from openhcs.utils.import_utils import optional_import_placeholder
 
 from .unified_registry import LibraryRegistryBase, RuntimeTestingRegistryBase
+
+
+class PyclesperantoRuntimeParameter(Enum):
+    """pyclesperanto parameters whose defaults belong to runtime execution."""
+
+    OUTPUT_BUFFER = "output_image"
+    OUTPUT_MATRIX_BUFFER = "output_image_matrix"
+    DEVICE = "device"
+
+    def declared_name(self, signature: inspect.Signature) -> str | None:
+        """Return this parameter name when the callable declares it."""
+
+        return self.value if self.value in signature.parameters else None
 
 
 class PyclesperantoRegistry(RuntimeTestingRegistryBase):
@@ -87,6 +101,19 @@ class PyclesperantoRegistry(RuntimeTestingRegistryBase):
                 inspect.Parameter.POSITIONAL_ONLY,
                 inspect.Parameter.POSITIONAL_OR_KEYWORD,
             )
+        )
+
+    def runtime_owned_parameter_names(
+        self,
+        signature: inspect.Signature,
+    ) -> tuple[str, ...]:
+        """Keep output allocation and device selection at library defaults."""
+
+        return tuple(
+            name
+            for parameter in PyclesperantoRuntimeParameter
+            for name in (parameter.declared_name(signature),)
+            if name is not None
         )
 
     def _preprocess_input(self, image, func_name: str):
