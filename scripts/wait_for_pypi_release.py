@@ -4,21 +4,25 @@
 from __future__ import annotations
 
 import argparse
-from html.parser import HTMLParser
+import hashlib
 import json
 import math
 import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import quote, unquote, urlparse
 from urllib.request import urlopen
 
-
 PYPI_JSON_BASE_URL = "https://pypi.org/pypi"
 PYPI_SIMPLE_BASE_URL = "https://pypi.org/simple"
+
+
+class PyPIReleaseMetadataError(ValueError):
+    """Raised when exact-version PyPI metadata violates its contract."""
 
 
 class _SimpleIndexParser(HTMLParser):
@@ -51,6 +55,83 @@ class PyPIReleaseProbe:
     available: bool
     detail: str
     wheel_url: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PyPIReleaseFile:
+    """One immutable file declared by exact-version PyPI metadata."""
+
+    filename: str
+    url: str
+    sha256: str
+
+    @property
+    def hash_pinned_url(self) -> str:
+        """Return the installer-safe URL projected from the declared digest."""
+        return f"{self.url}#sha256={self.sha256}"
+
+
+def _release_files_from_payload(
+    payload: object,
+    version: str,
+) -> tuple[PyPIReleaseFile, ...]:
+    """Validate exact-version metadata and return its immutable files."""
+    if not isinstance(payload, dict):
+        raise PyPIReleaseMetadataError("PyPI returned a non-object JSON payload")
+    info = payload.get("info")
+    published_version = info.get("version") if isinstance(info, dict) else None
+    if published_version != version:
+        raise PyPIReleaseMetadataError(
+            f"PyPI returned version {published_version!r} instead of {version!r}"
+        )
+    release_files = payload.get("urls")
+    downloadable_files = (
+        tuple(
+            release_file
+            for release_file in release_files
+            if isinstance(release_file, dict)
+            and isinstance(release_file.get("url"), str)
+            and release_file["url"]
+            and isinstance(release_file.get("filename"), str)
+            and release_file["filename"]
+        )
+        if isinstance(release_files, list)
+        else ()
+    )
+    if not downloadable_files:
+        raise PyPIReleaseMetadataError("exact release has no downloadable files yet")
+
+    validated: list[PyPIReleaseFile] = []
+    for release_file in downloadable_files:
+        filename = release_file["filename"]
+        if Path(filename).name != filename or filename in {".", ".."}:
+            raise PyPIReleaseMetadataError(
+                f"exact release has an unsafe filename: {filename!r}"
+            )
+        digests = release_file.get("digests")
+        sha256 = digests.get("sha256") if isinstance(digests, dict) else None
+        if not isinstance(sha256, str) or re.fullmatch(r"[0-9a-f]{64}", sha256) is None:
+            raise PyPIReleaseMetadataError(
+                f"exact release file {filename!r} has no valid SHA-256 digest"
+            )
+        file_url = release_file["url"]
+        parsed_url = urlparse(file_url)
+        if (
+            parsed_url.scheme != "https"
+            or parsed_url.hostname is None
+            or parsed_url.username is not None
+            or parsed_url.password is not None
+            or parsed_url.fragment
+        ):
+            raise PyPIReleaseMetadataError(
+                f"exact release file {filename!r} does not use a plain HTTPS URL"
+            )
+        validated.append(PyPIReleaseFile(filename, file_url, sha256))
+    if len({release_file.filename for release_file in validated}) != len(validated):
+        raise PyPIReleaseMetadataError(
+            "exact release metadata contains duplicate filenames"
+        )
+    return tuple(validated)
 
 
 def release_json_url(project: str, version: str) -> str:
@@ -86,36 +167,14 @@ def probe_release_wheel(
             False, f"PyPI probe failed: {type(exc).__name__}: {exc}"
         )
 
-    if not isinstance(payload, dict):
-        return PyPIReleaseProbe(False, "PyPI returned a non-object JSON payload")
-    info = payload.get("info")
-    published_version = info.get("version") if isinstance(info, dict) else None
-    if published_version != version:
-        return PyPIReleaseProbe(
-            False,
-            f"PyPI returned version {published_version!r} instead of {version!r}",
-        )
-    release_files = payload.get("urls")
-    downloadable_files = (
-        tuple(
-            release_file
-            for release_file in release_files
-            if isinstance(release_file, dict)
-            and isinstance(release_file.get("url"), str)
-            and release_file["url"]
-            and isinstance(release_file.get("filename"), str)
-            and release_file["filename"]
-        )
-        if isinstance(release_files, list)
-        else ()
-    )
-    if not downloadable_files:
-        return PyPIReleaseProbe(False, "exact release has no downloadable files yet")
-
+    try:
+        release_files = _release_files_from_payload(payload, version)
+    except PyPIReleaseMetadataError as exc:
+        return PyPIReleaseProbe(False, str(exc))
     published_wheels = tuple(
         release_file
-        for release_file in downloadable_files
-        if release_file["filename"].endswith(".whl")
+        for release_file in release_files
+        if release_file.filename.endswith(".whl")
     )
     if not published_wheels:
         return PyPIReleaseProbe(
@@ -124,33 +183,53 @@ def probe_release_wheel(
         )
     selected_wheel = min(
         published_wheels,
-        key=lambda release_file: release_file["filename"],
+        key=lambda release_file: release_file.filename,
     )
-    digests = selected_wheel.get("digests")
-    sha256 = digests.get("sha256") if isinstance(digests, dict) else None
-    if not isinstance(sha256, str) or re.fullmatch(r"[0-9a-f]{64}", sha256) is None:
-        return PyPIReleaseProbe(
-            False,
-            "exact release wheel has no valid SHA-256 digest",
-        )
-    wheel_url = selected_wheel["url"]
-    parsed_wheel_url = urlparse(wheel_url)
-    if (
-        parsed_wheel_url.scheme != "https"
-        or parsed_wheel_url.hostname is None
-        or parsed_wheel_url.username is not None
-        or parsed_wheel_url.password is not None
-        or parsed_wheel_url.fragment
-    ):
-        return PyPIReleaseProbe(
-            False,
-            "exact release wheel URL is not a plain HTTPS URL",
-        )
     return PyPIReleaseProbe(
         True,
         f"PyPI metadata serves {project}=={version} with a verified wheel",
-        f"{wheel_url}#sha256={sha256}",
+        selected_wheel.hash_pinned_url,
     )
+
+
+def materialize_release_files(
+    project: str,
+    version: str,
+    destination: Path,
+    *,
+    opener: Callable = urlopen,
+) -> tuple[Path, ...]:
+    """Download and verify the exact files owned by one PyPI release."""
+    metadata_url = release_json_url(project, version)
+    try:
+        with opener(metadata_url, timeout=30) as response:
+            release_files = _release_files_from_payload(json.load(response), version)
+        verified_payloads = []
+        for release_file in release_files:
+            with opener(release_file.url, timeout=60) as response:
+                payload = response.read()
+            observed_sha256 = hashlib.sha256(payload).hexdigest()
+            if observed_sha256 != release_file.sha256:
+                raise RuntimeError(
+                    f"Downloaded {release_file.filename!r} has SHA-256 "
+                    f"{observed_sha256}, expected {release_file.sha256}."
+                )
+            verified_payloads.append((release_file, payload))
+    except HTTPError as exc:
+        raise RuntimeError(f"PyPI returned HTTP {exc.code}") from exc
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(
+            f"Could not materialize {project}=={version}: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
+
+    destination.mkdir(parents=True, exist_ok=True)
+    materialized: list[Path] = []
+    for release_file, payload in verified_payloads:
+        output_path = destination / release_file.filename
+        output_path.write_bytes(payload)
+        materialized.append(output_path)
+    return tuple(materialized)
 
 
 def probe_release(
@@ -270,6 +349,14 @@ def _build_parser() -> argparse.ArgumentParser:
             "file after the release becomes available."
         ),
     )
+    parser.add_argument(
+        "--release-directory",
+        type=Path,
+        help=(
+            "Download every exact-version PyPI file into this directory and "
+            "verify it against the metadata-declared SHA-256 digest."
+        ),
+    )
     return parser
 
 
@@ -286,6 +373,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if result.wheel_url is None:
             raise RuntimeError("Available PyPI release probe returned no wheel URL.")
         args.wheel_url_output.write_text(f"{result.wheel_url}\n", encoding="utf-8")
+    if result.available and args.release_directory is not None:
+        for path in materialize_release_files(
+            args.project,
+            args.version,
+            args.release_directory,
+        ):
+            print(path)
     return 0 if result.available else 1
 
 

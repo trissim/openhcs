@@ -1,12 +1,14 @@
 """Tests for the exact-release PyPI availability gate."""
 
+import hashlib
 import io
 import json
 from pathlib import Path
 from urllib.error import HTTPError
 
-from scripts import wait_for_pypi_release as release_wait
+import pytest
 
+from scripts import wait_for_pypi_release as release_wait
 
 WHEEL_SHA256 = "a" * 64
 WHEEL_URL = "https://files.pythonhosted.org/openhcs-0.5.22-py3-none-any.whl"
@@ -268,3 +270,123 @@ def test_main_writes_the_verified_wheel_url(monkeypatch, tmp_path: Path):
         == 0
     )
     assert output_path.read_text(encoding="utf-8") == f"{VERIFIED_WHEEL_URL}\n"
+
+
+def test_materialize_release_files_preserves_pypi_owned_bytes(tmp_path: Path):
+    wheel_payload = b"published wheel bytes"
+    sdist_payload = b"published source bytes"
+    wheel_url = "https://files.pythonhosted.org/openhcs-0.5.22.whl"
+    sdist_url = "https://files.pythonhosted.org/openhcs-0.5.22.tar.gz"
+
+    def opener(url, timeout):
+        if url == release_wait.release_json_url("openhcs", "0.5.22"):
+            assert timeout == 30
+            return _JsonResponse(
+                json.dumps(
+                    {
+                        "info": {"version": "0.5.22"},
+                        "urls": [
+                            {
+                                "filename": "openhcs-0.5.22.whl",
+                                "url": wheel_url,
+                                "digests": {
+                                    "sha256": hashlib.sha256(wheel_payload).hexdigest()
+                                },
+                            },
+                            {
+                                "filename": "openhcs-0.5.22.tar.gz",
+                                "url": sdist_url,
+                                "digests": {
+                                    "sha256": hashlib.sha256(sdist_payload).hexdigest()
+                                },
+                            },
+                        ],
+                    }
+                ).encode()
+            )
+        assert timeout == 60
+        return _JsonResponse(wheel_payload if url == wheel_url else sdist_payload)
+
+    destination = tmp_path / "dist"
+    paths = release_wait.materialize_release_files(
+        "openhcs",
+        "0.5.22",
+        destination,
+        opener=opener,
+    )
+
+    assert paths == (
+        destination / "openhcs-0.5.22.whl",
+        destination / "openhcs-0.5.22.tar.gz",
+    )
+    assert paths[0].read_bytes() == wheel_payload
+    assert paths[1].read_bytes() == sdist_payload
+
+
+def test_materialize_release_files_rejects_digest_mismatch(tmp_path: Path):
+    artifact_url = "https://files.pythonhosted.org/openhcs-0.5.22.whl"
+
+    def opener(url, timeout):
+        if url == release_wait.release_json_url("openhcs", "0.5.22"):
+            return _JsonResponse(
+                json.dumps(
+                    {
+                        "info": {"version": "0.5.22"},
+                        "urls": [
+                            {
+                                "filename": "openhcs-0.5.22.whl",
+                                "url": artifact_url,
+                                "digests": {"sha256": "0" * 64},
+                            }
+                        ],
+                    }
+                ).encode()
+            )
+        return _JsonResponse(b"different bytes")
+
+    destination = tmp_path / "dist"
+    with pytest.raises(RuntimeError, match="Downloaded.*SHA-256"):
+        release_wait.materialize_release_files(
+            "openhcs",
+            "0.5.22",
+            destination,
+            opener=opener,
+        )
+    assert not destination.exists()
+
+
+def test_main_materializes_the_published_release(monkeypatch, tmp_path: Path):
+    destination = tmp_path / "dist"
+    observed = {}
+    monkeypatch.setattr(
+        release_wait,
+        "wait_for_release",
+        lambda *args, **kwargs: release_wait.PyPIReleaseProbe(True, "published"),
+    )
+
+    def materialize(project, version, release_directory):
+        observed.update(
+            project=project,
+            version=version,
+            destination=release_directory,
+        )
+        return ()
+
+    monkeypatch.setattr(release_wait, "materialize_release_files", materialize)
+
+    assert (
+        release_wait.main(
+            (
+                "openhcs",
+                "0.5.22",
+                "--release-directory",
+                str(destination),
+            )
+        )
+        == 0
+    )
+    assert observed == {
+        "project": "openhcs",
+        "version": "0.5.22",
+        "destination": destination,
+    }

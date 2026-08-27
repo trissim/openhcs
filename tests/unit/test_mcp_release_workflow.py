@@ -183,12 +183,14 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
         "ref": "${{ needs.verify-release-commit.outputs.release_sha }}",
         "submodules": "recursive",
     }
-    rebuild_step = recovery_steps[
-        recovery_step_names.index("Rebuild release distributions")
+    materialize_step = recovery_steps[
+        recovery_step_names.index("Materialize published release distributions")
     ]["run"]
-    assert "python -m build" in rebuild_step
-    assert "scripts.validate_wheel_deployment" in rebuild_step
-    assert "python -m twine check dist/*" in rebuild_step
+    assert "python -m build" not in materialize_step
+    assert "scripts/wait_for_pypi_release.py" in materialize_step
+    assert "--release-directory dist" in materialize_step
+    assert "scripts.validate_wheel_deployment" in materialize_step
+    assert "python -m twine check dist/*" in materialize_step
     release_step = recovery_steps[
         recovery_step_names.index("Create or update complete release")
     ]
@@ -264,7 +266,7 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
     )
 
     wait_step = steps[wait_index]
-    assert 'package["registryType"] == "pypi"' in wait_step["run"]
+    assert "read_package_name" in wait_step["run"]
     assert "scripts/wait_for_pypi_release.py" in wait_step["run"]
     assert '"$MCP_PYPI_PROJECT"' in wait_step["run"]
     assert '"${OPENHCS_RELEASE_VERSION#v}"' in wait_step["run"]

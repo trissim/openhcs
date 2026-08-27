@@ -394,11 +394,18 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Rebuild release distributions
+      - name: Materialize published release distributions
+        env:
+          OPENHCS_RELEASE_VERSION: ${{ needs.verify-release-commit.outputs.release_version }}
         run: |
           python -m pip install --upgrade pip
-          pip install -r scripts/requirements.txt
-          python -m build
+          python -m pip install packaging twine
+          PYPI_PROJECT=$(python -c 'from scripts.sync_mcp_release_metadata import read_package_name; print(read_package_name())')
+          python scripts/wait_for_pypi_release.py \
+            "$PYPI_PROJECT" "$OPENHCS_RELEASE_VERSION" \
+            --timeout-seconds 900 \
+            --poll-interval-seconds 5 \
+            --release-directory dist
           python -m scripts.validate_wheel_deployment dist/*.whl
           python -m twine check dist/*
 
@@ -455,7 +462,7 @@ jobs:
 
       - name: Wait for the published PyPI release
         run: |
-          MCP_PYPI_PROJECT=$(python -c 'import json; print(next(package["identifier"] for package in json.load(open("server.json"))["packages"] if package["registryType"] == "pypi"))')
+          MCP_PYPI_PROJECT=$(python -c 'from scripts.sync_mcp_release_metadata import read_package_name; print(read_package_name())')
           python scripts/wait_for_pypi_release.py \
             "$MCP_PYPI_PROJECT" "${OPENHCS_RELEASE_VERSION#v}" \
             --timeout-seconds 900 \
@@ -464,7 +471,7 @@ jobs:
 
       - name: Validate published desktop capability requirements
         run: |
-          MCP_PYPI_PROJECT=$(python -c 'import json; print(next(package["identifier"] for package in json.load(open("server.json"))["packages"] if package["registryType"] == "pypi"))')
+          MCP_PYPI_PROJECT=$(python -c 'from scripts.sync_mcp_release_metadata import read_package_name; print(read_package_name())')
           DESKTOP_EXTRAS=$(python scripts/sync_mcp_release_metadata.py --print-desktop-extras)
           MCP_WHEEL_URL=$(< "$RUNNER_TEMP/openhcs-release-wheel-url")
           python -m pip install "${MCP_PYPI_PROJECT}[${DESKTOP_EXTRAS}] @ ${MCP_WHEEL_URL}"

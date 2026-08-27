@@ -281,10 +281,12 @@ again:
      --field publish_python_package=false \
      --field publish_desktop_installers=true
 
-This path rebuilds and validates the wheel and source distribution, builds both
-native installers, attaches the complete asset set to the existing tag, and
-continues to MCP Registry publication. Every artifact comes from the exact
-commit resolved by the release tag.
+This path downloads the exact wheel and source distribution already owned by
+PyPI and verifies their declared SHA-256 digests. It builds both native
+installers, attaches the complete asset set to the existing tag, and continues
+to MCP Registry publication. The Python files on PyPI and GitHub are therefore
+byte-identical, while every native artifact comes from the commit resolved by
+the release tag.
 
 Native installer signing
 ------------------------
