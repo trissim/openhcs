@@ -523,6 +523,6 @@ def test_macos_installer_ci_uses_native_package_manager_config_syntax() -> None:
 
     assert 'hostile_pip_config="$RUNNER_TEMP/hostile-pip.ini"' in macos_step
     assert 'hostile_uv_config="$RUNNER_TEMP/hostile-uv.toml"' in macos_step
-    assert "printf 'default-index = \"%s\"\\n'" in macos_step
+    assert "printf 'index-url = \"%s\"\\n'" in macos_step
     assert 'export UV_CONFIG_FILE="$hostile_uv_config"' in macos_step
     assert 'export UV_CONFIG_FILE="$hostile_pip_config"' not in macos_step

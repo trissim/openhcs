@@ -2818,7 +2818,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "1b4762bb33baa1296cb8564c2626056c75ec78f821ca9990ad1daf2bcdf32d94",
+        "sha256": "89841287251e5219fc4662fe523496b6468568e6da2d0a0ed7680a4f83316c57",
         "role": "Cross-platform source-candidate and published-dependency readiness, installed-wheel live GUI/MCP operation with retained native screenshots, three-stage native-installer workflow proof, signing-helper parse, and staged-update validation matrix."
       },
       {
@@ -3020,7 +3020,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "1b4762bb33baa1296cb8564c2626056c75ec78f821ca9990ad1daf2bcdf32d94",
+        "sha256": "89841287251e5219fc4662fe523496b6468568e6da2d0a0ed7680a4f83316c57",
         "role": "Runs explicitly selected live OMERO variants and preserves component and table-service diagnostics on failure."
       }
     ],

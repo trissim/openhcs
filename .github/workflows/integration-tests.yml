@@ -913,7 +913,7 @@ jobs:
           )
           $hostileUvConfig = Join-Path $env:RUNNER_TEMP "hostile-uv.toml"
           Set-Content -LiteralPath $hostileUvConfig -Encoding UTF8 -Value @(
-            "default-index = `"$hostilePipIndex`""
+            "index-url = `"$hostilePipIndex`""
           )
           $env:PIP_CONFIG_FILE = $hostilePipConfig
           $env:PIP_INDEX_URL = $hostilePipIndex
@@ -1550,7 +1550,7 @@ jobs:
           printf '[global]\nindex-url = %s\nextra-index-url = %s\n' \
             "$hostile_pip_index" "$hostile_pip_index" > "$hostile_pip_config"
           hostile_uv_config="$RUNNER_TEMP/hostile-uv.toml"
-          printf 'default-index = "%s"\n' \
+          printf 'index-url = "%s"\n' \
             "$hostile_pip_index" > "$hostile_uv_config"
           export PIP_CONFIG_FILE="$hostile_pip_config"
           export PIP_INDEX_URL="$hostile_pip_index"

@@ -898,7 +898,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "1b4762bb33baa1296cb8564c2626056c75ec78f821ca9990ad1daf2bcdf32d94",
+        "sha256": "89841287251e5219fc4662fe523496b6468568e6da2d0a0ed7680a4f83316c57",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -2081,7 +2081,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "1b4762bb33baa1296cb8564c2626056c75ec78f821ca9990ad1daf2bcdf32d94",
+        "sha256": "89841287251e5219fc4662fe523496b6468568e6da2d0a0ed7680a4f83316c57",
         "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, retained application and three-stage installer screenshot artifacts, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {

@@ -776,7 +776,7 @@ def test_windows_installer_ci_uses_native_package_manager_config_syntax() -> Non
 
     assert '"hostile-pip.ini"' in smoke_step
     assert '"hostile-uv.toml"' in smoke_step
-    assert '"default-index = `"$hostilePipIndex`""' in smoke_step
+    assert '"index-url = `"$hostilePipIndex`""' in smoke_step
     assert "$env:UV_CONFIG_FILE = $hostileUvConfig" in smoke_step
     assert "$env:UV_CONFIG_FILE = $hostilePipConfig" not in smoke_step
 
