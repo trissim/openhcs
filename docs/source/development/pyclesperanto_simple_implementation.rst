@@ -36,6 +36,11 @@ resolves the available pyclesperanto device, and stores the framework-local
 binding on the compiled step. Runtime enters that exact device scope; the
 callable must not select a process-global device itself.
 
+Discovered pyclesperanto signatures can expose ``output_image``,
+``output_image_matrix``, and ``device`` parameters. ``PyclesperantoRegistry``
+declares those as runtime-owned, so generated forms and pipeline code omit them
+while keeping algorithm parameters editable.
+
 Do not duplicate ArrayBridge framework configuration, append the function to a
 manual catalog, or make generic compiler code import the concrete
 pyclesperanto module. If a framework behavior is missing, extend the

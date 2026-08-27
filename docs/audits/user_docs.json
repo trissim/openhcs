@@ -92,7 +92,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
+        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
         "role": "Declares the nominal processing-contract members defined by the glossary."
       }
     ],
@@ -105,7 +105,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
-      "On 2026-08-25, re-read the complete module-structure reference after the viewer protocol gained typed payload and isolation controls; package layout, submodule ownership, and contributor navigation remain unchanged."
+      "On 2026-08-25, re-read the complete module-structure reference after the viewer protocol gained typed payload and isolation controls; package layout, submodule ownership, and contributor navigation remain unchanged.",
+      "On 2026-08-27, re-read the complete glossary after library registries gained declaration-owned runtime-parameter exclusions; the callable-contract and runtime-adapter definitions remain accurate."
     ]
   },
   {
@@ -202,7 +203,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
+        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -221,7 +222,8 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-27, re-read the complete explanation after library registries gained declaration-owned runtime-parameter exclusions; its declaration and ownership model remains accurate."
     ]
   },
   {
@@ -341,7 +343,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
+        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -381,6 +383,7 @@
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/concepts/data_dimensions.rst in full against repository base 32ca17c17 and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read the complete data-dimensions explanation after library registries gained declaration-owned runtime-parameter exclusions; dimensional and runtime-identity claims remain unchanged.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/constants/constants.py; openhcs/core/variable_component_stack_requirement.py; openhcs/core/component_group_scope.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/core/runtime_object_label_domains.py; openhcs/processing/backends/cellprofiler/watershed.py; openhcs/processing/backends/cellprofiler/primary_objects.py; openhcs/processing/backends/cellprofiler/secondary.py; tests/unit/test_callable_contract.py; tests/unit/test_documented_dimensionality.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -467,7 +470,7 @@
   },
   {
     "path": "docs/source/concepts/function_library.rst",
-    "source_sha256": "905633cd590906e90a97ec81a9167921b5154ad9d5de0f34638e934587eeac05",
+    "source_sha256": "ebd6d09fa345ba1d9c220f3a73e5a99dd4f6a98b4fbded6d0713e9638cf0333a",
     "audience": [
       "imaging scientists",
       "callable authors"
@@ -477,7 +480,7 @@
     "authority": [
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
+        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -519,6 +522,11 @@
         "path": "tests/unit/test_library_registry_discovery.py",
         "sha256": "2e7163761aa16e60b9f600166d3dc46f329583e9b1d7b22790c08d2156131b51",
         "role": "Proves declaration-derived catalogue discovery and process policy filtering."
+      },
+      {
+        "path": "tests/unit/test_unified_registry_runtime_payloads.py",
+        "sha256": "e731379d3e48fd5c98709203668e09baa195bb0c9301a2b041e1c799fa8140e3",
+        "role": "Proves external library runtime controls stay out of authored function parameters."
       }
     ],
     "findings": [
@@ -530,7 +538,7 @@
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/concepts/function_library.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/processing/backends/lib_registry/registry_service.py; openhcs/core/callable_contract.py; openhcs/agent/services/function_catalog_service.py; tests/unit/test_callable_contract.py; external/arraybridge/src/arraybridge/types.py; external/arraybridge/src/arraybridge/decorators.py; openhcs/processing/backends/lib_registry/openhcs_registry.py; tests/unit/test_library_registry_discovery.py.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/processing/backends/lib_registry/registry_service.py; openhcs/core/callable_contract.py; openhcs/agent/services/function_catalog_service.py; tests/unit/test_callable_contract.py; external/arraybridge/src/arraybridge/types.py; external/arraybridge/src/arraybridge/decorators.py; openhcs/processing/backends/lib_registry/openhcs_registry.py; tests/unit/test_library_registry_discovery.py; tests/unit/test_unified_registry_runtime_payloads.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
@@ -538,7 +546,8 @@
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-24, re-read the complete explanation after stdout containment moved out of function-catalog discovery and into the MCP transport; callable ownership and discovery guidance remain unchanged.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete explanation against endpoint-owned search, detail, and selected-reference transport; focused catalogue tests plus live desktop and MCP probes confirmed the documented discovery boundary."
+      "On 2026-08-25, re-read the complete explanation against endpoint-owned search, detail, and selected-reference transport; focused catalogue tests plus live desktop and MCP probes confirmed the documented discovery boundary.",
+      "On 2026-08-27, re-read and revised the complete explanation after library registries gained declaration-owned runtime-parameter exclusions; it now distinguishes external runtime controls from authored algorithm parameters."
     ]
   },
   {
@@ -652,7 +661,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
+        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -708,7 +717,8 @@
       "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
       "On 2026-08-25, re-read the complete reference against PolyStore 0.2.8 and revised the package boundary to include its separate symbolic OMERO filename-template declaration.",
       "On 2026-08-26, re-read the complete explanation after ZMQRuntime endpoint attempts gained caller-owned cancellation; the generic transport versus OpenHCS adapter ownership remains accurate.",
-      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate."
+      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate.",
+      "On 2026-08-27, re-read the complete ownership reference after library registries gained declaration-owned runtime-parameter exclusions; the OpenHCS processing boundary remains accurate."
     ]
   },
   {
@@ -1200,7 +1210,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
+        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -1213,6 +1223,7 @@
     "disposition": "keep",
     "validation": [
       "Re-read docs/source/guide_for_biologists/glossary.rst in full against repository base 32ca17c17 and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read the complete biologist glossary after library registries gained declaration-owned runtime-parameter exclusions; its three axis-processing distinctions remain unchanged.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/constants/constants.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/core/config.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -2518,7 +2529,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
+        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -2588,6 +2599,7 @@
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/reference/dimensionality_and_measurements.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read the complete capability reference after library registries gained declaration-owned runtime-parameter exclusions; segmentation and measurement boundaries remain unchanged.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/aligned_image_payload.py; openhcs/core/runtime_object_label_domains.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/processing/backends/cellprofiler/watershed.py; openhcs/processing/backends/cellprofiler/primary_objects.py; openhcs/processing/backends/cellprofiler/secondary.py; openhcs/processing/backends/cellprofiler/intensity.py; openhcs/processing/backends/cellprofiler/shape.py; openhcs/processing/backends/cellprofiler/area_occupied.py; benchmark/manifests/official30_portable_axis1.json; tests/unit/test_documented_dimensionality.py; tests/unit/test_cellprofiler_watershed_3d.py; tests/unit/test_cellprofiler_library_loading.py; tests/unit/test_cellprofiler_module_execution.py; tests/unit/test_cellprofiler_pipeline_import.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -3000,7 +3012,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
+        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -3041,7 +3053,8 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete custom-function authoring how-to after formatting its runtime projection authority; callable declaration and catalogue behavior remain unchanged.",
-      "On 2026-08-26, re-read the complete custom-function how-to after function-catalog transport regression coverage changed; the declaration-owned callable contract remains accurate."
+      "On 2026-08-26, re-read the complete custom-function how-to after function-catalog transport regression coverage changed; the declaration-owned callable contract remains accurate.",
+      "On 2026-08-27, re-read the complete custom-function how-to after external library registries gained runtime-parameter exclusions; custom callables still declare runtime parameters through their owning decorators and contracts."
     ]
   },
   {

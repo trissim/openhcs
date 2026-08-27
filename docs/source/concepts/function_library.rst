@@ -54,6 +54,11 @@ enum-annotated parameter requires a member of the declared enum; passing its raw
 string value is rejected rather than silently creating a second enum-to-string
 interpretation.
 
+A library registry can also declare parameters from an external signature as
+runtime-owned. For example, pyclesperanto output buffers and device selectors
+remain at their library defaults and do not appear as editable pipeline fields;
+algorithm parameters such as a filter radius or sigma remain authored values.
+
 Finding functions
 -----------------
 

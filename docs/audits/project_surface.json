@@ -47,7 +47,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
+        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
         "role": "Owns declaration-based callable discovery, execution memory contracts, dimensional execution, and registry caching."
       },
       {
@@ -92,7 +92,8 @@
       "On 2026-08-26, re-read the complete project overview against the changed capability and client-registration owners; transport instruction and platform-path extraction are internal ownership changes, so the public feature, client, installation, and safety claims remain accurate.",
       "On 2026-08-27, re-read the complete project overview against the uv-owned installer and updater lifecycle; its public installation and capability claims remain accurate.",
       "On 2026-08-27, rechecked the complete project overview after package-source policy became a serialized detached-worker input; its public installation and capability claims remain accurate.",
-      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate."
+      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate.",
+      "On 2026-08-27, re-read the complete project page after library registries gained declaration-owned runtime-parameter exclusions; the public function-discovery and UI-integration claims remain accurate."
     ]
   }
 ]

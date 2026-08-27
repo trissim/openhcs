@@ -492,7 +492,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
+        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
         "role": "Processing-contract execution and registry-owned catalogue admission and cache semantics."
       }
     ],
@@ -506,7 +506,8 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-27, re-read the complete transition page after library registries gained declaration-owned runtime-parameter exclusions; grouping and output terminology remain unchanged."
     ]
   },
   {
@@ -773,7 +774,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
+        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
         "role": "Processing-contract execution and registry-owned catalogue admission and cache semantics."
       },
       {
@@ -807,7 +808,8 @@
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-27, re-read the complete architecture explanation after library registries gained declaration-owned runtime-parameter exclusions; callable and compiler ownership claims remain accurate."
     ]
   },
   {
@@ -1805,7 +1807,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "b0ef20634554264d24b59fa4259421a5841dd57ead06f057e46f0a35af187266",
+        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
         "role": "Processing-contract execution and registry-owned catalogue admission and cache semantics."
       },
       {
@@ -1941,7 +1943,8 @@
       "On 2026-08-26, re-read and revised the complete page after one caller-owned cancellation authority began spanning function-catalog endpoint startup and request polling; the updated text matches ZMQRuntime and the OpenHCS execution client.",
       "On 2026-08-27, re-read the complete transition reference against the changed installed-desktop evidence authority; its ZMQ ownership and lifecycle claims remain accurate.",
       "On 2026-08-27, rechecked the complete transition reference after installed-desktop acceptance advanced the installer schema; its ZMQ ownership and lifecycle claims remain accurate.",
-      "On 2026-08-27, re-read the complete transition explanation after Windows installed-demo execution exposed the Numba cache path budget; the execution and catalogue ownership claims remain unchanged, and the native harness now consumes the declaration-owned current-platform cache path."
+      "On 2026-08-27, re-read the complete transition explanation after Windows installed-demo execution exposed the Numba cache path budget; the execution and catalogue ownership claims remain unchanged, and the native harness now consumes the declaration-owned current-platform cache path.",
+      "On 2026-08-27, re-read the complete transition explanation after library registries gained declaration-owned runtime-parameter exclusions; endpoint catalogue ownership and transport claims remain unchanged."
     ]
   },
   {
@@ -3169,7 +3172,7 @@
   },
   {
     "path": "docs/source/development/pyclesperanto_simple_implementation.rst",
-    "source_sha256": "5a05eed768a1dd3bf8b05ccddd8973277c9d1aae2845b81c001e626637b301cb",
+    "source_sha256": "5cecda2276f76c744ad6a215f8ecd58c82c2ce6ce4859d6d5990f39ba67ffc3c",
     "audience": [
       "OpenHCS GPU-processing callable authors"
     ],
@@ -3183,7 +3186,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/pyclesperanto_registry.py",
-        "sha256": "44454033ad8e1525de29ea89c3d5d428664333f9861160982a7e7e97d8736f07",
+        "sha256": "2ee94e4bcd944e7ac16a1474e8d67f6e4282f867f24cbb9b4bcde24071e5405d",
         "role": "Declaration-owned pyclesperanto callable-library discovery."
       },
       {
@@ -3225,6 +3228,11 @@
         "path": "tests/unit/test_framework_device_resolver.py",
         "sha256": "90b288a2ab4645226b3e8a3dea7b9338ff57592a434baa6b0c4f984bf0651b1c",
         "role": "Regression proof for exact framework-local device selection."
+      },
+      {
+        "path": "tests/unit/test_unified_registry_runtime_payloads.py",
+        "sha256": "e731379d3e48fd5c98709203668e09baa195bb0c9301a2b041e1c799fa8140e3",
+        "role": "Proves pyclesperanto output buffers and device handles remain runtime-owned while algorithm parameters stay authored."
       }
     ],
     "findings": [
@@ -3233,7 +3241,8 @@
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/development/pyclesperanto_simple_implementation.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: external/arraybridge/src/arraybridge/converters.py; openhcs/processing/backends/lib_registry/pyclesperanto_registry.py; openhcs/processing/backends/processors/pyclesperanto_processor.py; external/arraybridge/src/arraybridge/types.py; external/arraybridge/src/arraybridge/decorators.py; openhcs/core/memory/decorators.py; openhcs/core/callable_contract.py; openhcs/core/framework_device_resolver.py; openhcs/core/steps/function_runtime.py; tests/unit/test_framework_device_resolver.py.",
+      "Compared every factual claim directly with the current hash-pinned authorities: external/arraybridge/src/arraybridge/converters.py; openhcs/processing/backends/lib_registry/pyclesperanto_registry.py; openhcs/processing/backends/processors/pyclesperanto_processor.py; external/arraybridge/src/arraybridge/types.py; external/arraybridge/src/arraybridge/decorators.py; openhcs/core/memory/decorators.py; openhcs/core/callable_contract.py; openhcs/core/framework_device_resolver.py; openhcs/core/steps/function_runtime.py; tests/unit/test_framework_device_resolver.py; tests/unit/test_unified_registry_runtime_payloads.py.",
+      "On 2026-08-27, re-read and revised the complete how-to after PyclesperantoRegistry began owning external output-buffer and device exclusions; the page now states which signature parameters stay out of authored forms and code, and the focused runtime-payload regression passed.",
       "Focused feature-lattice QA passed 159 tests covering the N-Z architecture and developer workflow authorities.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
