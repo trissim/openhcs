@@ -865,6 +865,8 @@ jobs:
           if ((Get-Item -LiteralPath $launcher).Length -gt 2MB) {
             throw "Windows installer launcher unexpectedly embeds a large runtime."
           }
+          $contract = Get-Content -LiteralPath $contractPath -Raw |
+            ConvertFrom-Json
           Add-Type -AssemblyName System.Drawing
           $actualInstallerIcon = [Drawing.Icon]::ExtractAssociatedIcon($launcher)
           if ($null -eq $actualInstallerIcon) {
@@ -896,6 +898,16 @@ jobs:
             $expectedInstallerBitmap.Dispose()
             $actualInstallerIcon.Dispose()
             $expectedInstallerIcon.Dispose()
+          }
+
+          & scripts/smoke_windows_installer_window.ps1 `
+            -LauncherPath $launcher `
+            -ExpectedTitle "$($contract.product_name) Setup" `
+            -EvidenceDirectory (
+              Join-Path $env:RUNNER_TEMP "openhcs-native-installer-ui"
+            )
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows native installer window smoke failed."
           }
 
           $env:UV_FIND_LINKS = (
@@ -954,8 +966,6 @@ jobs:
           }
 
           $desktopRoot = [Environment]::GetFolderPath("DesktopDirectory")
-          $contract = Get-Content -LiteralPath $contractPath -Raw |
-            ConvertFrom-Json
           $shortcutPath = Join-Path `
             $desktopRoot `
             ("{0}.lnk" -f $contract.product_name)
@@ -1459,6 +1469,12 @@ jobs:
           packaging/installers/macos/build-installer.sh \
             "$staged_contract" \
             "$installer_app"
+          product_name=$(/usr/bin/plutil -extract product_name raw -o - \
+            "$staged_contract")
+          scripts/smoke_macos_installer_window.sh \
+            "$installer_app" \
+            "$product_name Installer" \
+            "$RUNNER_TEMP/openhcs-native-installer-ui"
 
           installer_dmg="$RUNNER_TEMP/OpenHCS-macOS-Installer.dmg"
           mount_point="$RUNNER_TEMP/OpenHCS Installer Mount"
@@ -1503,8 +1519,6 @@ jobs:
           "$installer_app/Contents/Resources/install-openhcs.sh" \
             "$installer_app/Contents/Resources/installer_contract.json"
 
-          product_name=$(/usr/bin/plutil -extract product_name raw -o - \
-            "$staged_contract")
           installer_log="$HOME/Library/Logs/$product_name/installer.log"
           if grep -Fq "$hostile_pip_index" "$installer_log"; then
             printf 'macOS installer inherited a host package index.\n' >&2
@@ -1573,6 +1587,15 @@ jobs:
           else
             printf 'macOS installer log was not created at %s.\n' "$installer_log"
           fi
+
+      - name: Upload native installer UI evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-installer-ui-${{ matrix.platform }}-${{ matrix.architecture }}
+          path: ${{ runner.temp }}/openhcs-native-installer-ui
+          if-no-files-found: warn
+          retention-days: 14
 
   # Wait once for metadata-declared candidate dependencies to reach the same
   # installer-facing index used by pip. Exact-version JSON alone can precede

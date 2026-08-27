@@ -23,6 +23,11 @@ BUILD_PATH = MACOS_ROOT / "build-installer.sh"
 DMG_BUILD_PATH = MACOS_ROOT / "build-dmg.sh"
 DMG_LIFECYCLE_PATH = MACOS_ROOT / "dmg-lifecycle.sh"
 PUBLISH_WORKFLOW_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "publish.yml"
+INTEGRATION_WORKFLOW_PATH = (
+    REPOSITORY_ROOT / ".github" / "workflows" / "integration-tests.yml"
+)
+WINDOW_SMOKE_PATH = REPOSITORY_ROOT / "scripts" / "smoke_macos_installer_window.sh"
+WINDOW_PROBE_PATH = REPOSITORY_ROOT / "scripts" / "macos_installer_window_probe.swift"
 MACOS_README_PATH = MACOS_ROOT / "README.md"
 GETTING_STARTED_PATH = (
     REPOSITORY_ROOT / "docs" / "source" / "getting_started" / "getting_started.rst"
@@ -298,6 +303,36 @@ def test_macos_app_has_responsive_welcome_progress_and_finish_states() -> None:
     assert "NSWorkspace.shared.open" in source
     assert "Terminal" in source
     assert "do shell script" not in source
+
+
+def test_macos_installer_ci_opens_and_captures_the_shipping_app() -> None:
+    workflow = INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
+    smoke = WINDOW_SMOKE_PATH.read_text(encoding="utf-8")
+    probe = WINDOW_PROBE_PATH.read_text(encoding="utf-8")
+    macos_step = workflow[
+        workflow.index(
+            "      - name: Execute and verify macOS installer"
+        ) : workflow.index("      - name: Show macOS installer log on failure")
+    ]
+
+    assert 'installer_executable="$installer_app/Contents/MacOS/OpenHCSInstaller"' in (
+        smoke
+    )
+    assert '"$installer_executable" >"$installer_stdout"' in smoke
+    assert '"$probe_executable" "$installer_pid" "$expected_title"' in smoke
+    assert '/usr/sbin/screencapture -x -l "$window_id"' in smoke
+    assert '/bin/kill -TERM "$installer_pid"' in smoke
+    assert "CGWindowListCopyWindowInfo(" in probe
+    assert "ownerPID == processIdentifier" in probe
+    assert "title == expectedTitle" in probe
+    assert "matchingWindows.count == 1" in probe
+
+    invocation = "scripts/smoke_macos_installer_window.sh"
+    assert invocation in macos_step
+    assert macos_step.index(invocation) < macos_step.index(
+        '"$installer_app/Contents/Resources/install-openhcs.sh"'
+    )
+    assert "native-installer-ui-${{ matrix.platform }}" in workflow
 
 
 def test_macos_shell_owns_live_progress_log_and_launcher_projection() -> None:

@@ -19,6 +19,7 @@ INTEGRATION_WORKFLOW_PATH = (
     REPOSITORY_ROOT / ".github" / "workflows" / "integration-tests.yml"
 )
 PUBLISH_WORKFLOW_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "publish.yml"
+WINDOW_SMOKE_PATH = REPOSITORY_ROOT / "scripts" / "smoke_windows_installer_window.ps1"
 
 
 def _source() -> str:
@@ -663,6 +664,33 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
     )
     assert "mutated or removed the locked previous environment" in smoke_step
     assert "--prerelease" not in smoke_step
+
+
+def test_windows_installer_ci_opens_and_captures_the_shipping_wizard() -> None:
+    workflow = INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
+    probe = WINDOW_SMOKE_PATH.read_text(encoding="utf-8")
+    smoke_step = workflow[
+        workflow.index(
+            "      - name: Execute and verify Windows installer"
+        ) : workflow.index("      - name: Show Windows installer log on failure")
+    ]
+
+    assert "Start-Process -FilePath $resolvedLauncher -PassThru" in probe
+    assert '"ParentProcessId = {0}" -f $launcherProcess.Id' in probe
+    assert "$candidateProcess.MainWindowTitle -eq $ExpectedTitle" in probe
+    assert "GetWindowRect" in probe
+    assert "$graphics.CopyFromScreen(" in probe
+    assert '"installer-welcome.png"' in probe
+    assert "$windowProcess.CloseMainWindow()" in probe
+    assert "-Worker" not in probe
+
+    invocation = "& scripts/smoke_windows_installer_window.ps1"
+    assert invocation in smoke_step
+    assert '-ExpectedTitle "$($contract.product_name) Setup"' in smoke_step
+    assert smoke_step.index(invocation) < smoke_step.index(
+        "$installerExitCode = Invoke-OpenHcsInstallerWorker"
+    )
+    assert "native-installer-ui-${{ matrix.platform }}" in workflow
 
 
 def test_windows_installer_ci_exercises_long_path_update_cleanup() -> None:

@@ -129,7 +129,11 @@ installation and reinstall, macOS installation, and the staged-update worker
 must resolve the prepared candidates from that wheelhouse without contacting
 the injected index. This proves both the unreleased dependency graph and that a
 workstation's package-index settings cannot redirect a managed desktop
-installation.
+installation. Before those worker checks, each job opens the actual Windows or
+macOS installer, requires its welcome window to appear at the expected native
+size, captures it, and closes it without starting installation. The resulting
+window record and screenshot are retained for 14 days as
+``native-installer-ui-*`` evidence.
 
 On ``main``, the Python quality job checks the cumulative change set since the
 most recent successful Integration Tests head. A failed Python change remains

@@ -2747,7 +2747,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "19408874c477c33c856fd6b7047859376d691ce61f4b821326d925bb5b2185bd",
+    "source_sha256": "229d4f32978e8c66eec9d993c164fd2afc3653213625ddd04b118874777ebb85",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2811,8 +2811,23 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "189a194a552892efb63689ac485b039614670797233b05d5221beac2c5c83e96",
-        "role": "Cross-platform source-candidate and published-dependency readiness, installed-wheel live GUI/MCP operation with retained native screenshots, native installer, signing-helper parse, and staged-update validation matrix."
+        "sha256": "8e9cc4916e6ac62c3319fe223e3d90c3d48f5bc02cb14a36ee8e7cdab8a36dba",
+        "role": "Cross-platform source-candidate and published-dependency readiness, installed-wheel live GUI/MCP operation with retained native screenshots, visible native-installer window proof, signing-helper parse, and staged-update validation matrix."
+      },
+      {
+        "path": "scripts/smoke_windows_installer_window.ps1",
+        "sha256": "717ee69cca919a3bcdfdc727985fe3c8a4381dc63a443388a82c4b3fc55a341d",
+        "role": "Launches the shipping Windows installer, validates and captures its exact welcome window, and closes it before installation begins."
+      },
+      {
+        "path": "scripts/smoke_macos_installer_window.sh",
+        "sha256": "75d14b6eb32e321899e49737517983603364ac307d47725ade62da4f12057738",
+        "role": "Launches the shipping macOS installer application, retains native window evidence, and closes it before installation begins."
+      },
+      {
+        "path": "scripts/macos_installer_window_probe.swift",
+        "sha256": "80629f64632006f783f01eb30f5815a1353e6e3b3129acf8a9dede4e71700d55",
+        "role": "Queries the macOS window server for one exact on-screen installer window and projects its native identity and bounds."
       },
       {
         "path": ".github/workflows/published-release-canary.yml",
@@ -2890,7 +2905,8 @@
       "The fixed desktop candidate was operated before publication only on Linux, while Windows and macOS evidence remained behind the unpublished-dependency gate; a complementary source-candidate matrix now proves Windows and both macOS architectures alongside the Linux wheel lane.",
       "The native source-candidate matrix still depended on published first-party tags, so the real installer and staged-update jobs were skipped exactly while those dependency releases were being prepared; the native lane now builds its complete wheelhouse from metadata-discovered submodules while the separate PyPI lane remains fail-closed on publication readiness.",
     "Cross-platform GUI canaries proved readiness and MCP actions but discarded the rendered UI, leaving native theming regressions outside retained evidence; candidate and published-package jobs now upload typed, hash-verified window snapshots.",
-    "The installed-GUI canary constructed the application below the production logging boundary, so a successful endpoint could advertise an empty log; the probe now applies its declared logging configuration and fails unless the exact advertised log contains output."
+    "The installed-GUI canary constructed the application below the production logging boundary, so a successful endpoint could advertise an empty log; the probe now applies its declared logging configuration and fails unless the exact advertised log contains output.",
+    "Native installer acceptance invoked worker mode directly and never proved that either shipping wizard could open; each supported native lane now validates and retains the actual welcome window before exercising installation and update workers."
     ],
     "disposition": "revise",
     "validation": [
@@ -2928,7 +2944,8 @@
       "On 2026-08-26, re-read the complete release how-to against the 0.8.0 version authority and regenerated MCP metadata; the source-candidate test now derives the root wheel identity from that authority, and 73 focused release tests plus wheel metadata validation passed.",
       "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after the installed GUI canary gained background function-catalogue readiness proof; a cold installed wheel completed launch, catalogue resolution, packaged MCP control, and retained screenshots within one end-to-end deadline.",
     "On 2026-08-26, re-read the complete release how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; one installed-GUI timing declaration now derives the operation and process budgets, 106 focused release and installer tests passed, and a fresh 0.8.0 wheel completed cold launch, 263-function catalogue resolution, packaged MCP control, and two visually inspected native screenshots.",
-    "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after the packaged GUI canary began applying LoggingConfig and validating its live endpoint-advertised log; 61 focused smoke, workflow, and installer tests passed, and a live UI/MCP run produced two inspected screenshots plus a non-empty execution-server log."
+    "On 2026-08-26, applied the Diataxis release how-to boundary and re-read the complete page after the packaged GUI canary began applying LoggingConfig and validating its live endpoint-advertised log; 61 focused smoke, workflow, and installer tests passed, and a live UI/MCP run produced two inspected screenshots plus a non-empty execution-server log.",
+    "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete page after native installer acceptance began opening the shipping Windows and macOS applications before worker execution; 71 focused installer tests plus workflow, shell, formatting, and diff validation passed locally."
     ]
   },
   {
@@ -2987,7 +3004,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "189a194a552892efb63689ac485b039614670797233b05d5221beac2c5c83e96",
+        "sha256": "8e9cc4916e6ac62c3319fe223e3d90c3d48f5bc02cb14a36ee8e7cdab8a36dba",
         "role": "Runs explicitly selected live OMERO variants and preserves component and table-service diagnostics on failure."
       }
     ],
@@ -3017,7 +3034,8 @@
       "On 2026-08-26, re-read and revised the how-to against PolyStore's managed-repository wait and OpenHCS's packaged-only Tables-0 recovery; the full PolyStore suite and focused manager tests cover both ownership boundaries.",
       "On 2026-08-26, re-read the complete page after the integration workflow added an independent desktop candidate matrix; the OMERO source lane, publication independence, diagnostics, and lifecycle claims remain unchanged.",
       "On 2026-08-26, re-read the full how-to after the native installer matrix began building current-source wheels independently; clarified that OMERO source evidence remains separate from the PyPI installation lane without changing its test selection or lifecycle ownership.",
-      "On 2026-08-26, re-read the complete OMERO testing how-to after the shared integration workflow began retaining desktop GUI screenshots; OMERO selection, readiness, diagnostics, and lifecycle ownership are unchanged."
+      "On 2026-08-26, re-read the complete OMERO testing how-to after the shared integration workflow began retaining desktop GUI screenshots; OMERO selection, readiness, diagnostics, and lifecycle ownership are unchanged.",
+      "On 2026-08-26, re-read the complete OMERO testing guide after the shared integration workflow gained native installer window evidence; OMERO selection, readiness, diagnostics, and lifecycle ownership remain unchanged."
     ]
   },
   {

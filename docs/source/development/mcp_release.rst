@@ -139,7 +139,12 @@ boundary proves the candidate before the first dependency is published.
 The native Windows and dual-architecture macOS installer matrix is independent
 of publication for the same reason: it stages a CI-only OpenHCS version, builds
 one metadata-discovered wheelhouse from the recorded submodules, and supplies
-that wheelhouse to the real bootstrap installers and staged updater.
+that wheelhouse to the real bootstrap installers and staged updater. Before
+running either installer worker, each lane opens the shipping ``.exe`` or
+``.app``, requires its exact welcome window to appear at the declared size,
+captures that native window, and closes it without beginning installation. The
+window metadata and screenshot remain available as a 14-day
+``native-installer-ui-*`` artifact.
 
 Before publication begins, the tag workflow resolves one annotated tag to its
 exact commit and requires successful Integration Tests and Documentation push

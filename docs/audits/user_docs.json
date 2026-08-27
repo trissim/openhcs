@@ -897,7 +897,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "189a194a552892efb63689ac485b039614670797233b05d5221beac2c5c83e96",
+        "sha256": "8e9cc4916e6ac62c3319fe223e3d90c3d48f5bc02cb14a36ee8e7cdab8a36dba",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -946,7 +946,8 @@
       "On 2026-08-26, re-read the full installation how-to after native CI began constructing the complete current-source wheelhouse independently from published dependency readiness; the user-facing install, launch, verification, and update procedure remains unchanged.",
       "On 2026-08-26, re-read the complete installation how-to after installed desktop verification began retaining native MCP window snapshots; the supported install, launch, verification, and update instructions remain unchanged.",
       "On 2026-08-26, re-read the complete installation how-to after the installed MCP demo stopped narrowing the declaration-owned execution submission deadline; the documented bounded verification command remains accurate.",
-      "On 2026-08-26, re-read the complete installation how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; installed GUI acceptance now owns one operation budget and derives a bounded outer process-exit grace, while a fresh 0.8.0 wheel completed cold launch, 263-function catalogue resolution, packaged MCP control, and two validated native screenshots."
+      "On 2026-08-26, re-read the complete installation how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; installed GUI acceptance now owns one operation budget and derives a bounded outer process-exit grace, while a fresh 0.8.0 wheel completed cold launch, 263-function catalogue resolution, packaged MCP control, and two validated native screenshots.",
+      "On 2026-08-26, re-read the complete installation how-to after CI began opening and retaining the shipping native installer welcome windows; the user-facing install, launch, verification, and update procedure remains accurate."
     ]
   },
   {
@@ -2041,7 +2042,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "859e2f7fc358d144074691c3a1e20d28f5e06ef90947c4a4e1bada98df50b197",
+    "source_sha256": "3ac0d8980ca8c64edea60b9456e2886f0202a807e3e4ca36b394d2d6c4d8469c",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -2061,8 +2062,23 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "189a194a552892efb63689ac485b039614670797233b05d5221beac2c5c83e96",
-        "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, retained native screenshot artifacts, pytest commands, and source-gate coverage artifacts used by CI."
+        "sha256": "8e9cc4916e6ac62c3319fe223e3d90c3d48f5bc02cb14a36ee8e7cdab8a36dba",
+        "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, retained application and installer screenshot artifacts, pytest commands, and source-gate coverage artifacts used by CI."
+      },
+      {
+        "path": "scripts/smoke_windows_installer_window.ps1",
+        "sha256": "717ee69cca919a3bcdfdc727985fe3c8a4381dc63a443388a82c4b3fc55a341d",
+        "role": "Launches the shipping Windows installer, validates and captures its exact welcome window, and closes it before installation begins."
+      },
+      {
+        "path": "scripts/smoke_macos_installer_window.sh",
+        "sha256": "75d14b6eb32e321899e49737517983603364ac307d47725ade62da4f12057738",
+        "role": "Launches the shipping macOS installer application, retains native window evidence, and closes it before installation begins."
+      },
+      {
+        "path": "scripts/macos_installer_window_probe.swift",
+        "sha256": "80629f64632006f783f01eb30f5815a1353e6e3b3129acf8a9dede4e71700d55",
+        "role": "Queries the macOS window server for one exact on-screen installer window and projects its native identity and bounds."
       },
       {
         "path": ".github/workflows/docs.yml",
@@ -2167,7 +2183,8 @@
       "The fixed desktop candidate was operated before publication only on Linux, while Windows and macOS evidence remained behind the unpublished-dependency gate; a complementary source-candidate matrix now proves Windows and both macOS architectures alongside the Linux wheel lane.",
       "The native installer source job still depended on public first-party release tags and therefore skipped the real Windows and macOS installer paths while dependency candidates were unpublished; it now builds the complete metadata-discovered source wheelhouse independently, while the PyPI installation lane remains publication-gated.",
     "Cross-platform GUI canaries proved readiness and MCP actions but discarded the rendered UI, so native theming regressions had no retained evidence; candidate and published-package jobs now upload typed, hash-verified window snapshots.",
-    "The installed-GUI canary bypassed the production logging setup and therefore could pass while its execution server advertised an empty log; the probe now applies LoggingConfig and verifies readable endpoint output."
+    "The installed-GUI canary bypassed the production logging setup and therefore could pass while its execution server advertised an empty log; the probe now applies LoggingConfig and verifies readable endpoint output.",
+    "Native installer tests exercised worker mode but never opened the visible shipping applications; each supported lane now validates and retains its actual welcome window before running installation and update workers."
     ],
     "disposition": "revise",
     "validation": [
@@ -2202,7 +2219,8 @@
       "On 2026-08-26, re-read the complete testing how-to after source-candidate root-wheel identity began deriving from the package version authority; the documented build order and publication-independent evidence lanes remain accurate.",
       "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete guide after the installed GUI canary gained background function-catalogue readiness proof; a cold installed wheel completed launch, catalogue resolution, packaged MCP control, and retained screenshots within one end-to-end deadline.",
     "On 2026-08-26, re-read the complete testing how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; one installed-GUI timing declaration now derives both operation and process limits, 106 focused release and installer tests passed, and a fresh 0.8.0 wheel produced two visually inspected native screenshots after resolving its 263-function catalogue.",
-    "On 2026-08-26, applied the Diataxis testing how-to boundary and re-read the complete guide after the packaged GUI canary began applying LoggingConfig and validating its live endpoint-advertised log; 61 focused smoke, workflow, and installer tests passed, and a live UI/MCP run produced two inspected screenshots plus a non-empty execution-server log."
+    "On 2026-08-26, applied the Diataxis testing how-to boundary and re-read the complete guide after the packaged GUI canary began applying LoggingConfig and validating its live endpoint-advertised log; 61 focused smoke, workflow, and installer tests passed, and a live UI/MCP run produced two inspected screenshots plus a non-empty execution-server log.",
+    "On 2026-08-26, applied the Diataxis testing how-to boundary and re-read the complete guide after native installer acceptance began opening the shipping Windows and macOS applications before worker execution; 71 focused installer tests plus workflow, shell, formatting, and diff validation passed locally."
     ]
   },
   {
