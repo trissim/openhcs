@@ -246,8 +246,31 @@ function Wait-InstallerLogLine {
             throw "The native installer exited before $Description."
         }
         if (Test-Path -LiteralPath $resolvedCompletionLog -PathType Leaf) {
-            $logText = [IO.File]::ReadAllText($resolvedCompletionLog)
-            if ($logText.Contains($ExpectedLine)) {
+            $logStream = $null
+            $logReader = $null
+            $logText = $null
+            try {
+                $logStream = [IO.File]::Open(
+                    $resolvedCompletionLog,
+                    [IO.FileMode]::Open,
+                    [IO.FileAccess]::Read,
+                    [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+                )
+                $logReader = [IO.StreamReader]::new($logStream)
+                $logText = $logReader.ReadToEnd()
+            }
+            catch [IO.IOException] {
+                $logText = $null
+            }
+            finally {
+                if ($null -ne $logReader) {
+                    $logReader.Dispose()
+                }
+                elseif ($null -ne $logStream) {
+                    $logStream.Dispose()
+                }
+            }
+            if ($null -ne $logText -and $logText.Contains($ExpectedLine)) {
                 return
             }
         }

@@ -2067,7 +2067,7 @@
       },
       {
         "path": "scripts/smoke_windows_installer_window.ps1",
-        "sha256": "d63aa337d86ea407c06a06bc49394b132039033b22639aedc405bc267c8cc90d",
+        "sha256": "93080310b2d4906296a9543000c685e30b9dc5034ac5e2b67d8cb097279ca9d7",
         "role": "Drives the shipping Windows installer through its real native controls and retains exact welcome, progress, and completion window evidence."
       },
       {
@@ -2077,8 +2077,8 @@
       },
       {
         "path": "scripts/macos_installer_window_probe.swift",
-        "sha256": "f02ea152cfa2f7342188396fc602ad59d42f2d1464a6f4c193477dc2f8206307",
-        "role": "Queries one exact macOS installer window, projects its native identity and bounds, and activates its declared primary control through foreground native input."
+        "sha256": "0ad349dc73d993b43e13cb9c73d9be32cbf4315bbd01a82b963c17399c15dbf1",
+        "role": "Queries one exact macOS installer window, projects its native identity and bounds, and activates the window's declared default accessibility control."
       },
       {
         "path": ".github/workflows/docs.yml",

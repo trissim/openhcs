@@ -688,6 +688,8 @@ def test_windows_installer_ci_drives_and_captures_the_shipping_wizard() -> None:
     assert "UIAutomation" not in probe
     assert 'Invoke-InstallerButton -Name "Next >"' in probe
     assert "Wait-InstallerLogLine" in probe
+    assert "[IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete" in probe
+    assert "catch [IO.IOException]" in probe
     assert "$interactionDeadline = [DateTime]::UtcNow.AddSeconds(30)" in probe
     assert "$progressDeadline = [DateTime]::UtcNow.AddSeconds(30)" in probe
     assert "$installationDeadline = [DateTime]::UtcNow.AddMinutes(20)" in probe

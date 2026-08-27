@@ -1,68 +1,140 @@
-import AppKit
+import ApplicationServices
+import CoreGraphics
 import Foundation
 
 private enum InstallerWindowOperation: String {
     case inspect
     case pressPrimary = "press-primary"
 
-    func perform(processIdentifier: pid_t) throws {
+    func perform(processIdentifier: pid_t, windowTitle: String) throws {
         switch self {
         case .inspect:
             return
         case .pressPrimary:
-            guard
-                let application = NSRunningApplication(
-                    processIdentifier: processIdentifier
-                ),
-                application.activate(
-                    options: [.activateAllWindows, .activateIgnoringOtherApps]
-                )
-            else {
-                throw InstallerActivationError()
-            }
-            let activationDeadline = Date().addingTimeInterval(5)
-            while
-                NSWorkspace.shared.frontmostApplication?.processIdentifier
-                    != processIdentifier,
-                Date() < activationDeadline
-            {
-                Thread.sleep(forTimeInterval: 0.05)
-            }
-            guard
-                NSWorkspace.shared.frontmostApplication?.processIdentifier
-                    == processIdentifier
-            else {
-                throw InstallerActivationError()
-            }
-            let returnKeyCode = CGKeyCode(36)
-            guard
-                let keyDown = CGEvent(
-                    keyboardEventSource: nil,
-                    virtualKey: returnKeyCode,
-                    keyDown: true
-                ),
-                let keyUp = CGEvent(
-                    keyboardEventSource: nil,
-                    virtualKey: returnKeyCode,
-                    keyDown: false
-            )
-            else {
-                throw KeyboardEventUnavailableError()
-            }
-            keyDown.post(tap: .cghidEventTap)
-            keyUp.post(tap: .cghidEventTap)
+            try InstallerDefaultControl(
+                processIdentifier: processIdentifier,
+                windowTitle: windowTitle
+            ).press()
         }
     }
 }
 
-private struct InstallerActivationError: LocalizedError {
-    let errorDescription: String? =
-        "macOS could not make the installer the foreground application."
+private struct InstallerDefaultControl {
+    let processIdentifier: pid_t
+    let windowTitle: String
+
+    func press() throws {
+        let application = AXUIElementCreateApplication(processIdentifier)
+        let windows = try elements(
+            of: application,
+            attribute: kAXWindowsAttribute
+        )
+        let matchingWindows = try windows.filter {
+            try text(of: $0, attribute: kAXTitleAttribute) == windowTitle
+        }
+        guard matchingWindows.count == 1 else {
+            throw InstallerControlError(
+                message: "macOS did not expose one exact installer window."
+            )
+        }
+        let button = try element(
+            of: matchingWindows[0],
+            attribute: kAXDefaultButtonAttribute
+        )
+        guard
+            try text(of: button, attribute: kAXRoleAttribute)
+                == kAXButtonRole as String,
+            try flag(of: button, attribute: kAXEnabledAttribute)
+        else {
+            throw InstallerControlError(
+                message: "The installer default control is not an enabled button."
+            )
+        }
+        let result = AXUIElementPerformAction(button, kAXPressAction as CFString)
+        guard result == .success else {
+            throw InstallerControlError(
+                message: "macOS could not press the installer default control: \(result.rawValue)."
+            )
+        }
+    }
+
+    private func elements(
+        of owner: AXUIElement,
+        attribute: CFString
+    ) throws -> [AXUIElement] {
+        let value = try attributeValue(of: owner, attribute: attribute)
+        guard let elements = value as? [AXUIElement] else {
+            throw InstallerControlError(
+                message: "macOS returned a non-element accessibility collection."
+            )
+        }
+        return elements
+    }
+
+    private func element(
+        of owner: AXUIElement,
+        attribute: CFString
+    ) throws -> AXUIElement {
+        let value = try attributeValue(of: owner, attribute: attribute)
+        guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            throw InstallerControlError(
+                message: "macOS returned a non-element accessibility value."
+            )
+        }
+        return value as! AXUIElement
+    }
+
+    private func text(
+        of owner: AXUIElement,
+        attribute: CFString
+    ) throws -> String {
+        let value = try attributeValue(of: owner, attribute: attribute)
+        guard let text = value as? String else {
+            throw InstallerControlError(
+                message: "macOS returned a non-text accessibility value."
+            )
+        }
+        return text
+    }
+
+    private func flag(
+        of owner: AXUIElement,
+        attribute: CFString
+    ) throws -> Bool {
+        let value = try attributeValue(of: owner, attribute: attribute)
+        guard let flag = value as? Bool else {
+            throw InstallerControlError(
+                message: "macOS returned a non-Boolean accessibility value."
+            )
+        }
+        return flag
+    }
+
+    private func attributeValue(
+        of owner: AXUIElement,
+        attribute: CFString
+    ) throws -> CFTypeRef {
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(
+            owner,
+            attribute,
+            &value
+        )
+        guard result == .success, let value else {
+            throw InstallerControlError(
+                message: "macOS could not read installer accessibility state: \(result.rawValue)."
+            )
+        }
+        return value
+    }
 }
 
-private struct KeyboardEventUnavailableError: LocalizedError {
-    let errorDescription: String? =
-        "macOS could not create the installer keyboard event."
+private struct InstallerControlError: LocalizedError {
+    let message: String
+
+    var errorDescription: String? {
+        message
+    }
 }
 
 guard CommandLine.arguments.count == 4,
@@ -123,7 +195,10 @@ FileHandle.standardOutput.write(payload)
 FileHandle.standardOutput.write(Data("\n".utf8))
 
 do {
-    try operation.perform(processIdentifier: processIdentifier)
+    try operation.perform(
+        processIdentifier: processIdentifier,
+        windowTitle: expectedTitle
+    )
 } catch {
     FileHandle.standardError.write(
         Data("\(error.localizedDescription)\n".utf8)
