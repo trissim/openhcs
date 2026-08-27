@@ -2816,7 +2816,7 @@
       },
       {
         "path": "scripts/smoke_windows_installer_window.ps1",
-        "sha256": "b008f9fa8b2f5e67455e94e4826796d106347d343b26d5e79e2e4ea2acb40c6f",
+        "sha256": "530dd2e4634f1de9587538c67e8dbd2cd1ed43336b30ce1f711cf26cf608d004",
         "role": "Drives the shipping Windows installer through its real native controls and retains exact welcome, progress, and completion window evidence."
       },
       {

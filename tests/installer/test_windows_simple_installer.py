@@ -679,8 +679,13 @@ def test_windows_installer_ci_drives_and_captures_the_shipping_wizard() -> None:
     assert '"ParentProcessId = {0}" -f $launcherProcess.Id' in probe
     assert "$candidateProcess.MainWindowTitle -eq $ExpectedTitle" in probe
     assert "GetWindowRect" in probe
-    assert "UIAutomationClient" in probe
-    assert "[Windows.Automation.InvokePattern]::Pattern" in probe
+    assert "private const uint ButtonClick = 0x00F5;" in probe
+    assert "EnumChildWindows(" in probe
+    assert "FindUniqueVisibleChild(" in probe
+    assert "return matchCount == 1 ? match : IntPtr.Zero;" in probe
+    assert "ClickVisibleChildByText(" in probe
+    assert "Wait-InstallerVisibleText" in probe
+    assert "UIAutomation" not in probe
     assert 'Invoke-InstallerButton -Name "Next >"' in probe
     assert "Wait-InstallerLogLine" in probe
     assert "$graphics.CopyFromScreen(" in probe

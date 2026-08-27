@@ -14,13 +14,17 @@ $resolvedCompletionLog = [IO.Path]::GetFullPath($CompletionLogPath)
 [IO.Directory]::CreateDirectory($resolvedEvidenceDirectory) | Out-Null
 
 Add-Type -AssemblyName System.Drawing
-Add-Type -AssemblyName UIAutomationClient
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 
 public static class OpenHCSInstallerWindowProbe
 {
+    private const uint ButtonClick = 0x00F5;
+
+    private delegate bool EnumerateWindowCallback(IntPtr window, IntPtr state);
+
     [StructLayout(LayoutKind.Sequential)]
     public struct WindowRectangle
     {
@@ -36,6 +40,97 @@ public static class OpenHCSInstallerWindowProbe
         IntPtr window,
         out WindowRectangle rectangle
     );
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumChildWindows(
+        IntPtr parent,
+        EnumerateWindowCallback callback,
+        IntPtr state
+    );
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowTextLengthW(IntPtr window);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowTextW(
+        IntPtr window,
+        StringBuilder text,
+        int maximumCount
+    );
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowEnabled(IntPtr window);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(IntPtr window);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr SendMessageW(
+        IntPtr window,
+        uint message,
+        IntPtr wordParameter,
+        IntPtr longParameter
+    );
+
+    public static bool HasVisibleChildText(IntPtr parent, string expectedText)
+    {
+        return FindUniqueVisibleChild(parent, expectedText) != IntPtr.Zero;
+    }
+
+    public static bool ClickVisibleChildByText(
+        IntPtr parent,
+        string expectedText
+    )
+    {
+        IntPtr child = FindUniqueVisibleChild(parent, expectedText);
+        if (child == IntPtr.Zero)
+        {
+            return false;
+        }
+        SendMessageW(child, ButtonClick, IntPtr.Zero, IntPtr.Zero);
+        return true;
+    }
+
+    private static IntPtr FindUniqueVisibleChild(
+        IntPtr parent,
+        string expectedText
+    )
+    {
+        IntPtr match = IntPtr.Zero;
+        int matchCount = 0;
+        EnumChildWindows(
+            parent,
+            delegate(IntPtr child, IntPtr state)
+            {
+                if (!IsWindowVisible(child) || !IsWindowEnabled(child))
+                {
+                    return true;
+                }
+                int textLength = GetWindowTextLengthW(child);
+                if (textLength != expectedText.Length)
+                {
+                    return true;
+                }
+                StringBuilder text = new StringBuilder(textLength + 1);
+                GetWindowTextW(child, text, text.Capacity);
+                if (string.Equals(
+                    text.ToString(),
+                    expectedText,
+                    StringComparison.Ordinal
+                ))
+                {
+                    match = child;
+                    matchCount++;
+                }
+                return true;
+            },
+            IntPtr.Zero
+        );
+        return matchCount == 1 ? match : IntPtr.Zero;
+    }
 }
 '@
 
@@ -102,31 +197,21 @@ function Save-InstallerWindowEvidence {
         ) -Encoding UTF8
 }
 
-function Wait-InstallerAutomationElement {
+function Wait-InstallerVisibleText {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)][DateTime]$Deadline
     )
 
-    $nameCondition = [Windows.Automation.PropertyCondition]::new(
-        [Windows.Automation.AutomationElement]::NameProperty,
-        $Name
-    )
     while ([DateTime]::UtcNow -lt $Deadline) {
         if ($windowProcess.HasExited) {
             throw "The native installer exited before showing '$Name'."
         }
-        $root = [Windows.Automation.AutomationElement]::FromHandle(
-            $windowProcess.MainWindowHandle
-        )
-        $element = $root.FindFirst(
-            [Windows.Automation.TreeScope]::Descendants,
-            $nameCondition
-        )
-        if ($null -ne $element -and
-            $element.Current.IsEnabled -and
-            -not $element.Current.IsOffscreen) {
-            return $element
+        if ([OpenHCSInstallerWindowProbe]::HasVisibleChildText(
+            $windowProcess.MainWindowHandle,
+            $Name
+        )) {
+            return
         }
         Start-Sleep -Milliseconds 250
     }
@@ -139,11 +224,13 @@ function Invoke-InstallerButton {
         [Parameter(Mandatory = $true)][DateTime]$Deadline
     )
 
-    $button = Wait-InstallerAutomationElement -Name $Name -Deadline $Deadline
-    $invokePattern = $button.GetCurrentPattern(
-        [Windows.Automation.InvokePattern]::Pattern
-    )
-    $invokePattern.Invoke()
+    Wait-InstallerVisibleText -Name $Name -Deadline $Deadline
+    if (-not [OpenHCSInstallerWindowProbe]::ClickVisibleChildByText(
+        $windowProcess.MainWindowHandle,
+        $Name
+    )) {
+        throw "The native installer could not activate '$Name'."
+    }
 }
 
 function Wait-InstallerLogLine {
@@ -214,7 +301,7 @@ try {
 
     $installationDeadline = [DateTime]::UtcNow.AddMinutes(20)
     Invoke-InstallerButton -Name "Next >" -Deadline $installationDeadline
-    $null = Wait-InstallerAutomationElement `
+    Wait-InstallerVisibleText `
         -Name "Installation options" `
         -Deadline $installationDeadline
     Invoke-InstallerButton -Name "Next >" -Deadline $installationDeadline
@@ -233,7 +320,7 @@ try {
         -ExpectedLine "SUCCESS: Installation completed." `
         -Description "successful completion" `
         -Deadline $installationDeadline
-    $null = Wait-InstallerAutomationElement `
+    Wait-InstallerVisibleText `
         -Name "Installation complete" `
         -Deadline $installationDeadline
     Save-InstallerWindowEvidence `
