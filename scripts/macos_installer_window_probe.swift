@@ -1,10 +1,50 @@
 import CoreGraphics
 import Foundation
 
-guard CommandLine.arguments.count == 3,
-      let processIdentifier = Int32(CommandLine.arguments[1]) else {
+private enum InstallerWindowOperation: String {
+    case inspect
+    case pressPrimary = "press-primary"
+
+    func perform(processIdentifier: pid_t) throws {
+        switch self {
+        case .inspect:
+            return
+        case .pressPrimary:
+            let returnKeyCode = CGKeyCode(36)
+            guard
+                let keyDown = CGEvent(
+                    keyboardEventSource: nil,
+                    virtualKey: returnKeyCode,
+                    keyDown: true
+                ),
+                let keyUp = CGEvent(
+                    keyboardEventSource: nil,
+                    virtualKey: returnKeyCode,
+                    keyDown: false
+            )
+            else {
+                throw KeyboardEventUnavailableError()
+            }
+            keyDown.postToPid(processIdentifier)
+            keyUp.postToPid(processIdentifier)
+        }
+    }
+}
+
+private struct KeyboardEventUnavailableError: LocalizedError {
+    let errorDescription: String? =
+        "macOS could not create the installer keyboard event."
+}
+
+guard CommandLine.arguments.count == 4,
+      let processIdentifier = Int32(CommandLine.arguments[1]),
+      let operation = InstallerWindowOperation(rawValue: CommandLine.arguments[3])
+else {
     FileHandle.standardError.write(
-        Data("usage: macos_installer_window_probe PID EXPECTED_TITLE\n".utf8)
+        Data(
+            "usage: macos_installer_window_probe PID EXPECTED_TITLE "
+                .appending("{inspect|press-primary}\n").utf8
+        )
     )
     exit(2)
 }
@@ -52,3 +92,12 @@ let payload = try JSONSerialization.data(
 )
 FileHandle.standardOutput.write(payload)
 FileHandle.standardOutput.write(Data("\n".utf8))
+
+do {
+    try operation.perform(processIdentifier: processIdentifier)
+} catch {
+    FileHandle.standardError.write(
+        Data("\(error.localizedDescription)\n".utf8)
+    )
+    exit(2)
+}

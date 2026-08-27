@@ -900,16 +900,6 @@ jobs:
             $expectedInstallerIcon.Dispose()
           }
 
-          & scripts/smoke_windows_installer_window.ps1 `
-            -LauncherPath $launcher `
-            -ExpectedTitle "$($contract.product_name) Setup" `
-            -EvidenceDirectory (
-              Join-Path $env:RUNNER_TEMP "openhcs-native-installer-ui"
-            )
-          if ($LASTEXITCODE -ne 0) {
-            throw "Windows native installer window smoke failed."
-          }
-
           $env:UV_FIND_LINKS = (
             Resolve-Path $env:OPENHCS_INSTALLER_CANDIDATE_WHEELHOUSE
           ).Path
@@ -928,9 +918,19 @@ jobs:
           $env:PIP_TIMEOUT = "1"
           $env:CODEX_HOME = Join-Path $env:RUNNER_TEMP "codex-home"
           $powerShellExecutable = (Get-Command powershell.exe -CommandType Application).Source
-          $cancellationPath = Join-Path `
-            ([IO.Path]::GetTempPath()) `
-            ("openhcs-installer-cancel-{0}.marker" -f [Guid]::NewGuid().ToString("N"))
+          $installerLog = Join-Path $installRoot "installer.log"
+
+          & scripts/smoke_windows_installer_window.ps1 `
+            -LauncherPath $launcher `
+            -ExpectedTitle "$($contract.product_name) Setup" `
+            -EvidenceDirectory (
+              Join-Path $env:RUNNER_TEMP "openhcs-native-installer-ui"
+            ) `
+            -CompletionLogPath $installerLog
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows native installer workflow smoke failed."
+          }
+
           function Invoke-OpenHcsInstallerWorker {
             param([Parameter(Mandatory = $true)][string]$CancellationMarker)
 
@@ -954,11 +954,6 @@ jobs:
               $installerProcess.Dispose()
             }
           }
-          $installerExitCode = Invoke-OpenHcsInstallerWorker $cancellationPath
-          if ($installerExitCode -ne 0) {
-            throw "Windows installer failed with exit code $installerExitCode."
-          }
-          $installerLog = Join-Path $installRoot "installer.log"
           if (
             (Get-Content -LiteralPath $installerLog -Raw).Contains($hostilePipIndex)
           ) {
@@ -1471,10 +1466,6 @@ jobs:
             "$installer_app"
           product_name=$(/usr/bin/plutil -extract product_name raw -o - \
             "$staged_contract")
-          scripts/smoke_macos_installer_window.sh \
-            "$installer_app" \
-            "$product_name Installer" \
-            "$RUNNER_TEMP/openhcs-native-installer-ui"
 
           installer_dmg="$RUNNER_TEMP/OpenHCS-macOS-Installer.dmg"
           mount_point="$RUNNER_TEMP/OpenHCS Installer Mount"
@@ -1516,10 +1507,13 @@ jobs:
           export PIP_EXTRA_INDEX_URL="$hostile_pip_index"
           export PIP_RETRIES=0
           export PIP_TIMEOUT=1
-          "$installer_app/Contents/Resources/install-openhcs.sh" \
-            "$installer_app/Contents/Resources/installer_contract.json"
-
           installer_log="$HOME/Library/Logs/$product_name/installer.log"
+          scripts/smoke_macos_installer_window.sh \
+            "$installer_app" \
+            "$product_name Installer" \
+            "$RUNNER_TEMP/openhcs-native-installer-ui" \
+            "$installer_log"
+
           if grep -Fq "$hostile_pip_index" "$installer_log"; then
             printf 'macOS installer inherited a host package index.\n' >&2
             exit 1

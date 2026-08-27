@@ -897,7 +897,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "8e9cc4916e6ac62c3319fe223e3d90c3d48f5bc02cb14a36ee8e7cdab8a36dba",
+        "sha256": "246201279e12ebaf95773aa2dc5d5123ab915a4e534a49da848491f5c439d4fe",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -2042,7 +2042,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "3ac0d8980ca8c64edea60b9456e2886f0202a807e3e4ca36b394d2d6c4d8469c",
+    "source_sha256": "ceb56eccd05f06611f073f1198065a7e36f68727ce94a576f854a9ddf62c22a4",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -2062,23 +2062,23 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "8e9cc4916e6ac62c3319fe223e3d90c3d48f5bc02cb14a36ee8e7cdab8a36dba",
-        "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, retained application and installer screenshot artifacts, pytest commands, and source-gate coverage artifacts used by CI."
+        "sha256": "246201279e12ebaf95773aa2dc5d5123ab915a4e534a49da848491f5c439d4fe",
+        "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, retained application and three-stage installer screenshot artifacts, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
         "path": "scripts/smoke_windows_installer_window.ps1",
-        "sha256": "717ee69cca919a3bcdfdc727985fe3c8a4381dc63a443388a82c4b3fc55a341d",
-        "role": "Launches the shipping Windows installer, validates and captures its exact welcome window, and closes it before installation begins."
+        "sha256": "b008f9fa8b2f5e67455e94e4826796d106347d343b26d5e79e2e4ea2acb40c6f",
+        "role": "Drives the shipping Windows installer through its real native controls and retains exact welcome, progress, and completion window evidence."
       },
       {
         "path": "scripts/smoke_macos_installer_window.sh",
-        "sha256": "75d14b6eb32e321899e49737517983603364ac307d47725ade62da4f12057738",
-        "role": "Launches the shipping macOS installer application, retains native window evidence, and closes it before installation begins."
+        "sha256": "c7cb592b4c628330943fcd4c187cd3ffc1d1f30c318a688fccb12ace7a023884",
+        "role": "Drives the shipping macOS installer application through installation and retains exact welcome, progress, and completion window evidence."
       },
       {
         "path": "scripts/macos_installer_window_probe.swift",
-        "sha256": "a2eb9796cfdc4b46a66973a7056a5ac5af0886f15ebc422bded5213999647fc9",
-        "role": "Queries the macOS window server for one exact on-screen installer window and projects its native identity and bounds."
+        "sha256": "eefb75ab1b7ffbc1e494dd9f019f0b38ef0545336f5e33ddb0b111fa3fef25da",
+        "role": "Queries one exact macOS installer window, projects its native identity and bounds, and can activate its declared primary control through process-targeted input."
       },
       {
         "path": ".github/workflows/docs.yml",
@@ -2184,7 +2184,7 @@
       "The native installer source job still depended on public first-party release tags and therefore skipped the real Windows and macOS installer paths while dependency candidates were unpublished; it now builds the complete metadata-discovered source wheelhouse independently, while the PyPI installation lane remains publication-gated.",
     "Cross-platform GUI canaries proved readiness and MCP actions but discarded the rendered UI, so native theming regressions had no retained evidence; candidate and published-package jobs now upload typed, hash-verified window snapshots.",
     "The installed-GUI canary bypassed the production logging setup and therefore could pass while its execution server advertised an empty log; the probe now applies LoggingConfig and verifies readable endpoint output.",
-    "Native installer tests exercised worker mode but never opened the visible shipping applications; each supported lane now validates and retains its actual welcome window before running installation and update workers."
+    "Native installer tests exercised worker mode without proving that the visible applications could start or drive installation; each supported lane now activates the shipping wizard and retains its welcome, progress, and completion states."
     ],
     "disposition": "revise",
     "validation": [

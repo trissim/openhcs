@@ -666,7 +666,7 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
     assert "--prerelease" not in smoke_step
 
 
-def test_windows_installer_ci_opens_and_captures_the_shipping_wizard() -> None:
+def test_windows_installer_ci_drives_and_captures_the_shipping_wizard() -> None:
     workflow = INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
     probe = WINDOW_SMOKE_PATH.read_text(encoding="utf-8")
     smoke_step = workflow[
@@ -679,17 +679,26 @@ def test_windows_installer_ci_opens_and_captures_the_shipping_wizard() -> None:
     assert '"ParentProcessId = {0}" -f $launcherProcess.Id' in probe
     assert "$candidateProcess.MainWindowTitle -eq $ExpectedTitle" in probe
     assert "GetWindowRect" in probe
+    assert "UIAutomationClient" in probe
+    assert "[Windows.Automation.InvokePattern]::Pattern" in probe
+    assert 'Invoke-InstallerButton -Name "Next >"' in probe
+    assert "Wait-InstallerLogLine" in probe
     assert "$graphics.CopyFromScreen(" in probe
-    assert '"installer-welcome.png"' in probe
+    assert '-ScreenshotName "installer-welcome"' in probe
+    assert '"installer-progress"' in probe
+    assert '"installer-finished"' in probe
+    assert '"SUCCESS: Installation completed."' in probe
     assert "$windowProcess.CloseMainWindow()" in probe
     assert "-Worker" not in probe
 
     invocation = "& scripts/smoke_windows_installer_window.ps1"
     assert invocation in smoke_step
     assert '-ExpectedTitle "$($contract.product_name) Setup"' in smoke_step
+    assert "-CompletionLogPath $installerLog" in smoke_step
     assert smoke_step.index(invocation) < smoke_step.index(
-        "$installerExitCode = Invoke-OpenHcsInstallerWorker"
+        "$updateExitCode = Invoke-OpenHcsInstallerWorker"
     )
+    assert "$installerExitCode = Invoke-OpenHcsInstallerWorker" not in smoke_step
     assert "native-installer-ui-${{ matrix.platform }}" in workflow
 
 

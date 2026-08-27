@@ -4,6 +4,7 @@ set -euo pipefail
 installer_app=${1:?A native installer application path is required}
 expected_title=${2:?An expected installer window title is required}
 evidence_directory=${3:?An evidence directory is required}
+completion_log=${4:?The durable installer log path is required}
 
 script_directory=$(cd "$(dirname "$0")" && pwd)
 installer_executable="$installer_app/Contents/MacOS/OpenHCSInstaller"
@@ -22,10 +23,8 @@ fi
 
 /bin/mkdir -p "$evidence_directory"
 probe_executable="$evidence_directory/macos-installer-window-probe"
-window_evidence="$evidence_directory/installer-window.json"
 installer_stdout="$evidence_directory/installer-stdout.log"
 installer_stderr="$evidence_directory/installer-stderr.log"
-installer_screenshot="$evidence_directory/installer-welcome.png"
 
 /usr/bin/xcrun --sdk macosx swiftc \
     -O \
@@ -52,8 +51,11 @@ for _ in {1..120}; do
         /bin/cat "$installer_stderr" >&2
         exit 1
     fi
-    if "$probe_executable" "$installer_pid" "$expected_title" \
-        >"$window_evidence"; then
+    if "$probe_executable" \
+        "$installer_pid" \
+        "$expected_title" \
+        inspect \
+        >"$evidence_directory/installer-window.json"; then
         window_ready=true
         break
     fi
@@ -65,15 +67,66 @@ if [[ "$window_ready" != true ]]; then
     exit 1
 fi
 
-window_id=$(python -c \
-    'import json,sys; print(json.load(open(sys.argv[1]))["window_id"])' \
-    "$window_evidence")
-/usr/sbin/screencapture -x -l "$window_id" "$installer_screenshot"
-if [[ ! -s "$installer_screenshot" ]]; then
-    printf 'Native installer screenshot is empty: %s\n' \
-        "$installer_screenshot" >&2
+capture_installer_window() {
+    local evidence_name=$1
+    local screenshot_name=$2
+    local window_evidence="$evidence_directory/$evidence_name.json"
+    local installer_screenshot="$evidence_directory/$screenshot_name.png"
+    "$probe_executable" \
+        "$installer_pid" \
+        "$expected_title" \
+        inspect \
+        >"$window_evidence"
+    local window_id
+    window_id=$(python -c \
+        'import json,sys; print(json.load(open(sys.argv[1]))["window_id"])' \
+        "$window_evidence")
+    /usr/sbin/screencapture -x -l "$window_id" "$installer_screenshot"
+    if [[ ! -s "$installer_screenshot" ]]; then
+        printf 'Native installer screenshot is empty: %s\n' \
+            "$installer_screenshot" >&2
+        exit 1
+    fi
+}
+
+wait_for_installer_log() {
+    local expected_line=$1
+    local description=$2
+    while (( SECONDS < installation_deadline )); do
+        if ! /bin/kill -0 "$installer_pid" 2>/dev/null; then
+            printf 'Native installer exited before %s.\n' "$description" >&2
+            /bin/cat "$installer_stdout" >&2
+            /bin/cat "$installer_stderr" >&2
+            exit 1
+        fi
+        if [[ -f "$completion_log" ]] && \
+            /usr/bin/grep -Fq "$expected_line" "$completion_log"; then
+            return
+        fi
+        /bin/sleep 0.25
+    done
+    printf 'Native installer did not reach %s within 20 minutes.\n' \
+        "$description" >&2
     exit 1
-fi
+}
+
+capture_installer_window installer-window installer-welcome
+"$probe_executable" \
+    "$installer_pid" \
+    "$expected_title" \
+    press-primary \
+    >/dev/null
+
+installation_deadline=$((SECONDS + 1200))
+wait_for_installer_log " Starting " "visible installation progress"
+/bin/sleep 0.5
+capture_installer_window installer-progress installer-progress
+
+wait_for_installer_log \
+    " Installation completed successfully." \
+    "successful completion"
+/bin/sleep 1
+capture_installer_window installer-finished installer-finished
 
 /bin/kill -TERM "$installer_pid"
 set +e
