@@ -315,6 +315,7 @@ def test_windows_installer_keeps_ui_responsive_and_failures_visible() -> None:
     assert "Cancel install" in source
     assert "installer.log" in source
     assert "bootstrap.log" in source
+    assert '$ProgressPreference = "SilentlyContinue"' in source
     assert "if ($Worker)" in write_log
     assert "Write-Host $line" in write_log
     assert "[IO.FileShare]::Read" in write_log
@@ -698,6 +699,7 @@ def test_windows_installer_ci_drives_and_captures_the_shipping_wizard() -> None:
     assert '"installer-progress"' in probe
     assert '"installer-finished"' in probe
     assert '"SUCCESS: Installation completed."' in probe
+    assert '"installer.log"' in probe
     assert "$windowProcess.CloseMainWindow()" in probe
     assert "-Worker" not in probe
 
@@ -709,6 +711,9 @@ def test_windows_installer_ci_drives_and_captures_the_shipping_wizard() -> None:
         "$updateExitCode = Invoke-OpenHcsInstallerWorker"
     )
     assert "$installerExitCode = Invoke-OpenHcsInstallerWorker" not in smoke_step
+    for acceptance_pass in ("post-installer", "refreshed-launcher", "staged-update"):
+        assert acceptance_pass in smoke_step
+    assert "installed-gui-phases.jsonl" in workflow
     assert "native-installer-ui-${{ matrix.platform }}" in workflow
 
 

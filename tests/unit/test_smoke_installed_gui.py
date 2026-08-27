@@ -1,6 +1,7 @@
 """Ownership checks for the installed GUI and packaged MCP smoke test."""
 
 import hashlib
+import json
 from concurrent.futures import Future
 from pathlib import Path
 
@@ -22,8 +23,11 @@ from openhcs.pyqt_gui.config import AgentUiBridgeConfig, UIConfig
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 from scripts.smoke_installed_gui import (
     InstalledExecutionServerLogEvidence,
+    InstalledGuiSmokeEvidenceJournal,
+    InstalledGuiSmokePhase,
     InstalledGuiSmokeTiming,
     InstalledGuiSnapshotEvidenceAuthority,
+    _StartupObservation,
     assert_not_source_checkout_import,
     verify_installed_function_catalog,
     with_isolated_runtime_topology,
@@ -88,6 +92,49 @@ def test_installed_gui_smoke_timing_requires_positive_budgets(
         InstalledGuiSmokeTiming(
             operation_timeout_seconds=operation_timeout_seconds,
             process_exit_grace_seconds=process_exit_grace_seconds,
+        )
+
+
+def test_installed_gui_smoke_journal_flushes_typed_phase_evidence(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    journal = InstalledGuiSmokeEvidenceJournal(tmp_path)
+
+    journal.record(InstalledGuiSmokePhase.VALIDATING_PACKAGE)
+    journal.record(
+        InstalledGuiSmokePhase.FUNCTION_CATALOG_READY,
+        detail="263 functions",
+    )
+
+    events = tuple(
+        json.loads(line)
+        for line in journal.path.read_text(encoding="utf-8").splitlines()
+    )
+    assert [event["phase"] for event in events] == [
+        InstalledGuiSmokePhase.VALIDATING_PACKAGE.value,
+        InstalledGuiSmokePhase.FUNCTION_CATALOG_READY.value,
+    ]
+    assert events[1]["detail"] == "263 functions"
+    assert all(event["elapsed_seconds"] >= 0 for event in events)
+    assert "263 functions" in capsys.readouterr().err
+
+
+def test_installed_gui_timeout_remains_the_terminal_result_after_cancellation() -> None:
+    observation = _StartupObservation()
+    observation.record_ready(visible=True)
+
+    assert observation.record_timeout(timeout_seconds=5.0)
+    assert not observation.record_failure(RuntimeError("cancelled during teardown"))
+
+    with pytest.raises(TimeoutError, match="within 5 seconds"):
+        observation.result(
+            execution_port=7777,
+            execution_transport="ipc",
+            exit_code=0,
+            openhcs_version="0.8.0",
+            package_path=Path("/installed/openhcs/__init__.py"),
+            qt_platform="xcb",
         )
 
 

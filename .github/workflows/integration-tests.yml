@@ -919,6 +919,9 @@ jobs:
           $env:CODEX_HOME = Join-Path $env:RUNNER_TEMP "codex-home"
           $powerShellExecutable = (Get-Command powershell.exe -CommandType Application).Source
           $installerLog = Join-Path $installRoot "installer.log"
+          $installedGuiEvidenceRoot = Join-Path `
+            $env:RUNNER_TEMP `
+            "openhcs-native-installer-ui\installed-gui"
 
           & scripts/smoke_windows_installer_window.ps1 `
             -LauncherPath $launcher `
@@ -1009,7 +1012,10 @@ jobs:
             --platform windows `
             --contract $contractPath `
             --install-root $installRoot `
-            --desktop-root $desktopRoot
+            --desktop-root $desktopRoot `
+            --evidence-directory (
+              Join-Path $installedGuiEvidenceRoot "post-installer"
+            )
           if ($LASTEXITCODE -ne 0) {
             throw "Updated Windows desktop smoke failed."
           }
@@ -1097,7 +1103,10 @@ jobs:
             --platform windows `
             --contract $contractPath `
             --install-root $installRoot `
-            --desktop-root $desktopRoot
+            --desktop-root $desktopRoot `
+            --evidence-directory (
+              Join-Path $installedGuiEvidenceRoot "refreshed-launcher"
+            )
           if ($LASTEXITCODE -ne 0) {
             throw "Refreshed Windows desktop smoke failed."
           }
@@ -1402,7 +1411,10 @@ jobs:
             --platform windows `
             --contract $contractPath `
             --install-root $installRoot `
-            --desktop-root $desktopRoot
+            --desktop-root $desktopRoot `
+            --evidence-directory (
+              Join-Path $installedGuiEvidenceRoot "staged-update"
+            )
           if ($LASTEXITCODE -ne 0) {
             throw "Locked-launcher staged update desktop smoke failed."
           }
@@ -1437,6 +1449,22 @@ jobs:
           }
           else {
             Write-Host "OpenHCS runtime log directory was not created at '$runtimeLogRoot'."
+          }
+
+          $guiEvidenceRoot = Join-Path `
+            $env:RUNNER_TEMP `
+            "openhcs-native-installer-ui\installed-gui"
+          if (Test-Path -LiteralPath $guiEvidenceRoot -PathType Container) {
+            Get-ChildItem `
+              -LiteralPath $guiEvidenceRoot `
+              -Filter "installed-gui-phases.jsonl" `
+              -File `
+              -Recurse |
+              Sort-Object FullName |
+              ForEach-Object {
+                Write-Host "=== Installed GUI phases: $($_.FullName) ==="
+                Get-Content -LiteralPath $_.FullName
+              }
           }
 
       - name: Validate macOS installer sources
@@ -1527,7 +1555,9 @@ jobs:
             --platform macos \
             --contract "$staged_contract" \
             --install-root "$HOME/Library/Application Support/$product_name" \
-            --home-root "$HOME"
+            --home-root "$HOME" \
+            --evidence-directory \
+              "$RUNNER_TEMP/openhcs-native-installer-ui/installed-gui/post-installer"
 
           install_root="$HOME/Library/Application Support/$product_name"
           environment_python="$install_root/current/bin/python"
@@ -1544,7 +1574,9 @@ jobs:
             --platform macos \
             --contract "$staged_contract" \
             --install-root "$install_root" \
-            --home-root "$HOME"
+            --home-root "$HOME" \
+            --evidence-directory \
+              "$RUNNER_TEMP/openhcs-native-installer-ui/installed-gui/refreshed-launcher"
 
           previous_environment=$(readlink "$install_root/current")
           export OPENHCS_UV_EXECUTABLE="$install_root/bootstrap/uv/uv"
@@ -1569,7 +1601,9 @@ jobs:
             --platform macos \
             --contract "$staged_contract" \
             --install-root "$install_root" \
-            --home-root "$HOME"
+            --home-root "$HOME" \
+            --evidence-directory \
+              "$RUNNER_TEMP/openhcs-native-installer-ui/installed-gui/staged-update"
 
       - name: Show macOS installer log on failure
         if: failure() && matrix.platform == 'macos'
@@ -1580,6 +1614,26 @@ jobs:
             /bin/cat "$installer_log"
           else
             printf 'macOS installer log was not created at %s.\n' "$installer_log"
+          fi
+
+          gui_evidence_root="$RUNNER_TEMP/openhcs-native-installer-ui/installed-gui"
+          if [[ -d "$gui_evidence_root" ]]; then
+            while IFS= read -r phase_log; do
+              printf '=== Installed GUI phases: %s ===\n' "$phase_log"
+              /bin/cat "$phase_log"
+            done < <(/usr/bin/find "$gui_evidence_root" \
+              -name installed-gui-phases.jsonl -type f | /usr/bin/sort)
+          fi
+
+          runtime_log_root="$RUNNER_TEMP/openhcs-installer-home/Library/Application Support/OpenHCS/gui-data/openhcs/logs"
+          if [[ -d "$runtime_log_root" ]]; then
+            while IFS= read -r runtime_log; do
+              printf '=== OpenHCS runtime evidence: %s ===\n' "$runtime_log"
+              /bin/cat "$runtime_log"
+            done < <(/usr/bin/find "$runtime_log_root" -type f | /usr/bin/sort)
+          else
+            printf 'OpenHCS runtime log directory was not created at %s.\n' \
+              "$runtime_log_root"
           fi
 
       - name: Upload native installer UI evidence

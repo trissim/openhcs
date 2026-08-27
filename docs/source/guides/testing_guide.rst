@@ -132,8 +132,11 @@ workstation's package-index settings cannot redirect a managed desktop
 installation. Each job opens the actual Windows or macOS installer, captures
 its welcome state, activates its primary control, and requires visible progress
 and successful completion before testing the installed desktop and staged
-update. The three window records and screenshots are retained for 14 days as
-``native-installer-ui-*`` evidence.
+update. The three window records and screenshots, plus the complete durable
+installer log, are retained for 14 days as ``native-installer-ui-*`` evidence.
+Each installed desktop pass adds its flushed phase journal and native GUI
+snapshots to that artifact, so a timeout identifies the last completed lifecycle
+boundary instead of discarding the child process output.
 
 On ``main``, the Python quality job checks the cumulative change set since the
 most recent successful Integration Tests head. A failed Python change remains

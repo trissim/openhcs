@@ -358,6 +358,9 @@ try {
         -EvidenceName "installer-finished" `
         -ScreenshotName "installer-finished" `
         -Stage "finished"
+    Copy-Item `
+        -LiteralPath $resolvedCompletionLog `
+        -Destination (Join-Path $resolvedEvidenceDirectory "installer.log")
 
     if (-not $windowProcess.CloseMainWindow()) {
         throw "Windows could not close the completed native installer window."

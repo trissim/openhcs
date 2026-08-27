@@ -10,6 +10,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
 
 $script:SupportedContractSchema = "openhcs.installer.v2"
 $script:ManagedEnvironmentIdLength = 8

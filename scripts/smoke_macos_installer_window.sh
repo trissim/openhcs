@@ -138,6 +138,7 @@ wait_for_installer_log \
     "$((installation_timeout_seconds / 60)) minutes"
 /bin/sleep 1
 capture_installer_window installer-finished installer-finished
+/bin/cp "$completion_log" "$evidence_directory/installer.log"
 
 /bin/kill -TERM "$installer_pid"
 set +e

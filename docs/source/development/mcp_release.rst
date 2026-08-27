@@ -143,9 +143,12 @@ that wheelhouse to the real bootstrap installers and staged updater. Each lane
 opens the shipping ``.exe`` or ``.app``, captures its welcome window, activates
 the native primary control, and requires the visible workflow to reach both
 installation progress and successful completion. Window metadata and
-screenshots for all three states remain available as a 14-day
-``native-installer-ui-*`` artifact. The installed application and staged update
-are then exercised from the environment published by that wizard.
+screenshots for all three states, together with the complete durable installer
+log, remain available as a 14-day ``native-installer-ui-*`` artifact. The
+installed application and staged update are then exercised from the environment
+published by that wizard. The same artifact retains a flushed phase journal and
+native GUI snapshots for each installed desktop acceptance pass, including a
+partial journal when a deadline or process failure interrupts the pass.
 
 Before publication begins, the tag workflow resolves one annotated tag to its
 exact commit and requires successful Integration Tests and Documentation push

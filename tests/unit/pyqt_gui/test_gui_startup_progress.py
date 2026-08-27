@@ -699,6 +699,44 @@ def test_application_reports_ready_after_deferred_initialization() -> None:
     assert events == ["show", "background", "ready", "exec", "cleanup"]
 
 
+def test_application_cleanup_restores_its_predecessor_exception_hook(
+    monkeypatch,
+) -> None:
+    from openhcs.pyqt_gui.app import OpenHCSPyQtApp
+
+    events = []
+
+    def predecessor(*_args):
+        events.append("predecessor")
+
+    class _FunctionCatalogService:
+        @staticmethod
+        def close():
+            events.append("catalogue")
+
+    class _ApplicationHarness:
+        main_window = None
+        function_catalog_service = _FunctionCatalogService()
+        _previous_exception_hook = predecessor
+
+        @staticmethod
+        def processEvents():
+            events.append("events")
+
+        @staticmethod
+        def handle_exception(*_args):
+            events.append("current")
+
+    application = _ApplicationHarness()
+    application._previous_exception_hook = predecessor
+    monkeypatch.setattr(sys, "excepthook", application.handle_exception)
+
+    OpenHCSPyQtApp.cleanup(application)
+
+    assert sys.excepthook is predecessor
+    assert events == ["events", "catalogue", "events"]
+
+
 def test_show_main_window_reports_ready_only_after_deferred_work(
     monkeypatch,
 ) -> None:

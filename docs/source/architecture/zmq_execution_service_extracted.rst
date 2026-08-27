@@ -10,11 +10,15 @@ resulting compatibility value and may request a state-preserving endpoint and
 desktop restart. No second probe, copied version field, or UI-owned connection
 flag participates in the decision.
 
-Each ``EndpointConnectionAttempt`` owns its cancellation token. Cancelling that
-attempt raises ``EndpointConnectionCancelledError`` and disconnects a
-connection that won a late readiness race. OpenHCS can therefore accept GUI
-teardown during endpoint startup without treating it as a server failure,
-matching text, or retaining a parallel connection flag.
+Each ``EndpointConnectionAttempt`` executes under one cancellation authority,
+either allocated by the attempt or supplied by its caller. Cancelling that
+authority raises ``EndpointConnectionCancelledError`` and disconnects a
+connection that won a late readiness race. The endpoint function-catalogue
+service supplies its request cancellation to the connection attempt as well,
+so GUI teardown covers endpoint-lock waiting, process startup, readiness, and
+catalogue polling without a second flag or timeout. OpenHCS can therefore
+accept teardown during endpoint startup without treating it as a server
+failure or matching text.
 
 ``TransportEndpoint`` also owns the configured data/control port pair and the
 exact subset currently occupied. Proof-gated stale cleanup and forced local

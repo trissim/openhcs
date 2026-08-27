@@ -8,6 +8,7 @@ from dataclasses import replace
 
 import pytest
 from zmqruntime import OperationCancellation
+from zmqruntime.client import EndpointConnectionPolicy
 from zmqruntime.execution import ExecutionServer
 from zmqruntime.startup import EndpointStartupPhase, EndpointStartupStatus
 
@@ -354,6 +355,49 @@ def test_catalog_client_cancellation_prevents_another_poll(monkeypatch) -> None:
             ).to_dict(),
             cancellation=cancellation,
         )
+
+
+def test_catalog_client_applies_request_cancellation_to_endpoint_startup(
+    monkeypatch,
+) -> None:
+    cancellation = OperationCancellation()
+    page = _catalog()
+    observed: dict[str, object] = {}
+
+    class _ConnectionAttempt:
+        @staticmethod
+        def connect(policy, timeout):
+            observed["policy"] = policy
+            observed["timeout"] = timeout
+            return True
+
+    client = ZMQExecutionClient(port=22319, persistent=True)
+    monkeypatch.setattr(client, "is_connected", lambda: False)
+
+    def new_connection_attempt(*, cancellation=None):
+        observed["cancellation"] = cancellation
+        return _ConnectionAttempt()
+
+    monkeypatch.setattr(client, "new_connection_attempt", new_connection_attempt)
+    monkeypatch.setattr(
+        client,
+        "_send_function_catalog_control_request",
+        lambda _request, *, cancellation=None: FunctionCatalogControlResponse(
+            page
+        ).to_control_response(),
+    )
+
+    result = client.get_function_catalog(
+        FunctionCatalogControlRequest(),
+        cancellation=cancellation,
+    )
+
+    assert result is page
+    assert observed == {
+        "cancellation": cancellation,
+        "policy": EndpointConnectionPolicy.ATTACH_OR_START,
+        "timeout": client.config.client_connect_timeout_seconds,
+    }
 
 
 def test_zmq_router_projects_catalog_and_revision_checked_detail(monkeypatch) -> None:

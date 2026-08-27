@@ -325,6 +325,7 @@ def test_macos_installer_ci_drives_and_captures_the_shipping_app() -> None:
     assert "installation_timeout_seconds=1200" in smoke
     assert "installer-progress" in smoke
     assert "installer-finished" in smoke
+    assert '"$evidence_directory/installer.log"' in smoke
     assert "Installation completed successfully." in smoke
     assert '/usr/sbin/screencapture -x -l "$window_id"' in smoke
     assert '/bin/kill -TERM "$installer_pid"' in smoke
@@ -347,6 +348,11 @@ def test_macos_installer_ci_drives_and_captures_the_shipping_app() -> None:
     assert macos_step.index(invocation) < macos_step.index(
         "python -m scripts.smoke_installed_desktop"
     )
+    for acceptance_pass in ("post-installer", "refreshed-launcher", "staged-update"):
+        assert (
+            f"openhcs-native-installer-ui/installed-gui/{acceptance_pass}" in macos_step
+        )
+    assert "installed-gui-phases.jsonl" in workflow
     assert "native-installer-ui-${{ matrix.platform }}" in workflow
 
 

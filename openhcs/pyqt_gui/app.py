@@ -7,8 +7,9 @@ manages global configuration and services.
 
 import logging
 import sys
+from collections.abc import Callable
 from enum import Enum
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING
 
 from objectstate import spawn_thread_with_context
 from polystore.base import storage_registry
@@ -155,9 +156,10 @@ class OpenHCSPyQtApp(QApplication):
         self.file_manager = FileManager(self.storage_registry)
 
         # Main window
-        self.main_window: Optional["OpenHCSMainWindow"] = None
+        self.main_window: "OpenHCSMainWindow" | None = None
 
         # Setup application
+        self._previous_exception_hook = sys.excepthook
         self.setup_application()
 
         # Install global Shift+Wheel horizontal scrolling
@@ -296,7 +298,7 @@ class OpenHCSPyQtApp(QApplication):
             try:
                 self.main_window.deferred_initialization()
                 startup_readiness.deferred_initialization_complete()
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - Qt callback failure boundary
                 startup_readiness.fail(error)
 
         QtCore.QTimer.singleShot(100, _run_deferred_initialization)
@@ -386,10 +388,10 @@ class OpenHCSPyQtApp(QApplication):
 
             return exit_code
 
-        except Exception as e:
-            logger.error(f"Error during application run: {e}", exc_info=True)
+        except Exception as error:  # noqa: BLE001 - application lifecycle boundary
+            logger.exception("Error during application run")
             if not startup_complete and on_startup_failure is not None:
-                on_startup_failure(e)
+                on_startup_failure(error)
             self.cleanup()
             return 1
 
@@ -421,8 +423,11 @@ class OpenHCSPyQtApp(QApplication):
 
             logger.info("Application cleanup completed")
 
-        except Exception as e:
-            logger.warning(f"Error during application cleanup: {e}")
+        except Exception as error:  # noqa: BLE001 - shutdown boundary
+            logger.warning("Error during application cleanup: %s", error)
+        finally:
+            if sys.excepthook == self.handle_exception:
+                sys.excepthook = self._previous_exception_hook
 
 
 if __name__ == "__main__":

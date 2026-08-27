@@ -27,9 +27,11 @@ project. The desktop installers and in-app updater ignore workstation pip
 configuration files and inherited primary or extra package-index overrides.
 
 Open the downloaded installer and follow the prompts. When installation
-finishes, launch **OpenHCS** from the created shortcut. The first Fiji launch
-materializes and caches the checksummed Fiji, JDK, and Python bridge runtime, so
-it takes longer than later launches.
+finishes, launch **OpenHCS** from the created shortcut. The installer shows its
+live output while it works and keeps the complete installation log available
+from the finished page. The first Fiji launch materializes and caches the
+checksummed Fiji, JDK, and Python bridge runtime, so it takes longer than later
+launches.
 
 .. important::
 

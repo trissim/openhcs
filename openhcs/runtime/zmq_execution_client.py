@@ -21,7 +21,11 @@ from zmqruntime import (
     OperationCancellation,
     OperationDeadline,
 )
-from zmqruntime.client import EndpointCompatibilityClientABC, EndpointProcess
+from zmqruntime.client import (
+    EndpointCompatibilityClientABC,
+    EndpointConnectionPolicy,
+    EndpointProcess,
+)
 from zmqruntime.config import TransportMode
 from zmqruntime.execution import ExecutionClient
 from zmqruntime.messages import ControlMessageType, MessageFields, PongResponse
@@ -651,8 +655,15 @@ class ZMQExecutionClient(
             FunctionCatalogControlResponse,
         )
 
-        if not self.is_connected() and not self.connect():
-            raise RuntimeError("Failed to connect to execution server")
+        if not self.is_connected():
+            connection_attempt = self.new_connection_attempt(
+                cancellation=cancellation,
+            )
+            if not connection_attempt.connect(
+                EndpointConnectionPolicy.ATTACH_OR_START,
+                self.config.client_connect_timeout_seconds,
+            ):
+                raise RuntimeError("Failed to connect to execution server")
         response = self._send_function_catalog_control_request(
             FunctionCatalogControlPayload.from_request(request).to_dict(),
             cancellation=cancellation,

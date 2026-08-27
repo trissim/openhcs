@@ -58,7 +58,7 @@ def _stub_installed_probe(
     monkeypatch.setattr(
         desktop_smoke,
         "_smoke_installed_gui",
-        lambda *_args: {"ready": True, "visible": True, "exit_code": 0},
+        lambda *_args, **_kwargs: {"ready": True, "visible": True, "exit_code": 0},
     )
     monkeypatch.setattr(
         desktop_smoke,
@@ -101,6 +101,29 @@ def test_checked_command_decodes_child_diagnostics_independently_of_host_locale(
 
     assert "Command failed with exit code 1" in str(exc_info.value)
     assert "\ufffd" in str(exc_info.value)
+
+
+def test_checked_command_reports_partial_output_when_its_deadline_expires(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    command = ["slow-command"]
+
+    def timeout(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(
+            command,
+            12.0,
+            output=b"last completed phase\n",
+            stderr=b"phase diagnostics\n",
+        )
+
+    monkeypatch.setattr(subprocess, "run", timeout)
+
+    with pytest.raises(AssertionError, match="12-second deadline") as exc_info:
+        desktop_smoke._run_checked(command, cwd=tmp_path, timeout_seconds=12.0)
+
+    assert "last completed phase" in str(exc_info.value)
+    assert "phase diagnostics" in str(exc_info.value)
 
 
 def test_checked_command_can_stream_stderr_while_retaining_json_stdout(
@@ -235,6 +258,47 @@ def test_gui_smoke_uses_installed_python_and_isolated_runtime(
     assert smoke_environment["XDG_DATA_HOME"] == str((tmp_path / "gui-data").resolve())
     assert smoke_environment["NUMBA_CACHE_DIR"] == str(
         (tmp_path / "cache" / "numba").resolve()
+    )
+
+
+def test_gui_smoke_accepts_external_evidence_directory(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    installed_python = tmp_path / "installed" / "python"
+    installed_python.parent.mkdir()
+    installed_python.touch()
+    evidence_directory = tmp_path / "retained-evidence"
+    observed: dict[str, object] = {}
+
+    def fake_run_checked(
+        command,
+        *,
+        cwd,
+        environment=None,
+        timeout_seconds=120,
+        stream_stderr=False,
+    ):
+        observed["command"] = command
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"ready": True, "visible": True, "exit_code": 0}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(desktop_smoke, "_run_checked", fake_run_checked)
+
+    desktop_smoke._smoke_installed_gui(
+        installed_python,
+        tmp_path,
+        evidence_directory=evidence_directory,
+    )
+
+    command = observed["command"]
+    assert isinstance(command, list)
+    assert command[command.index("--evidence-directory") + 1] == str(
+        evidence_directory.resolve()
     )
 
 

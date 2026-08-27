@@ -666,7 +666,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
-        "sha256": "c3df603243eea00c50dab845d5c469d4e6b74acc49176b3a5b6d0a9e0041661a",
+        "sha256": "fc8bdf68455673921d79742204bf6c88e42b52bbe407d10ef4a831e084ca86a8",
         "role": "Owns exact spawned viewer processes, terminal observation, automatic child reaping, and explicit application and test teardown."
       },
       {
@@ -705,7 +705,8 @@
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
-      "On 2026-08-25, re-read the complete reference against PolyStore 0.2.8 and revised the package boundary to include its separate symbolic OMERO filename-template declaration."
+      "On 2026-08-25, re-read the complete reference against PolyStore 0.2.8 and revised the package boundary to include its separate symbolic OMERO filename-template declaration.",
+      "On 2026-08-26, re-read the complete explanation after ZMQRuntime endpoint attempts gained caller-owned cancellation; the generic transport versus OpenHCS adapter ownership remains accurate."
     ]
   },
   {
@@ -802,7 +803,7 @@
   },
   {
     "path": "docs/source/getting_started/getting_started.rst",
-    "source_sha256": "46beb1b43912f93aca2070d1930a75e44c9d1fc707767f7addda3c24cbc62fb3",
+    "source_sha256": "fe312655e18f7ee6428119e11ec74bd822ff55ca4b15b8ec9493b0af28ccaba4",
     "audience": [
       "new desktop users",
       "Python installers"
@@ -837,7 +838,7 @@
       },
       {
         "path": "packaging/installers/windows/Install-OpenHCS.ps1",
-        "sha256": "09efa25265bcc66d632f59b7cf2b15d8039da6f24288baa18d4b0a8a70c28307",
+        "sha256": "96a9e0773f8b931f7c59af303ba46c9b57f7dff4c260a27d2bb4a9d95b6c5049",
         "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
       },
       {
@@ -852,12 +853,12 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "b20d80afbbbb8619dfb0f5e50cb3b7228bbd483c5e6bcbb4149a4e9fade97830",
+        "sha256": "3b3d411aa3700411b61dae36888f4e8b2db5d91b353d3b7e7bc278db1b401310",
         "role": "Exercises the installed distribution, launchers, MCP/runtime path, viewers, and packaged restart worker outside the source checkout while deriving the GUI subprocess ceiling from the installed-GUI smoke timing authority."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "4fe40048a3423f7d8a543da88d77bffee7fe5d7ff60e89fe078bc4560ba0cd47",
+        "sha256": "60b381318cb10710d1770b025c19598984780cc96337baaddea54b53b291e85d",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, environment, and declaration-derived GUI operation and process-exit budgets to the installed verifiers."
       },
       {
@@ -897,7 +898,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "246201279e12ebaf95773aa2dc5d5123ab915a4e534a49da848491f5c439d4fe",
+        "sha256": "a84c7acce66678e634a7593a55b65fbf5b413d6da20e8b379744e515032acf1c",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -947,7 +948,9 @@
       "On 2026-08-26, re-read the complete installation how-to after installed desktop verification began retaining native MCP window snapshots; the supported install, launch, verification, and update instructions remain unchanged.",
       "On 2026-08-26, re-read the complete installation how-to after the installed MCP demo stopped narrowing the declaration-owned execution submission deadline; the documented bounded verification command remains accurate.",
       "On 2026-08-26, re-read the complete installation how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; installed GUI acceptance now owns one operation budget and derives a bounded outer process-exit grace, while a fresh 0.8.0 wheel completed cold launch, 263-function catalogue resolution, packaged MCP control, and two validated native screenshots.",
-      "On 2026-08-26, re-read the complete installation how-to after CI began opening and retaining the shipping native installer welcome windows; the user-facing install, launch, verification, and update procedure remains accurate."
+      "On 2026-08-26, re-read the complete installation how-to after CI began opening and retaining the shipping native installer welcome windows; the user-facing install, launch, verification, and update procedure remains accurate.",
+      "On 2026-08-26, applied the Diataxis installation how-to boundary and re-read the complete page after removing PowerShell progress serialization from the live transcript and retaining the durable log; the task flow now tells users where both forms of feedback appear.",
+      "On 2026-08-26, re-read the complete installation how-to after installed desktop probes gained durable lifecycle evidence and timeout diagnostics; the user-facing install, launch, and log instructions remain accurate."
     ]
   },
   {
@@ -1322,7 +1325,7 @@
       },
       {
         "path": "packaging/installers/windows/Install-OpenHCS.ps1",
-        "sha256": "09efa25265bcc66d632f59b7cf2b15d8039da6f24288baa18d4b0a8a70c28307",
+        "sha256": "96a9e0773f8b931f7c59af303ba46c9b57f7dff4c260a27d2bb4a9d95b6c5049",
         "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
       },
       {
@@ -1337,6 +1340,7 @@
     "disposition": "redirect",
     "validation": [
       "Re-read docs/source/guide_for_biologists/installation_and_setup.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-26, re-read the complete compatibility page after native installer transcript and evidence handling changed; retaining one redirect to the canonical installation how-to remains accurate and avoids duplicated guidance.",
       "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/cli.py; packaging/installers/windows/Install-OpenHCS.ps1; packaging/installers/macos/install-openhcs.sh.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -1465,7 +1469,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "04798fc0954d1a9cf017171b3adf88776239375b9ea718354c84a86ee64e61ca",
+        "sha256": "559c2e4a899ab2da3c7bf230aeb34bef45307185b058c71208d2bd2021f75bbe",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       },
       {
@@ -1510,12 +1514,12 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "b20d80afbbbb8619dfb0f5e50cb3b7228bbd483c5e6bcbb4149a4e9fade97830",
+        "sha256": "3b3d411aa3700411b61dae36888f4e8b2db5d91b353d3b7e7bc278db1b401310",
         "role": "Executes the GUI acceptance probe and packaged restart worker from the installed environment while deriving the outer process ceiling from the probe's timing authority."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "4fe40048a3423f7d8a543da88d77bffee7fe5d7ff60e89fe078bc4560ba0cd47",
+        "sha256": "60b381318cb10710d1770b025c19598984780cc96337baaddea54b53b291e85d",
         "role": "Proves platform smoke orchestration passes the exact installed Python, install root, environment, and declaration-derived GUI operation and process-exit budgets to the installed verifiers."
       },
       {
@@ -1569,7 +1573,8 @@
       "On 2026-08-25, re-read the complete troubleshooting how-to against the persisted desktop endpoint snapshot and shared catalogue lifecycle; focused tests and a fresh stdio MCP probe confirmed non-default endpoint use and restart guidance.",
       "On 2026-08-26, re-read the complete troubleshooting how-to after the installed desktop smoke added retained native screenshots; endpoint, catalogue, viewer, and restart guidance remain current.",
       "On 2026-08-26, re-read and revised the complete troubleshooting how-to after a busy Windows runner exposed the former shared submission deadline; the recovery path now distinguishes the dedicated preparation budget from short control requests and preserves the known-versus-unknown dispatch outcome.",
-      "On 2026-08-26, re-read the complete troubleshooting how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; product-owned catalogue timeout errors remain distinct from the acceptance harness deadline, and a fresh 0.8.0 wheel completed the cold catalogue and packaged MCP path."
+      "On 2026-08-26, re-read the complete troubleshooting how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; product-owned catalogue timeout errors remain distinct from the acceptance harness deadline, and a fresh 0.8.0 wheel completed the cold catalogue and packaged MCP path.",
+      "On 2026-08-26, re-read the complete troubleshooting page after catalog request cancellation began covering endpoint startup and installed probes retained partial phase journals; the selector and endpoint diagnosis remains accurate."
     ]
   },
   {
@@ -2042,7 +2047,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "ceb56eccd05f06611f073f1198065a7e36f68727ce94a576f854a9ddf62c22a4",
+    "source_sha256": "21a90e287ed1debd1f6328ad8f04765c3683f5625598b0e864811f0beca4daf0",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -2062,18 +2067,18 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "246201279e12ebaf95773aa2dc5d5123ab915a4e534a49da848491f5c439d4fe",
+        "sha256": "a84c7acce66678e634a7593a55b65fbf5b413d6da20e8b379744e515032acf1c",
         "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, retained application and three-stage installer screenshot artifacts, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
         "path": "scripts/smoke_windows_installer_window.ps1",
-        "sha256": "93080310b2d4906296a9543000c685e30b9dc5034ac5e2b67d8cb097279ca9d7",
-        "role": "Drives the shipping Windows installer through its real native controls and retains exact welcome, progress, and completion window evidence."
+        "sha256": "e1e72043ea7bffd4374ba635c59d6f6ddc38687d9c282cf7535f131adb3355ac",
+        "role": "Drives the shipping Windows installer through its real native controls and retains exact welcome, progress, completion, and durable-log evidence."
       },
       {
         "path": "scripts/smoke_macos_installer_window.sh",
-        "sha256": "06324eb010664b641c1357677f693a060f58ce5a3681c9eccb075ea33c9a3682",
-        "role": "Drives the shipping macOS installer application through installation and retains exact welcome, progress, and completion window evidence."
+        "sha256": "8111d1a357b745cba9620656f46ed1e9ace52c65c028e9bf1f46277dff7aca06",
+        "role": "Drives the shipping macOS installer application through installation and retains exact welcome, progress, completion, and durable-log evidence."
       },
       {
         "path": "scripts/macos_installer_window_probe.swift",
@@ -2117,23 +2122,23 @@
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
-        "sha256": "b20d80afbbbb8619dfb0f5e50cb3b7228bbd483c5e6bcbb4149a4e9fade97830",
+        "sha256": "3b3d411aa3700411b61dae36888f4e8b2db5d91b353d3b7e7bc278db1b401310",
         "role": "Runs installed GUI readiness and screenshot evidence, launch, MCP/runtime, viewer, and packaged restart-worker acceptance outside the source checkout while deriving the outer GUI process ceiling from the probe's timing authority."
       },
       {
         "path": "tests/installer/test_installed_desktop_smoke.py",
-        "sha256": "4fe40048a3423f7d8a543da88d77bffee7fe5d7ff60e89fe078bc4560ba0cd47",
+        "sha256": "60b381318cb10710d1770b025c19598984780cc96337baaddea54b53b291e85d",
         "role": "Proves platform smoke orchestration passes the exact installed Python, isolated runtime, evidence directory, and declaration-derived GUI timing to the installed verifiers."
       },
       {
         "path": "scripts/smoke_installed_gui.py",
-        "sha256": "572f0d0d7457fc97430872c882726c375771cc9b723aa35a6c32c73576c3152a",
-        "role": "Owns the installed-GUI acceptance timing, applies the declared logging configuration, constructs the application on declaration-allocated endpoints, proves the background function catalogue and advertised endpoint log are usable, drives the GUI through packaged MCP, validates retained window snapshots, and cleans up exact owned resources outside the checkout."
+        "sha256": "900476e27ff425f7ceb46113f1495c5f6b236704fd3db9d077ab44c02d71e101",
+        "role": "Owns the installed-GUI acceptance timing and single terminal completion, applies the declared logging configuration, constructs the application on declaration-allocated endpoints, proves the background function catalogue and advertised endpoint log are usable, drives the GUI through packaged MCP, validates retained window snapshots, and cleans up exact owned resources outside the checkout."
       },
       {
         "path": "tests/unit/test_smoke_installed_gui.py",
-        "sha256": "54cf260939cf4966ddf601d84aabdd2e24969934f4fbc39be43839df751d7998",
-        "role": "Proves source-checkout rejection, one derived smoke timing policy, deadline-owner error preservation, declaration-owned endpoint allocation, function-catalogue readiness, advertised execution-log validation, snapshot CLI projection, and emitted PNG identity validation for the installed GUI/MCP probe."
+        "sha256": "206d619fc1df83e882025eda45ff14dcbee31fdc0b7648eab216573c0647dc5c",
+        "role": "Proves source-checkout rejection, one derived smoke timing policy, deadline-owner error preservation under late cancellation, declaration-owned endpoint allocation, function-catalogue readiness, advertised execution-log validation, snapshot CLI projection, and emitted PNG identity validation for the installed GUI/MCP probe."
       },
       {
         "path": "openhcs/pyqt_gui/config.py",
@@ -2220,7 +2225,10 @@
       "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete guide after the installed GUI canary gained background function-catalogue readiness proof; a cold installed wheel completed launch, catalogue resolution, packaged MCP control, and retained screenshots within one end-to-end deadline.",
     "On 2026-08-26, re-read the complete testing how-to after Apple Silicon cold starts exposed duplicated absolute smoke ceilings; one installed-GUI timing declaration now derives both operation and process limits, 106 focused release and installer tests passed, and a fresh 0.8.0 wheel produced two visually inspected native screenshots after resolving its 263-function catalogue.",
     "On 2026-08-26, applied the Diataxis testing how-to boundary and re-read the complete guide after the packaged GUI canary began applying LoggingConfig and validating its live endpoint-advertised log; 61 focused smoke, workflow, and installer tests passed, and a live UI/MCP run produced two inspected screenshots plus a non-empty execution-server log.",
-    "On 2026-08-26, applied the Diataxis testing how-to boundary and re-read the complete guide after native installer acceptance began opening the shipping Windows and macOS applications before worker execution; 71 focused installer tests plus workflow, shell, formatting, and diff validation passed locally."
+    "On 2026-08-26, applied the Diataxis testing how-to boundary and re-read the complete guide after native installer acceptance began opening the shipping Windows and macOS applications before worker execution; 71 focused installer tests plus workflow, shell, formatting, and diff validation passed locally.",
+    "On 2026-08-26, applied the Diataxis testing how-to boundary and re-read the complete guide after both native UI probes began retaining the durable transcript beside their welcome, progress, and completion evidence; 71 focused installer tests passed.",
+    "On 2026-08-26, applied the Diataxis testing how-to boundary and re-read the complete guide after native installer artifacts gained per-pass phase journals and live GUI snapshots and catalog startup became teardown-cancellable; the updated evidence description matches the exact workflow.",
+    "On 2026-08-27, re-read the complete testing how-to after the installed-GUI harness replaced competing timeout, failure, and success fields with one terminal completion authority; focused regression and forced cold-deadline wheel probes confirmed the documented partial-journal behavior."
     ]
   },
   {
@@ -2367,7 +2375,7 @@
       },
       {
         "path": "packaging/installers/windows/Install-OpenHCS.ps1",
-        "sha256": "09efa25265bcc66d632f59b7cf2b15d8039da6f24288baa18d4b0a8a70c28307",
+        "sha256": "96a9e0773f8b931f7c59af303ba46c9b57f7dff4c260a27d2bb4a9d95b6c5049",
         "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
       },
       {
@@ -2382,6 +2390,7 @@
     "disposition": "redirect",
     "validation": [
       "Re-read docs/source/installation.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-26, re-read the complete compatibility page after native installer transcript and evidence handling changed; retaining one redirect to the canonical installation how-to remains accurate and avoids duplicated guidance.",
       "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/cli.py; packaging/installers/windows/Install-OpenHCS.ps1; packaging/installers/macos/install-openhcs.sh.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -2888,7 +2897,7 @@
       },
       {
         "path": "tests/unit/test_function_catalog_zmq.py",
-        "sha256": "a2cf7c23c799c8a52db884c7ecfdbfd36f22c2ed328eb49516bddafc75cec5a2",
+        "sha256": "6a128b5a4364a70e1653c4679c2854153380c02136c9dce2b431a95386a8a6b3",
         "role": "Proves persisted custom functions propagate through registry discovery and the execution-server catalogue."
       },
       {
@@ -2930,7 +2939,8 @@
       "On 2026-08-25, re-read the complete custom-function how-to against endpoint-owned registration and the single lifetime-bearing runtime declaration map; focused lifecycle and ZMQ tests confirmed persisted reconciliation retains ephemeral declarations.",
       "On 2026-08-25, re-read the complete how-to after custom-function change notification was split into a headless domain event and desktop Qt adapter; cold MCP import and affected custom-function, catalogue, and help regressions passed.",
       "On 2026-08-25, re-read the complete custom-function management how-to after formatting its runtime projection authority; no behavior, ownership, or user workflow changed.",
-      "On 2026-08-26, re-read and revised the how-to after the domain event stopped owning Qt adapter lifetimes; exact callback identity and the historical CI crash ordering are covered directly."
+      "On 2026-08-26, re-read and revised the how-to after the domain event stopped owning Qt adapter lifetimes; exact callback identity and the historical CI crash ordering are covered directly.",
+      "On 2026-08-26, re-read the complete how-to after function-catalog cancellation and its focused regression coverage changed; the asynchronous invalidation and endpoint-owned catalogue flow remains accurate."
     ]
   },
   {
@@ -2959,7 +2969,7 @@
       },
       {
         "path": "tests/unit/test_function_catalog_zmq.py",
-        "sha256": "a2cf7c23c799c8a52db884c7ecfdbfd36f22c2ed328eb49516bddafc75cec5a2",
+        "sha256": "6a128b5a4364a70e1653c4679c2854153380c02136c9dce2b431a95386a8a6b3",
         "role": "Proves persisted custom functions propagate through registry discovery and the execution-server catalogue."
       },
       {
@@ -2989,7 +2999,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
-      "On 2026-08-25, re-read the complete custom-function authoring how-to after formatting its runtime projection authority; callable declaration and catalogue behavior remain unchanged."
+      "On 2026-08-25, re-read the complete custom-function authoring how-to after formatting its runtime projection authority; callable declaration and catalogue behavior remain unchanged.",
+      "On 2026-08-26, re-read the complete custom-function how-to after function-catalog transport regression coverage changed; the declaration-owned callable contract remains accurate."
     ]
   },
   {
@@ -3169,7 +3180,7 @@
       },
       {
         "path": "openhcs/runtime/zmq_execution_client.py",
-        "sha256": "04798fc0954d1a9cf017171b3adf88776239375b9ea718354c84a86ee64e61ca",
+        "sha256": "559c2e4a899ab2da3c7bf230aeb34bef45307185b058c71208d2bd2021f75bbe",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
       }
     ],
@@ -3185,7 +3196,8 @@
       "The complete pyqt-reactive suite passed 320 tests, and a live MCP-driven desktop session selected the port 7777 server entry and displayed that server's corresponding log.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
       "On 2026-08-26, re-read the complete how-to after its checkboxes adopted the shared leaf-owned themed control; discovery, filtering, process identity, and log-selection behaviour remain unchanged.",
-      "On 2026-08-26, re-read the complete how-to after the execution client adopted a dedicated submission default; log discovery, process filtering, selection, and connection-state guidance remain unchanged."
+      "On 2026-08-26, re-read the complete how-to after the execution client adopted a dedicated submission default; log discovery, process filtering, selection, and connection-state guidance remain unchanged.",
+      "On 2026-08-26, re-read the complete log-viewer how-to after catalog endpoint startup joined request cancellation and installed probes retained phase diagnostics; the live log and readiness guidance remains accurate."
     ]
   },
   {

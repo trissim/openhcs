@@ -273,7 +273,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
-        "sha256": "c3df603243eea00c50dab845d5c469d4e6b74acc49176b3a5b6d0a9e0041661a",
+        "sha256": "fc8bdf68455673921d79742204bf6c88e42b52bbe407d10ef4a831e084ca86a8",
         "role": "Declares EndpointClientSession as the authoritative transport-client and application-admission proof."
       }
     ],
@@ -294,7 +294,8 @@
       "On 2026-08-23, re-read the complete explanation after catalogue preparation gained owned cancellation and joined shutdown; 53 focused catalogue, help, and plate-inspection regressions passed.",
       "On 2026-08-24, re-read the complete explanation against ZMQRuntime 0.2.17 and the OpenHCS client teardown path; 149 generic tests, 58 focused OpenHCS regressions, and a fresh real-GUI close during endpoint startup passed without a retained process or false failure.",
       "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; revised its startup wording and confirmed the remaining claims against current source and tests.",
-      "On 2026-08-25, re-read the complete explanation against the shared endpoint catalogue service and its single revision/projection state; focused unit tests and a live Function Selector probe confirmed non-blocking preparation and exact selected-reference resolution."
+      "On 2026-08-25, re-read the complete explanation against the shared endpoint catalogue service and its single revision/projection state; focused unit tests and a live Function Selector probe confirmed non-blocking preparation and exact selected-reference resolution.",
+      "On 2026-08-26, re-read the complete page after ZMQRuntime allowed the catalog preparation owner to carry one cancellation authority through endpoint startup and request polling; the documented GUI cleanup and prewarm lifecycle remains accurate."
     ]
   },
   {
@@ -1081,7 +1082,7 @@
       },
       {
         "path": "external/zmqruntime/src/zmqruntime/client.py",
-        "sha256": "c3df603243eea00c50dab845d5c469d4e6b74acc49176b3a5b6d0a9e0041661a",
+        "sha256": "fc8bdf68455673921d79742204bf6c88e42b52bbe407d10ef4a831e084ca86a8",
         "role": "Owns exact spawned endpoint-process adapters, retained exit observation, automatic child reaping, and owner groups without process rediscovery."
       },
       {
@@ -1125,7 +1126,8 @@
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete reference against the OpenHCS OMERO deployment README and plugin compatibility owner; corrected deployment and application ownership without changing generic PolyStore responsibilities.",
-      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate."
+      "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
+      "On 2026-08-26, re-read the complete page after ZMQRuntime extended endpoint attempts to accept caller-owned cancellation; the extracted-package ownership boundary remains accurate."
     ]
   },
   {

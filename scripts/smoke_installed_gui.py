@@ -10,8 +10,11 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, fields, replace
+from concurrent.futures import Future
+from dataclasses import asdict, dataclass, field, fields, replace
+from enum import Enum
 from importlib.metadata import distribution
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar, get_type_hints
@@ -53,6 +56,67 @@ class InstalledGuiSmokeTiming:
 
 
 INSTALLED_GUI_SMOKE_TIMING = InstalledGuiSmokeTiming()
+
+
+class InstalledGuiSmokePhase(str, Enum):
+    """Stable acceptance phases emitted by the installed-GUI probe."""
+
+    VALIDATING_PACKAGE = "validating installed package"
+    CONSTRUCTING_APPLICATION = "constructing installed application"
+    STARTING_APPLICATION = "starting installed application"
+    MAIN_WINDOW_READY = "main window painted and ready"
+    WAITING_FOR_FUNCTION_CATALOG = "waiting for endpoint function catalog"
+    FUNCTION_CATALOG_READY = "endpoint function catalog ready"
+    VALIDATING_EXECUTION_ENDPOINT = "validating execution endpoint"
+    STARTING_MCP_SESSION = "starting packaged MCP session"
+    MCP_SESSION_READY = "packaged MCP session ready"
+    INVOKING_UI_ACTION = "invoking live UI action"
+    CAPTURING_WINDOWS = "capturing live windows"
+    LIVE_MCP_COMPLETE = "packaged MCP operation complete"
+    CLOSING_APPLICATION = "closing installed application"
+    APPLICATION_EXITED = "installed application exited"
+    STOPPING_EXECUTION_ENDPOINT = "stopping isolated execution endpoint"
+    EXECUTION_ENDPOINT_STOPPED = "isolated execution endpoint stopped"
+    TIMED_OUT = "acceptance deadline expired"
+    FAILED = "acceptance failed"
+    COMPLETE = "acceptance complete"
+
+
+class InstalledGuiSmokeEvidenceJournal:
+    """Persist phase evidence while the acceptance process is still running."""
+
+    file_name = "installed-gui-phases.jsonl"
+
+    def __init__(self, evidence_directory: Path) -> None:
+        evidence_directory.mkdir(parents=True, exist_ok=True)
+        self.path = evidence_directory / self.file_name
+        self.path.write_text("", encoding="utf-8")
+        self._started_at = time.monotonic()
+        self._lock = threading.Lock()
+
+    def record(
+        self,
+        phase: InstalledGuiSmokePhase,
+        *,
+        detail: str | None = None,
+    ) -> None:
+        """Append and flush one typed phase projection."""
+
+        payload: dict[str, str | float] = {
+            "phase": phase.value,
+            "elapsed_seconds": round(time.monotonic() - self._started_at, 3),
+        }
+        if detail is not None:
+            payload["detail"] = detail
+        line = json.dumps(payload, sort_keys=True)
+        with self._lock, self.path.open("a", encoding="utf-8") as stream:
+            stream.write(f"{line}\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        message = f"Installed GUI smoke phase: {phase.value}"
+        if detail is not None:
+            message = f"{message} ({detail})"
+        print(message, file=sys.stderr, flush=True)
 
 
 class InstalledGuiSnapshotEvidenceAuthority:
@@ -225,26 +289,48 @@ class InstalledGuiSmokeResult:
 
 @dataclass(slots=True)
 class _StartupObservation:
-    """Mutable callback state finalized into one validated result."""
+    """Paint evidence plus one terminal authority for the asynchronous smoke."""
 
     ready: bool = False
     visible: bool = False
-    startup_error: str | None = None
-    timed_out: bool = False
-    live_mcp: InstalledLiveMcpSmokeResult | None = None
+    _completion: Future[InstalledLiveMcpSmokeResult] = field(default_factory=Future)
 
     def record_ready(self, *, visible: bool) -> None:
         self.ready = True
         self.visible = visible
 
-    def record_failure(self, error: BaseException) -> None:
-        self.startup_error = f"{type(error).__name__}: {error}"
+    def record_failure(self, error: BaseException) -> bool:
+        """Settle the smoke with its originating failure exactly once."""
 
-    def record_live_mcp(self, result: InstalledLiveMcpSmokeResult) -> None:
-        self.live_mcp = result
+        if self._completion.done():
+            return False
+        self._completion.set_exception(
+            AssertionError(
+                f"Installed GUI/MCP smoke failed: {type(error).__name__}: {error}"
+            )
+        )
+        return True
 
-    def record_timeout(self) -> None:
-        self.timed_out = True
+    def record_live_mcp(self, result: InstalledLiveMcpSmokeResult) -> bool:
+        """Settle the smoke with its live MCP evidence exactly once."""
+
+        if self._completion.done():
+            return False
+        self._completion.set_result(result)
+        return True
+
+    def record_timeout(self, *, timeout_seconds: float) -> bool:
+        """Settle the smoke with its acceptance deadline exactly once."""
+
+        if self._completion.done():
+            return False
+        self._completion.set_exception(
+            TimeoutError(
+                "Installed GUI/MCP smoke did not complete within "
+                f"{timeout_seconds:g} seconds."
+            )
+        )
+        return True
 
     def result(
         self,
@@ -255,26 +341,15 @@ class _StartupObservation:
         openhcs_version: str,
         package_path: Path,
         qt_platform: str,
-        timeout_seconds: float,
     ) -> InstalledGuiSmokeResult:
         """Validate the observed lifecycle and freeze its evidence."""
 
-        if self.startup_error is not None:
-            raise AssertionError(
-                f"Installed GUI/MCP smoke failed: {self.startup_error}"
-            )
-        if self.timed_out:
-            raise TimeoutError(
-                "Installed GUI/MCP smoke did not complete within "
-                f"{timeout_seconds:g} seconds."
-            )
+        live_mcp = self._completion.result()
         if not self.ready or not self.visible:
             raise AssertionError(
                 "Installed GUI did not become visibly ready: "
                 f"ready={self.ready}, visible={self.visible}"
             )
-        if self.live_mcp is None:
-            raise AssertionError("Installed MCP did not operate the live GUI.")
         if exit_code != 0:
             raise AssertionError(f"Installed GUI exited with {exit_code}.")
         return InstalledGuiSmokeResult(
@@ -285,10 +360,10 @@ class _StartupObservation:
             package_path=str(package_path),
             qt_platform=qt_platform,
             ready=self.ready,
-            startup_error=self.startup_error,
-            timed_out=self.timed_out,
+            startup_error=None,
+            timed_out=False,
             visible=self.visible,
-            live_mcp=self.live_mcp,
+            live_mcp=live_mcp,
         )
 
 
@@ -523,6 +598,7 @@ def run_installed_live_mcp_smoke(
     function_catalog_service: ZMQFunctionCatalogService,
     execution_config: OpenHCSZMQConfig,
     deadline: OperationDeadline,
+    journal: InstalledGuiSmokeEvidenceJournal,
 ) -> InstalledLiveMcpSmokeResult:
     """Operate one live packaged GUI through one packaged desktop MCP session."""
 
@@ -553,10 +629,16 @@ def run_installed_live_mcp_smoke(
         UiSmokeCommandSpec,
     )
 
+    journal.record(InstalledGuiSmokePhase.WAITING_FOR_FUNCTION_CATALOG)
     function_catalog = verify_installed_function_catalog(
         function_catalog_service,
         deadline=deadline,
     )
+    journal.record(
+        InstalledGuiSmokePhase.FUNCTION_CATALOG_READY,
+        detail=f"{function_catalog.total} functions",
+    )
+    journal.record(InstalledGuiSmokePhase.VALIDATING_EXECUTION_ENDPOINT)
     runtime_info = RuntimeServerService(config=execution_config).server_info(
         host=execution_config.client_host,
         port=execution_config.default_port,
@@ -573,6 +655,7 @@ def run_installed_live_mcp_smoke(
     if windows_command is None:
         raise AssertionError("The desktop MCP surface has no window-list command.")
 
+    journal.record(InstalledGuiSmokePhase.STARTING_MCP_SESSION)
     with McpDevClient(
         sys.executable,
         surface_profile=DesktopLocalCapabilitySurfaceProfile(),
@@ -604,6 +687,7 @@ def run_installed_live_mcp_smoke(
             catalog_type=UiWindowCatalog,
             item_type=UiWindowSummary,
         )
+        journal.record(InstalledGuiSmokePhase.MCP_SESSION_READY)
 
         installed_version = distribution("openhcs").version
         if health.status != "ok" or not health.packaged_resources_ready:
@@ -651,6 +735,7 @@ def run_installed_live_mcp_smoke(
                 f"missing={sorted(required_window_ids - observed_window_ids)}"
             )
 
+        journal.record(InstalledGuiSmokePhase.INVOKING_UI_ACTION)
         timeout_text = f"{deadline.remaining_seconds():g}"
         action_execution = client.execute(
             (
@@ -706,6 +791,7 @@ def run_installed_live_mcp_smoke(
         new_window_ids = window_ids_after - window_ids_before
         if not new_window_ids:
             raise AssertionError("Installed UI action exposed no new window identity.")
+        journal.record(InstalledGuiSmokePhase.CAPTURING_WINDOWS)
         evidence_directory.mkdir(parents=True, exist_ok=True)
         snapshots = tuple(
             _capture_installed_gui_snapshot(
@@ -721,6 +807,7 @@ def run_installed_live_mcp_smoke(
             )
         )
 
+    journal.record(InstalledGuiSmokePhase.LIVE_MCP_COMPLETE)
     return InstalledLiveMcpSmokeResult(
         action_status=action_result.status,
         bridge_count=len(bridge_catalog.bridges),
@@ -775,6 +862,8 @@ def run_installed_gui_smoke(
     if timeout_seconds <= 0:
         raise ValueError("GUI startup smoke timeout must be positive.")
     os.environ["OPENHCS_CPU_ONLY"] = "true"
+    journal = InstalledGuiSmokeEvidenceJournal(evidence_directory)
+    journal.record(InstalledGuiSmokePhase.VALIDATING_PACKAGE)
 
     from PyQt6.QtCore import QObject, QTimer, pyqtSignal
     from zmqruntime import OperationDeadline
@@ -796,6 +885,7 @@ def run_installed_gui_smoke(
         forbidden_root=forbidden_root.resolve(),
     )
 
+    journal.record(InstalledGuiSmokePhase.CONSTRUCTING_APPLICATION)
     descriptor_path = (Path.cwd() / "ui_bridge.json").resolve()
     ui_config = with_isolated_runtime_topology(
         UIConfig(
@@ -816,6 +906,7 @@ def run_installed_gui_smoke(
         ["openhcs-gui-installed-smoke", "--no-gpu"],
         runtime_context=runtime_context,
     )
+    journal.record(InstalledGuiSmokePhase.STARTING_APPLICATION)
     deadline = OperationDeadline.after_milliseconds(
         round(timeout_seconds * 1_000),
         operation="installed GUI and packaged MCP smoke",
@@ -829,6 +920,7 @@ def run_installed_gui_smoke(
     completion = McpSmokeCompletion()
 
     def close_application() -> None:
+        journal.record(InstalledGuiSmokePhase.CLOSING_APPLICATION)
         main_window = application.main_window
         if main_window is None:
             application.exit(1)
@@ -841,6 +933,7 @@ def run_installed_gui_smoke(
         observation.record_ready(
             visible=bool(main_window is not None and main_window.isVisible())
         )
+        journal.record(InstalledGuiSmokePhase.MAIN_WINDOW_READY)
 
         def run_live_mcp() -> None:
             try:
@@ -852,6 +945,7 @@ def run_installed_gui_smoke(
                         function_catalog_service=application.function_catalog_service,
                         execution_config=ui_config.zmq,
                         deadline=deadline,
+                        journal=journal,
                     )
                 )
             except (
@@ -867,25 +961,38 @@ def run_installed_gui_smoke(
         worker_thread.start()
 
     def startup_failed(error: BaseException) -> None:
-        observation.record_failure(error)
-        close_application()
+        if observation.record_failure(error):
+            journal.record(
+                InstalledGuiSmokePhase.FAILED,
+                detail=f"{type(error).__name__}: {error}",
+            )
+            close_application()
 
     def live_mcp_completed(result: object) -> None:
         if isinstance(result, BaseException):
-            observation.record_failure(result)
+            accepted = observation.record_failure(result)
+            if accepted:
+                journal.record(
+                    InstalledGuiSmokePhase.FAILED,
+                    detail=f"{type(result).__name__}: {result}",
+                )
         elif isinstance(result, InstalledLiveMcpSmokeResult):
-            observation.record_live_mcp(result)
+            accepted = observation.record_live_mcp(result)
         else:
-            observation.record_failure(
-                TypeError(f"Unexpected MCP smoke result: {type(result).__name__}")
-            )
-        close_application()
+            error = TypeError(f"Unexpected MCP smoke result: {type(result).__name__}")
+            accepted = observation.record_failure(error)
+            if accepted:
+                journal.record(
+                    InstalledGuiSmokePhase.FAILED,
+                    detail=f"{type(error).__name__}: {error}",
+                )
+        if accepted:
+            close_application()
 
     def startup_timed_out() -> None:
-        if observation.live_mcp is not None or observation.startup_error is not None:
-            return
-        observation.record_timeout()
-        close_application()
+        if observation.record_timeout(timeout_seconds=timeout_seconds):
+            journal.record(InstalledGuiSmokePhase.TIMED_OUT)
+            close_application()
 
     completion.completed.connect(live_mcp_completed)
     QTimer.singleShot(deadline.timeout_ms, startup_timed_out)
@@ -894,25 +1001,31 @@ def run_installed_gui_smoke(
             on_main_window_ready=startup_ready,
             on_startup_failure=startup_failed,
         )
+        journal.record(InstalledGuiSmokePhase.APPLICATION_EXITED)
     finally:
         if worker_thread is not None:
             worker_thread.join(timeout=deadline.remaining_seconds_or_zero())
-            if worker_thread.is_alive():
-                observation.record_timeout()
+            if worker_thread.is_alive() and observation.record_timeout(
+                timeout_seconds=timeout_seconds
+            ):
+                journal.record(InstalledGuiSmokePhase.TIMED_OUT)
+        journal.record(InstalledGuiSmokePhase.STOPPING_EXECUTION_ENDPOINT)
         shutdown_isolated_execution_endpoint(ui_config)
+        journal.record(InstalledGuiSmokePhase.EXECUTION_ENDPOINT_STOPPED)
     if descriptor_path.exists():
         raise AssertionError(
             f"Installed UI bridge descriptor survived shutdown: {descriptor_path}"
         )
-    return observation.result(
+    result = observation.result(
         execution_port=ui_config.zmq.default_port,
         execution_transport=ui_config.zmq.transport_mode.value,
         exit_code=exit_code,
         openhcs_version=distribution("openhcs").version,
         package_path=package_path,
         qt_platform=application.platformName(),
-        timeout_seconds=timeout_seconds,
     )
+    journal.record(InstalledGuiSmokePhase.COMPLETE)
+    return result
 
 
 def main(argv: Sequence[str] | None = None) -> int:

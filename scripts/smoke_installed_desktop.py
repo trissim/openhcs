@@ -111,18 +111,31 @@ def _run_checked(
     timeout_seconds: float | None = 120,
     stream_stderr: bool = False,
 ) -> subprocess.CompletedProcess[str]:
-    completed = subprocess.run(
-        command,
-        cwd=cwd,
-        env=environment,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=None if stream_stderr else subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout_seconds,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=cwd,
+            env=environment,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=None if stream_stderr else subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as error:
+
+        def captured_text(value: str | bytes | None) -> str:
+            if isinstance(value, bytes):
+                return value.decode("utf-8", errors="replace")
+            return value or ""
+
+        raise AssertionError(
+            f"Command exceeded its {timeout_seconds:g}-second deadline: {command!r}\n"
+            f"stdout:\n{captured_text(error.stdout)}\n"
+            f"stderr:\n{captured_text(error.stderr)}"
+        ) from error
     if completed.returncode != 0:
         raise AssertionError(
             f"Command failed with exit code {completed.returncode}: {command!r}\n"
@@ -344,6 +357,7 @@ def _smoke_installed_mcp(
 def _smoke_installed_gui(
     python_executable: Path,
     install_root: Path,
+    evidence_directory: Path | None = None,
 ) -> dict[str, Any]:
     """Reach the installed GUI's painted-ready boundary and close it."""
 
@@ -355,6 +369,11 @@ def _smoke_installed_gui(
     environment[OpenHCSProcessEnvironment.numba_cache_key] = str(
         OpenHCSProcessEnvironment.numba_cache_path(install_root)
     )
+    resolved_evidence_directory = (
+        (install_root / "gui-evidence").resolve()
+        if evidence_directory is None
+        else evidence_directory.resolve()
+    )
     completed = _run_checked(
         [
             str(python_executable),
@@ -363,7 +382,7 @@ def _smoke_installed_gui(
             "--forbid-import-root",
             str(REPOSITORY_ROOT),
             "--evidence-directory",
-            str((install_root / "gui-evidence").resolve()),
+            str(resolved_evidence_directory),
             "--timeout-seconds",
             str(INSTALLED_GUI_SMOKE_TIMING.operation_timeout_seconds),
         ],
@@ -624,6 +643,7 @@ def smoke_installed_desktop(
     platform_name: str,
     home_root: Path | None,
     desktop_root: Path | None,
+    evidence_directory: Path | None = None,
 ) -> dict[str, Any]:
     contract = InstallerSmokeContract.load(contract_path)
     install_root = install_root.resolve()
@@ -649,7 +669,11 @@ def smoke_installed_desktop(
         install_root,
         environment,
     )
-    gui = _smoke_installed_gui(python_executable, install_root)
+    gui = _smoke_installed_gui(
+        python_executable,
+        install_root,
+        evidence_directory=evidence_directory,
+    )
     mcp = _smoke_installed_mcp(python_executable, install_root)
 
     if platform_name == "windows":
@@ -708,6 +732,11 @@ def main() -> int:
     parser.add_argument("--platform", choices=("windows", "macos"), required=True)
     parser.add_argument("--home-root", type=Path)
     parser.add_argument("--desktop-root", type=Path)
+    parser.add_argument(
+        "--evidence-directory",
+        type=Path,
+        help="Directory that retains installed GUI phase and screenshot evidence.",
+    )
     args = parser.parse_args()
     result = smoke_installed_desktop(
         contract_path=args.contract,
@@ -715,6 +744,7 @@ def main() -> int:
         platform_name=args.platform,
         home_root=args.home_root,
         desktop_root=args.desktop_root,
+        evidence_directory=args.evidence_directory,
     )
     print(json.dumps(result, sort_keys=True))
     return 0
