@@ -15,11 +15,13 @@ from zmqruntime import (
 )
 
 from openhcs.agent.dto.common import AgentResourceRef
+from openhcs.agent.dto.execution import ExecutionConnectionSpec, RuntimeServerInfo
 from openhcs.agent.dto.functions import FunctionCatalogEntry, FunctionCatalogPage
 from openhcs.agent.dto.ui_bridge import UiWindowSnapshotResult
 from openhcs.pyqt_gui.config import AgentUiBridgeConfig, UIConfig
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 from scripts.smoke_installed_gui import (
+    InstalledExecutionServerLogEvidence,
     InstalledGuiSmokeTiming,
     InstalledGuiSnapshotEvidenceAuthority,
     assert_not_source_checkout_import,
@@ -283,6 +285,45 @@ def test_gui_smoke_validates_emitted_snapshot_content(tmp_path: Path) -> None:
     assert retained_result.width == 640
     assert retained_result.height == 480
     assert retained_result.capture_scope is WindowSnapshotCaptureScope.WINDOW
+
+
+def test_gui_smoke_validates_advertised_execution_server_log(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "execution.log"
+    content = b"execution server ready\n"
+    log_path.write_bytes(content)
+
+    evidence = InstalledExecutionServerLogEvidence.from_runtime_server_info(
+        RuntimeServerInfo(
+            schema_version="test",
+            connection=ExecutionConnectionSpec(),
+            reachable=True,
+            ready=True,
+            log_file_path=str(log_path),
+        )
+    )
+
+    assert evidence.path == str(log_path)
+    assert evidence.observed_size_bytes == len(content)
+
+
+def test_gui_smoke_rejects_empty_advertised_execution_server_log(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "execution.log"
+    log_path.touch()
+
+    with pytest.raises(AssertionError, match="execution server log is empty"):
+        InstalledExecutionServerLogEvidence.from_runtime_server_info(
+            RuntimeServerInfo(
+                schema_version="test",
+                connection=ExecutionConnectionSpec(),
+                reachable=True,
+                ready=True,
+                log_file_path=str(log_path),
+            )
+        )
 
 
 def test_window_snapshot_cli_projects_declared_output_directory(tmp_path: Path) -> None:

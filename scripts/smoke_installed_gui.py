@@ -19,12 +19,14 @@ from typing import TYPE_CHECKING, TypeVar, get_type_hints
 if TYPE_CHECKING:
     from zmqruntime import OperationDeadline
 
+    from openhcs.agent.dto.execution import RuntimeServerInfo
     from openhcs.agent.dto.ui_bridge import UiWindowSnapshotResult
     from openhcs.agent.services.endpoint_function_catalog_service import (
         ZMQFunctionCatalogService,
     )
     from openhcs.mcp.dev_client import McpDevClient, McpDevCommandExecution
     from openhcs.pyqt_gui.config import UIConfig
+    from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
 JsonValue = str | int | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
 AgentDtoT = TypeVar("AgentDtoT")
@@ -142,6 +144,42 @@ class InstalledFunctionCatalogSmokeResult:
 
 
 @dataclass(frozen=True, slots=True)
+class InstalledExecutionServerLogEvidence:
+    """Readable output observed at the exact log advertised by the endpoint."""
+
+    path: str
+    observed_size_bytes: int
+
+    @classmethod
+    def from_runtime_server_info(
+        cls,
+        server_info: RuntimeServerInfo,
+    ) -> InstalledExecutionServerLogEvidence:
+        """Require a ready endpoint whose advertised log contains output."""
+
+        if not server_info.reachable or server_info.ready is not True:
+            raise AssertionError(
+                f"Installed execution server is not ready: {server_info}"
+            )
+        if server_info.log_file_path is None:
+            raise AssertionError("Installed execution server advertised no log file.")
+
+        log_path = Path(server_info.log_file_path).resolve()
+        if not log_path.is_file():
+            raise AssertionError(
+                f"Installed execution server log is not readable: {log_path}"
+            )
+        size_bytes = log_path.stat().st_size
+        if size_bytes <= 0:
+            raise AssertionError(f"Installed execution server log is empty: {log_path}")
+
+        return cls(
+            path=str(log_path),
+            observed_size_bytes=size_bytes,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class InstalledLiveMcpSmokeResult:
     """Typed evidence from the packaged MCP operating the live packaged GUI."""
 
@@ -150,6 +188,7 @@ class InstalledLiveMcpSmokeResult:
     bridge_port: int
     bridge_reachable: bool
     bridge_transport: str
+    execution_server_log: InstalledExecutionServerLogEvidence
     function_catalog: InstalledFunctionCatalogSmokeResult
     health_status: str
     mcp_server_source_path: str
@@ -482,6 +521,7 @@ def run_installed_live_mcp_smoke(
     evidence_directory: Path,
     forbidden_root: Path,
     function_catalog_service: ZMQFunctionCatalogService,
+    execution_config: OpenHCSZMQConfig,
     deadline: OperationDeadline,
 ) -> InstalledLiveMcpSmokeResult:
     """Operate one live packaged GUI through one packaged desktop MCP session."""
@@ -500,6 +540,7 @@ def run_installed_live_mcp_smoke(
         UiWindowIdentity,
         UiWindowSummary,
     )
+    from openhcs.agent.services.runtime_server_service import RuntimeServerService
     from openhcs.agent.ui_bridge_actions import PlateManagerAction
     from openhcs.agent.ui_bridge_identities import (
         MainWindowWidgetIdentity,
@@ -515,6 +556,16 @@ def run_installed_live_mcp_smoke(
     function_catalog = verify_installed_function_catalog(
         function_catalog_service,
         deadline=deadline,
+    )
+    runtime_info = RuntimeServerService(config=execution_config).server_info(
+        host=execution_config.client_host,
+        port=execution_config.default_port,
+        transport_mode=execution_config.transport_mode,
+        persistent=execution_config.persistent,
+        timeout_ms=execution_config.server_info_timeout_ms,
+    )
+    execution_server_log = InstalledExecutionServerLogEvidence.from_runtime_server_info(
+        runtime_info
     )
     windows_command = CapabilityBackedCommandSpec.for_capability_name(
         agent_capabilities.ui_list_windows.name
@@ -678,6 +729,7 @@ def run_installed_live_mcp_smoke(
         bridge_transport=(
             bridge_status.connection.transport_endpoint().transport_mode.value
         ),
+        execution_server_log=execution_server_log,
         function_catalog=function_catalog,
         health_status=health.status,
         mcp_server_source_path=str(server_source_path),
@@ -732,9 +784,11 @@ def run_installed_gui_smoke(
     from openhcs.core.config import GlobalPipelineConfig
     from openhcs.pyqt_gui.app import OpenHCSPyQtApp
     from openhcs.pyqt_gui.config import (
+        LoggingConfig,
         PyQtGuiRuntimeContext,
         UIConfig,
     )
+    from openhcs.pyqt_gui.services.logging_config import configure_gui_logging
 
     package_path = Path(openhcs.__file__).resolve()
     assert_not_source_checkout_import(
@@ -744,7 +798,10 @@ def run_installed_gui_smoke(
 
     descriptor_path = (Path.cwd() / "ui_bridge.json").resolve()
     ui_config = with_isolated_runtime_topology(
-        UIConfig(check_for_updates_on_startup=False),
+        UIConfig(
+            check_for_updates_on_startup=False,
+            logging=LoggingConfig(enable_console_logging=False),
+        ),
         descriptor_path=descriptor_path,
     )
     os.environ[UiBridgeDescriptorEnvironment.descriptor_file_path_key] = str(
@@ -754,6 +811,7 @@ def run_installed_gui_smoke(
         ui_config=ui_config,
         pipeline_runtime=GlobalPipelineConfig(),
     )
+    configure_gui_logging(ui_config.logging)
     application = OpenHCSPyQtApp(
         ["openhcs-gui-installed-smoke", "--no-gpu"],
         runtime_context=runtime_context,
@@ -792,6 +850,7 @@ def run_installed_gui_smoke(
                         evidence_directory=evidence_directory,
                         forbidden_root=forbidden_root,
                         function_catalog_service=application.function_catalog_service,
+                        execution_config=ui_config.zmq,
                         deadline=deadline,
                     )
                 )
