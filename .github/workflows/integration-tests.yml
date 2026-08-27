@@ -1288,7 +1288,7 @@ jobs:
               throw "Windows stable launcher did not execute the declared module."
             }
             $probe = Get-Content -LiteralPath $probeMarker -Raw | ConvertFrom-Json
-            if ((Compare-Object @($probe.argv) $probeArguments).Count -ne 0) {
+            if (@(Compare-Object @($probe.argv) $probeArguments).Count -ne 0) {
               throw "Windows stable launcher changed forwarded arguments."
             }
             if ($probe.restart_executable -ne $summary.application_path) {

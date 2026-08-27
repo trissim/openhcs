@@ -898,7 +898,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "bb14c123815ea3a227835e6b8bfba7558d8e4202e15e73118128f89fa0d31650",
+        "sha256": "e0f6ecbb6c892a11a390814b1ee7a1d864903e4193735f88e7288c9e77c8f3d4",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -960,7 +960,8 @@
       "On 2026-08-27, applied the Diataxis installation how-to boundary and re-read the complete page after the macOS DMG adopted a single-device HFS+ lifecycle and native CI separated pip INI from uv TOML fixtures; the downloaded artifact and user procedure are unchanged.",
       "On 2026-08-27, rechecked the complete installation how-to after the pinned formatter normalized the desktop-deployment authority; no installer behavior or user procedure changed.",
       "On 2026-08-27, re-read the complete installation how-to after native Windows acceptance removed a stale raw-uv and source-checkout reinstall path; the shipping installer remains the sole environment publisher and the user procedure is unchanged.",
-      "On 2026-08-27, rechecked the complete installation how-to after the Windows acceptance harness gained strict variable enforcement; the shipping installer and user procedure are unchanged."
+      "On 2026-08-27, rechecked the complete installation how-to after the Windows acceptance harness gained strict variable enforcement; the shipping installer and user procedure are unchanged.",
+      "On 2026-08-27, rechecked the complete installation how-to after the Windows launcher probe began treating an empty comparison as an empty collection; installer behavior and user instructions are unchanged."
     ]
   },
   {
@@ -2084,7 +2085,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "bb14c123815ea3a227835e6b8bfba7558d8e4202e15e73118128f89fa0d31650",
+        "sha256": "e0f6ecbb6c892a11a390814b1ee7a1d864903e4193735f88e7288c9e77c8f3d4",
         "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, retained application and three-stage installer screenshot artifacts, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
@@ -2254,7 +2255,8 @@
       "On 2026-08-27, re-read the complete testing how-to after the Windows installed demo exposed a 265-character Numba cache artifact; the native lane now exercises the same user-local platform-derived cache path projected by production launchers, and the documented evidence boundary remains accurate.",
       "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read the complete guide after Intel CI exposed APFS synthesized-volume teardown and Windows CI exposed cross-tool hostile-config syntax; the native lanes now use one HFS+ device lifecycle and independent valid pip and uv fixtures while retaining the same installed-product evidence.",
       "On 2026-08-27, re-read the complete testing how-to after the Windows native lane stopped dry-running uv and reinstalling OpenHCS from the checkout after a successful candidate install; launcher repair, staged update, and retained screenshots now continue against the actual installer-published wheel.",
-      "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read the complete guide after the Windows native harness gained strict PowerShell variable enforcement; its documented installed-product and evidence boundaries remain accurate."
+      "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read the complete guide after the Windows native harness gained strict PowerShell variable enforcement; its documented installed-product and evidence boundaries remain accurate.",
+      "On 2026-08-27, rechecked the complete testing how-to after strict mode exposed a null comparison in the Windows launcher probe; the array-normalized assertion preserves the documented evidence boundary."
     ]
   },
   {

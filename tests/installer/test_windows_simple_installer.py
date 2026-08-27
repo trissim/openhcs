@@ -647,6 +647,8 @@ def test_windows_installer_ci_has_an_absolute_safety_ceiling() -> None:
     assert '"OPENHCS_DESKTOP_RESTART_EXECUTABLE"' in smoke_step
     assert '"OPENHCS_STARTUP_HANDOFF_EVENT"' in smoke_step
     assert "$probeProcess.WaitForExit(30000)" in smoke_step
+    assert "@(Compare-Object @($probe.argv) $probeArguments).Count" in smoke_step
+    assert "if ((Compare-Object @($probe.argv) $probeArguments).Count" not in smoke_step
     assert "Windows stable launcher did not execute the declared module." in (
         smoke_step
     )
