@@ -2817,12 +2817,12 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "95a84760e69618c85d7c90266f7764f1d3ad32d8af80aa08003439a0cbea9dc6",
+        "sha256": "c2f46b3023306aa484be908e84e7ce757e2d247e50239d622dd4c83f6cdf7eb6",
         "role": "Cross-platform source-candidate and published-dependency readiness, installed-wheel live GUI/MCP operation with retained native screenshots, three-stage native-installer workflow proof, signing-helper parse, and staged-update validation matrix."
       },
       {
         "path": "scripts/smoke_windows_installer_window.ps1",
-        "sha256": "6719fc0c4739cb94d1bf12ad7652b37573509da159391c4df90a5222e0debaa1",
+        "sha256": "9164e64ac876b64623e947629c315524a60b59b2a5c9afe39effd97906efbf03",
         "role": "Drives the shipping Windows installer through its real native controls and retains exact welcome, progress, completion, failure, and durable-log evidence."
       },
       {
@@ -2959,7 +2959,7 @@
       "On 2026-08-27, rechecked the complete release how-to after native CI proved the updater worker must remain standard-library-only; the source gate now covers that boundary and hostile uv configuration as well as index overrides.",
       "On 2026-08-27, rechecked the complete release how-to after the Windows lane began editing the real destination field, exercising a path with spaces, and launching the background worker without an encoded PowerShell wrapper; its retained evidence claims remain accurate.",
       "On 2026-08-27, re-read the complete release how-to after Windows failure retention expanded to include the exact wizard state and every installer-owned log boundary; its native evidence claims remain accurate.",
-      "On 2026-08-27, re-read the complete release how-to after native evidence exposed an invalid cross-process SetWindowText probe; the corrected WM_SETTEXT interaction now exercises the shipping destination control while preserving the documented evidence boundary."
+      "On 2026-08-27, re-read the complete release how-to after retained native evidence disproved cross-process destination editing; the smoke now supplies the spaced destination through the shipping installer's declared InstallRoot input and verifies its UI projection before installation."
     ]
   },
   {
@@ -3018,7 +3018,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "95a84760e69618c85d7c90266f7764f1d3ad32d8af80aa08003439a0cbea9dc6",
+        "sha256": "c2f46b3023306aa484be908e84e7ce757e2d247e50239d622dd4c83f6cdf7eb6",
         "role": "Runs explicitly selected live OMERO variants and preserves component and table-service diagnostics on failure."
       }
     ],
@@ -3054,7 +3054,8 @@
       "On 2026-08-27, re-read the complete OMERO testing how-to against the changed integration workflow; the independent OMERO lane and its owner boundaries remain accurate.",
       "On 2026-08-27, rechecked the complete OMERO testing how-to after the native installer workflow changed again; the independent OMERO lane and its owner boundaries remain accurate.",
       "On 2026-08-27, rechecked the complete OMERO testing how-to after the Windows installer destination probe changed; the independent OMERO lane and its owner boundaries remain accurate.",
-      "On 2026-08-27, re-read the complete OMERO testing how-to after shared Windows installer diagnostics changed; its independent live-service selection and ownership guidance remains accurate."
+      "On 2026-08-27, re-read the complete OMERO testing how-to after shared Windows installer diagnostics changed; its independent live-service selection and ownership guidance remains accurate.",
+      "On 2026-08-27, rechecked the complete OMERO testing how-to after the native Windows lane began passing its destination through the installer's declared input; the independent OMERO lane and its owner boundaries remain unchanged."
     ]
   },
   {

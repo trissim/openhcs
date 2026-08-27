@@ -842,9 +842,6 @@ jobs:
           $installRoot = Join-Path `
             ([Environment]::GetFolderPath("LocalApplicationData")) `
             "OpenHCS Installer Smoke"
-          $defaultInstallRoot = Join-Path `
-            ([Environment]::GetFolderPath("LocalApplicationData")) `
-            "OpenHCS"
           $contractPath = Join-Path $env:RUNNER_TEMP "installer_contract.json"
           New-Item -ItemType Directory -Path $stage | Out-Null
           python -m scripts.render_installer_contract `
@@ -934,7 +931,6 @@ jobs:
           & scripts/smoke_windows_installer_window.ps1 `
             -LauncherPath $launcher `
             -ExpectedTitle "$($contract.product_name) Setup" `
-            -DefaultInstallRoot $defaultInstallRoot `
             -InstallRoot $installRoot `
             -EvidenceDirectory (
               Join-Path $env:RUNNER_TEMP "openhcs-native-installer-ui"

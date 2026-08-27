@@ -348,6 +348,9 @@ def test_windows_installer_is_a_four_page_next_next_finish_wizard() -> None:
     assert '$nextButton.Text = "Finish"' in window
     assert '$welcomePrompt.Text = "Click Next to continue."' in window
     assert '$optionsPrompt.Text = "Click Next to begin installation."' in window
+    assert "[AllowEmptyString()][string]$RequestedInstallRoot" in window
+    assert "Resolve-InstallRoot $RequestedInstallRoot" in window
+    assert "-RequestedInstallRoot $InstallRoot" in source
     assert window.index('Set-WizardPage "Options"') < window.index(
         'Set-WizardPage "Progress"'
     )
@@ -684,7 +687,11 @@ def test_windows_installer_ci_drives_and_captures_the_shipping_wizard() -> None:
         ) : workflow.index("      - name: Show Windows installer log on failure")
     ]
 
-    assert "Start-Process -FilePath $resolvedLauncher -PassThru" in probe
+    assert '$launcherStartInfo.ArgumentList.Add("-InstallRoot")' in probe
+    assert "$launcherStartInfo.ArgumentList.Add($resolvedInstallRoot)" in probe
+    assert (
+        "$launcherProcess = [Diagnostics.Process]::Start($launcherStartInfo)" in probe
+    )
     assert '"ParentProcessId = {0}" -f $launcherProcess.Id' in probe
     assert "$candidateProcess.MainWindowTitle -eq $ExpectedTitle" in probe
     assert "GetWindowRect" in probe
@@ -693,9 +700,7 @@ def test_windows_installer_ci_drives_and_captures_the_shipping_wizard() -> None:
     assert "FindUniqueVisibleChild(" in probe
     assert "return matchCount == 1 ? match : IntPtr.Zero;" in probe
     assert "ClickVisibleChildByText(" in probe
-    assert "ReplaceVisibleChildText(" in probe
-    assert "private const uint SetText = 0x000C;" in probe
-    assert "Marshal.StringToHGlobalUni(replacementText)" in probe
+    assert "ReplaceVisibleChildText(" not in probe
     assert "SetWindowTextW(" not in probe
     assert "Wait-InstallerVisibleText" in probe
     assert "UIAutomation" not in probe
@@ -720,7 +725,6 @@ def test_windows_installer_ci_drives_and_captures_the_shipping_wizard() -> None:
     invocation = "& scripts/smoke_windows_installer_window.ps1"
     assert invocation in smoke_step
     assert '-ExpectedTitle "$($contract.product_name) Setup"' in smoke_step
-    assert "-DefaultInstallRoot $defaultInstallRoot" in smoke_step
     assert "-InstallRoot $installRoot" in smoke_step
     assert "-CompletionLogPath $installerLog" in smoke_step
     assert smoke_step.index(invocation) < smoke_step.index(

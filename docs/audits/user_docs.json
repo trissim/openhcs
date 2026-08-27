@@ -838,7 +838,7 @@
       },
       {
         "path": "packaging/installers/windows/Install-OpenHCS.ps1",
-        "sha256": "2febe9c7c021b27223ffac4fce47cb9272561c4ec9917f8a848c2df19b815899",
+        "sha256": "f94eb1c0460cab7dca770a600d889bf55ae98f1aa652b2755de0ecc906ee83d8",
         "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
       },
       {
@@ -898,7 +898,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "95a84760e69618c85d7c90266f7764f1d3ad32d8af80aa08003439a0cbea9dc6",
+        "sha256": "c2f46b3023306aa484be908e84e7ce757e2d247e50239d622dd4c83f6cdf7eb6",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -954,7 +954,8 @@
       "On 2026-08-27, re-read the complete installation how-to against the uv-owned installer and updater lifecycle, declaration-derived package-index isolation, and direct native logging; revised the relevant user-facing behavior and confirmed the remaining instructions.",
       "On 2026-08-27, rechecked the complete installation how-to after package-source isolation became a serialized detached-worker policy and native CI gained hostile uv configuration coverage; its user-facing behavior remains accurate.",
       "On 2026-08-27, rechecked the complete installation how-to after Windows acceptance began editing the shipping destination field and projecting background output without an encoded wrapper; its user-facing behavior remains accurate.",
-      "On 2026-08-27, re-read the complete installation how-to after Windows failure evidence began retaining the wizard state plus custom-root, default-root, and bootstrap logs; its user procedure remains accurate."
+      "On 2026-08-27, re-read the complete installation how-to after Windows failure evidence began retaining the wizard state plus custom-root, default-root, and bootstrap logs; its user procedure remains accurate.",
+      "On 2026-08-27, re-read the complete installation how-to after the native smoke stopped mutating another process's controls and began passing the requested destination through the installer's existing InstallRoot input; the user procedure remains accurate."
     ]
   },
   {
@@ -1329,7 +1330,7 @@
       },
       {
         "path": "packaging/installers/windows/Install-OpenHCS.ps1",
-        "sha256": "2febe9c7c021b27223ffac4fce47cb9272561c4ec9917f8a848c2df19b815899",
+        "sha256": "f94eb1c0460cab7dca770a600d889bf55ae98f1aa652b2755de0ecc906ee83d8",
         "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
       },
       {
@@ -1358,7 +1359,8 @@
       "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
       "On 2026-08-27, re-read the complete installation redirect against both native installer implementations; its destination and scope remain accurate.",
       "On 2026-08-27, rechecked the complete installation redirect after both native installer contracts advanced; its destination and scope remain accurate.",
-      "On 2026-08-27, rechecked the complete installation redirect after Windows background launch and destination acceptance changed; its destination and scope remain accurate."
+      "On 2026-08-27, rechecked the complete installation redirect after Windows background launch and destination acceptance changed; its destination and scope remain accurate.",
+      "On 2026-08-27, rechecked the complete compatibility page after the Windows wizard began deriving its initial destination from the declared installer input; retaining one redirect to the canonical procedure remains accurate."
     ]
   },
   {
@@ -2076,12 +2078,12 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "95a84760e69618c85d7c90266f7764f1d3ad32d8af80aa08003439a0cbea9dc6",
+        "sha256": "c2f46b3023306aa484be908e84e7ce757e2d247e50239d622dd4c83f6cdf7eb6",
         "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, retained application and three-stage installer screenshot artifacts, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
         "path": "scripts/smoke_windows_installer_window.ps1",
-        "sha256": "6719fc0c4739cb94d1bf12ad7652b37573509da159391c4df90a5222e0debaa1",
+        "sha256": "9164e64ac876b64623e947629c315524a60b59b2a5c9afe39effd97906efbf03",
         "role": "Drives the shipping Windows installer through its real native controls and retains exact welcome, progress, completion, failure, and durable-log evidence."
       },
       {
@@ -2242,7 +2244,7 @@
       "On 2026-08-27, rechecked the complete testing how-to after native CI exposed the detached worker's standalone-import contract; focused source tests now prove that boundary and the documented release evidence remains accurate.",
       "On 2026-08-27, rechecked the complete testing how-to after Windows acceptance began editing the real destination field, exercising spaces, and rejecting encoded background launch; the documented evidence remains accurate.",
       "On 2026-08-27, re-read the complete testing how-to after the Windows native lane began retaining its exact failure window and every installer-owned log boundary; the documented behavioral evidence remains accurate.",
-      "On 2026-08-27, re-read the complete testing how-to after the retained failure proved SetWindowText was not a valid cross-process edit; the native probe now sends WM_SETTEXT directly and still validates the documented spaced-path workflow."
+      "On 2026-08-27, re-read the complete testing how-to after retained native evidence disproved cross-process destination editing; the smoke now passes the spaced destination through the shipping installer's declared InstallRoot input and verifies the real Options page before installation."
     ]
   },
   {
@@ -2389,7 +2391,7 @@
       },
       {
         "path": "packaging/installers/windows/Install-OpenHCS.ps1",
-        "sha256": "2febe9c7c021b27223ffac4fce47cb9272561c4ec9917f8a848c2df19b815899",
+        "sha256": "f94eb1c0460cab7dca770a600d889bf55ae98f1aa652b2755de0ecc906ee83d8",
         "role": "Implements the Windows installer, short managed paths, package installation, and shortcut creation."
       },
       {
@@ -2418,7 +2420,8 @@
       "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
       "On 2026-08-27, re-read the complete installation redirect against both native installer implementations; its destination and scope remain accurate.",
       "On 2026-08-27, rechecked the complete installation redirect after both native installer contracts advanced; its destination and scope remain accurate.",
-      "On 2026-08-27, rechecked the complete installation redirect after Windows background launch and destination acceptance changed; its destination and scope remain accurate."
+      "On 2026-08-27, rechecked the complete installation redirect after Windows background launch and destination acceptance changed; its destination and scope remain accurate.",
+      "On 2026-08-27, rechecked the complete compatibility redirect after the Windows wizard began deriving its initial destination from the declared installer input; its canonical destination and scope remain accurate."
     ]
   },
   {

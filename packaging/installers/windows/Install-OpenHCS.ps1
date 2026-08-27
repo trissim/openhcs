@@ -1158,7 +1158,8 @@ function Show-InstallerWindow {
     param(
         [Parameter(Mandatory = $true)][object]$Contract,
         [Parameter(Mandatory = $true)][string]$BrandIconPath,
-        [Parameter(Mandatory = $true)][string]$BrandLogoPath
+        [Parameter(Mandatory = $true)][string]$BrandLogoPath,
+        [AllowEmptyString()][string]$RequestedInstallRoot
     )
 
     Add-Type -AssemblyName System.Windows.Forms
@@ -1186,7 +1187,12 @@ function Show-InstallerWindow {
     if ([string]::IsNullOrWhiteSpace($localData)) {
         throw "Windows did not provide a user Local Application Data folder."
     }
-    $defaultRoot = [IO.Path]::Combine($localData, $Contract.ProductName)
+    $defaultRoot = if ([string]::IsNullOrWhiteSpace($RequestedInstallRoot)) {
+        [IO.Path]::Combine($localData, $Contract.ProductName)
+    }
+    else {
+        Resolve-InstallRoot $RequestedInstallRoot
+    }
     $script:LogPath = [IO.Path]::Combine($defaultRoot, "installer.log")
     $script:WorkerProcess = $null
     $script:WorkerStandardOutput = $null
@@ -1890,7 +1896,10 @@ if ($Worker) {
 
 try {
     exit (Show-InstallerWindow `
-        $installerContract $BrandIconPath $BrandLogoPath)
+        -Contract $installerContract `
+        -BrandIconPath $BrandIconPath `
+        -BrandLogoPath $BrandLogoPath `
+        -RequestedInstallRoot $InstallRoot)
 }
 catch {
     $emergencyLog = Write-EmergencyLog $_.Exception.Message
