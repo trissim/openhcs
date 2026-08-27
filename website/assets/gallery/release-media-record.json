@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-08-09",
+  "captured_at": "2026-08-27",
   "capture_contract": {
     "surface": "real OpenHCS, Napari, and Fiji/ImageJ X11 windows",
     "visible_interaction_driver": "local MCP calls and native viewer controls",
@@ -148,10 +148,10 @@
         }
       },
       "source": {
-        "sha256": "319295c0d98e00b67e7ae04e505705406557fe197a64cc813bc2b25ab8cebacd",
+        "sha256": "721ecde56c99716656e188c00b3b57fe5c48a7708700de5572b4098fbabb9147",
         "width": 1600,
         "height": 1000,
-        "duration_seconds": 36.0,
+        "duration_seconds": 50.0,
         "format": null
       },
       "scientific_evidence": null,
@@ -160,19 +160,19 @@
           "role": "poster",
           "media_type": "image/webp",
           "path": "zmq-startup-compile-poster.webp",
-          "sha256": "b2bf2c6ca6c18d81b63bd801e6912a466dea7725d7977cac42713c6ca0ae326a"
+          "sha256": "cd86354953790f70041504f2be4cf225f678294f51624ce477d9414cede7028d"
         },
         {
           "role": "web_video",
           "media_type": "video/webm",
           "path": "zmq-startup-compile.webm",
-          "sha256": "5adfa78026eb39489bb86aeded2d8c5da0fbc7c33d30f815eb205afa2717fb06"
+          "sha256": "64109edac63e3bb22d8a155cc757114e11af6028d7a08d33d81a61aae11f93cf"
         },
         {
           "role": "fallback_video",
           "media_type": "video/mp4",
           "path": "zmq-startup-compile.mp4",
-          "sha256": "38f211cc180185128850de33c64d525d1247ad5edf276c4727269e50b8be237d"
+          "sha256": "1aa4588d577f575beac0249423d63fdec7a81149990d1916b2866dca6d6ba28f"
         }
       ]
     },

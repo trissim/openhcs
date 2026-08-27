@@ -694,10 +694,10 @@ class ZmqStartupCompileGalleryScenarioCatalog(GalleryScenarioCatalog):
             window_id=MainWindowWidgetIdentity.require_value()
         ),
         source_evidence=GallerySourceEvidence(
-            sha256=("319295c0d98e00b67e7ae04e505705406557fe197a64cc813bc2b25ab8cebacd"),
+            sha256=("721ecde56c99716656e188c00b3b57fe5c48a7708700de5572b4098fbabb9147"),
             width=1600,
             height=1000,
-            duration_seconds=36.0,
+            duration_seconds=50.0,
         ),
     )
 
@@ -822,7 +822,7 @@ class GalleryReleaseRecord(GalleryReleaseContext):
 
 
 GALLERY_RELEASE = GalleryReleaseDeclaration(
-    captured_at="2026-08-09",
+    captured_at="2026-08-27",
     capture_contract=GalleryCaptureContract(
         surface="real OpenHCS, Napari, and Fiji/ImageJ X11 windows",
         visible_interaction_driver="local MCP calls and native viewer controls",
