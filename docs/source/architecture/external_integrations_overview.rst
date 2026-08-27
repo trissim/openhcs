@@ -10,7 +10,8 @@ CellProfiler
 
 The ``.cppipe`` importer parses CellProfiler modules and lowers them to
 ``PipelineConfig`` plus ``FunctionStep`` declarations. Module declarations own
-their callable and artifact semantics. See :doc:`cellprofiler_interop`.
+their callable, artifact, and headless-import semantics; interactive-only
+modules fail explicitly. See :doc:`cellprofiler_interop`.
 
 Microscope and storage sources
 ------------------------------

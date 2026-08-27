@@ -18,6 +18,12 @@ and declaration helpers; do not teach compiler phases to inspect backend names.
 A CellProfiler module resolves its dynamic artifact names into this same
 contract rather than attaching another contract object.
 
+Parameters supplied through artifact, configuration, runtime-context, or
+adapter declarations are runtime-owned. The callable contract projects those
+names into the shared python-introspect exclusion set used by catalogue and form
+consumers. Declare the owning contract term; do not hide the parameter again in
+a UI- or agent-owned list.
+
 Public keyword validation uses the canonical raw callable signature. When a
 parameter annotation declares an enum, callers must provide a member of that
 exact enum type. A string equal to the member's value is not the same nominal

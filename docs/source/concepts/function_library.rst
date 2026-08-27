@@ -54,10 +54,11 @@ enum-annotated parameter requires a member of the declared enum; passing its raw
 string value is rejected rather than silently creating a second enum-to-string
 interpretation.
 
-A library registry can also declare parameters from an external signature as
-runtime-owned. For example, pyclesperanto output buffers and device selectors
-remain at their library defaults and do not appear as editable pipeline fields;
-algorithm parameters such as a filter radius or sigma remain authored values.
+Callable contracts and library registries project non-authorable parameters
+into the shared form exclusions. Runtime context, artifact inputs, output
+buffers, device selectors, callbacks, opaque values, and callable deprecation
+sentinels remain runtime-supplied or at their declared defaults; algorithm
+parameters such as a filter radius or sigma remain authored values.
 
 Finding functions
 -----------------
@@ -69,6 +70,11 @@ reconstructing the complete catalogue there. Prefer those surfaces over copying
 backend module paths into scripts: processing-library versions and discovered
 functions can vary by installed extras and hardware. An optional backend appears
 only when its registry can load its runtime and declared module inventory.
+
+The desktop form surface materialises every locally available catalogue
+declaration after applying its owner-declared exclusions; authorable parameters
+become editable controls while runtime-owned inputs remain hidden.
+
 OpenHCS-native and custom functions are admitted only when every declared input,
 output, and execution framework is installed and allowed by the current process
 policy. The browsable native catalogue contains public module declarations;

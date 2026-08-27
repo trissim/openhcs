@@ -59,9 +59,9 @@ The following boundaries are verified by current declarations and tests:
 
 ``CellProfilerModule``
   Module leaves own module names, settings binding, callable resolution, source
-  contribution, execution scope, and module-specific artifact derivation.
-  ``pipeline_import`` and compiler providers query those leaves rather than a
-  module-name policy table.
+  contribution, headless-import validation, execution scope, and
+  module-specific artifact derivation. ``pipeline_import`` and compiler
+  providers query those leaves rather than a module-name policy table.
 
 ``CallableContract`` and ``ArtifactSpecRelation``
   Callable and cross-artifact semantics live on these declarations and their
@@ -106,7 +106,8 @@ The current boundary is:
 
    parsed ModuleBlock
        -> CellProfilerModule.require_module(name)
-       -> declaration-owned settings, callable, source, and artifact semantics
+       -> declaration-owned validation, settings, callable, source,
+          and artifact semantics
        -> PipelineConfig + list[FunctionStep]
        -> ordinary compilation and runtime
 

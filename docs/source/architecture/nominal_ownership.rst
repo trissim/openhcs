@@ -78,8 +78,9 @@ Examples in the current architecture
 - ``ProcessingContract`` enum members delegate execution to nominal contract
   declarations.
 - ``CellProfilerModule`` subclasses own module names, settings binding,
-  callables, catalogue placement, artifacts, and source-setup behavior. The
-  CellProfiler backend package projects those declared names lazily.
+  callables, catalogue placement, artifacts, source-setup behaviour, and whether
+  a parsed module may enter a headless pipeline. The CellProfiler backend
+  package projects those declared names lazily.
 
 Extracted ownership
 -------------------

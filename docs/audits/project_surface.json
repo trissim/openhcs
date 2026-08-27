@@ -12,7 +12,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
+        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
         "role": "Declares the published README, Python range, package dependencies, optional surfaces, console commands, and project links."
       },
       {
@@ -47,7 +47,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
+        "sha256": "632189f63da296dfc894c2cbf8b1d3fb4ee8cb44826a9e037149880b314543ae",
         "role": "Owns declaration-based callable discovery, execution memory contracts, dimensional execution, and registry caching."
       },
       {
@@ -67,7 +67,7 @@
       },
       {
         "path": "openhcs/interop/cellprofiler/pipeline_import.py",
-        "sha256": "a5f611e2c02c2ee9821b9aa3b6110751e6b88875116955f3e4c06a66474bc8b3",
+        "sha256": "7ddd5fc47324f1e75e31442185dac5199138ab300b368569c4ef66fc9f7a28d3",
         "role": "Owns lowering CellProfiler cppipe modules into ordinary OpenHCS pipeline declarations."
       },
       {
@@ -93,7 +93,8 @@
       "On 2026-08-27, re-read the complete project overview against the uv-owned installer and updater lifecycle; its public installation and capability claims remain accurate.",
       "On 2026-08-27, rechecked the complete project overview after package-source policy became a serialized detached-worker input; its public installation and capability claims remain accurate.",
       "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate.",
-      "On 2026-08-27, re-read the complete project page after library registries gained declaration-owned runtime-parameter exclusions; the public function-discovery and UI-integration claims remain accurate."
+      "On 2026-08-27, re-read the complete project page after library registries gained declaration-owned runtime-parameter exclusions; the public function-discovery and UI-integration claims remain accurate.",
+      "On 2026-08-27, re-read the complete project page against the final callable-authoring, package-floor, and CellProfiler import declarations; non-authorable runtime controls remain hidden, supported cppipe files still lower into ordinary pipeline declarations, and interactive-only CellProfiler modules now fail clearly without changing the page's public claims."
     ]
   }
 ]

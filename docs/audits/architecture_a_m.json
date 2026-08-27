@@ -59,7 +59,7 @@
   },
   {
     "path": "docs/source/architecture/abstraction_lattices.rst",
-    "source_sha256": "1601b6db4833e714d74deee9fb0dc98b159ec7accbbf1856fd10023d812522f2",
+    "source_sha256": "aab6e8a69b89dc4f866cd83a639a4120a9ebbdfa366bd228fe8cda4202ea51b7",
     "audience": [
       "OpenHCS maintainers",
       "extension authors",
@@ -75,12 +75,17 @@
       },
       {
         "path": "openhcs/interop/cellprofiler/module_declarations.py",
-        "sha256": "d8e88eb7c6e230839fe5b5c497b21926ee8103c505d041701e66e1c220fea03a",
-        "role": "Defines CellProfiler module leaves as owners of module identity, lowering, artifact semantics, and their declaration-derived function catalogue."
+        "sha256": "89dd65abc003c464ba6c489f52d3a4fa47be1d5f8b87d26ad72b7537f188cf8b",
+        "role": "Defines CellProfiler module leaves as owners of module identity, lowering, headless-import validation, artifact semantics, and their declaration-derived function catalogue."
+      },
+      {
+        "path": "openhcs/interop/cellprofiler/module_artifact_declarations.py",
+        "sha256": "666ec8c9adfd6a9015adf2b226df671534bb7e547cb0d76f1d16c40ac61e30a6",
+        "role": "Defines the nominal interactive-module family that rejects headless import."
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
+        "sha256": "7c2afdec2c6dd65d592162b4ad7feca2ab9363d0b0761d37aee3f8c29a0a39f9",
         "role": "Projects declaration-owned callable metadata, including memory contracts and artifact relations, at the nominal boundary."
       },
       {
@@ -97,11 +102,17 @@
         "path": "tests/unit/test_cellprofiler_static_deletion_gates.py",
         "sha256": "472e67b53f7404f6245a2d49702a813e8fb0c64a4ef1ca94148b99dd78d10c03",
         "role": "Guards deletion of superseded CellProfiler mirrors and compatibility surfaces."
+      },
+      {
+        "path": "tests/unit/test_cellprofiler_pipeline_import.py",
+        "sha256": "353f0c1d8e0bc3552d2e418d792794ab0631daa16c78a3e10191b1cc1ea07d73",
+        "role": "Verifies that importing an enabled interactive-only module fails explicitly."
       }
     ],
     "findings": [
       "The 972-line page mixed a current mental model with benchmark inventories, migration checklists, WIP prescriptions, and stale proposed collapses; it now explains the current owners and treats commit history only as historical evidence.",
-      "Transport initialization instructions were selected again inside the MCP server adapter; CapabilityTransport members now carry the registered nominal rendering strategy used by every consumer."
+      "Transport initialization instructions were selected again inside the MCP server adapter; CapabilityTransport members now carry the registered nominal rendering strategy used by every consumer.",
+      "Enabled interactive-only CellProfiler modules could otherwise disappear as non-executable declarations; the nominal module family now validates headless import and rejects them explicitly."
     ],
     "disposition": "revise",
     "validation": [
@@ -113,7 +124,10 @@
       "On 2026-08-23, re-reviewed the capability declaration after execution status began exposing the retained generic progress observation; the documented registry, surface, and safety ownership claims remain accurate.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete explanation after local capability profiles gained declaration-derived reverse lookup for development-client diagnostics; the documented owner-and-projection boundary remains accurate.",
-      "On 2026-08-26, re-read the complete explanation against the changed capability owner after transport initialization semantics moved from the server adapter onto CapabilityTransport members; focused capability, MCP, registration, and UI tests passed, and NRA no longer reports the former transport dispatch."
+      "On 2026-08-26, re-read the complete explanation against the changed capability owner after transport initialization semantics moved from the server adapter onto CapabilityTransport members; focused capability, MCP, registration, and UI tests passed, and NRA no longer reports the former transport dispatch.",
+      "On 2026-08-27, re-read the complete explanation against the current CellProfiler declarations, importer, and direct import test; added declaration-owned headless-import validation to the owner map.",
+      "Focused callable-contract and CellProfiler declaration/import tests passed: 69 tests.",
+      "Passed .venv/bin/python scripts/validate_docs.py docs/source and a warning-fatal clean Sphinx HTML build of all 153 source files."
     ]
   },
   {
@@ -185,7 +199,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
+        "sha256": "7c2afdec2c6dd65d592162b4ad7feca2ab9363d0b0761d37aee3f8c29a0a39f9",
         "role": "Defines callable artifact input and output ABI ownership and relation validation."
       },
       {
@@ -195,7 +209,7 @@
       },
       {
         "path": "tests/unit/test_callable_contract.py",
-        "sha256": "4e391e55b8d252dce72104a49836cbdfbbcc5cc96d2edf21afe59fcffc99122d",
+        "sha256": "0158bc4e8328027b8aae9517a301e594a2f6c91ae7276cec55857204dcb70a06",
         "role": "Verifies callable contract construction, validation, and artifact semantics."
       },
       {
@@ -214,7 +228,10 @@
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-27, re-read the complete explanation against runtime-owned parameter projection in the callable contract and its focused test; the documented artifact ABI and planning claims remain accurate.",
+      "Focused callable-contract and CellProfiler declaration/import tests passed: 69 tests.",
+      "Passed .venv/bin/python scripts/validate_docs.py docs/source and a warning-fatal clean Sphinx HTML build of all 153 source files."
     ]
   },
   {
@@ -301,7 +318,7 @@
   },
   {
     "path": "docs/source/architecture/cellprofiler_interop.rst",
-    "source_sha256": "7401b699130088e36aaad3811ecef2d8c8e19c605d7106aac7c987fd825b744b",
+    "source_sha256": "c8bfaa5771455ea6e09606372a6352eafa99f6392815348f73418bea04f314d9",
     "audience": [
       "CellProfiler users",
       "OpenHCS interoperability and compiler maintainers"
@@ -311,13 +328,18 @@
     "authority": [
       {
         "path": "openhcs/interop/cellprofiler/pipeline_import.py",
-        "sha256": "a5f611e2c02c2ee9821b9aa3b6110751e6b88875116955f3e4c06a66474bc8b3",
-        "role": "Implements .cppipe parsing and lowering into PipelineConfig and FunctionStep declarations."
+        "sha256": "7ddd5fc47324f1e75e31442185dac5199138ab300b368569c4ef66fc9f7a28d3",
+        "role": "Implements .cppipe parsing, declaration-owned headless validation, and lowering into PipelineConfig and FunctionStep declarations."
       },
       {
         "path": "openhcs/interop/cellprofiler/module_declarations.py",
-        "sha256": "d8e88eb7c6e230839fe5b5c497b21926ee8103c505d041701e66e1c220fea03a",
-        "role": "Owns module-specific callable, setting, scope, artifact, and function-catalogue declarations."
+        "sha256": "89dd65abc003c464ba6c489f52d3a4fa47be1d5f8b87d26ad72b7537f188cf8b",
+        "role": "Owns module-specific callable, setting, headless-import, scope, artifact, and function-catalogue declarations."
+      },
+      {
+        "path": "openhcs/interop/cellprofiler/module_artifact_declarations.py",
+        "sha256": "666ec8c9adfd6a9015adf2b226df671534bb7e547cb0d76f1d16c40ac61e30a6",
+        "role": "Defines the nominal interactive-module family that rejects headless import."
       },
       {
         "path": "tests/unit/test_cellprofiler_artifact_declarations.py",
@@ -328,11 +350,17 @@
         "path": "tests/integration/test_cellprofiler_official30_zmq.py",
         "sha256": "15a7731e5e00136af020ca8b99ef61e60b36ad55898b466d0d4465012bfb199b",
         "role": "Defines the executable Official30 import, execution, equivalence, and viewer evidence boundary."
+      },
+      {
+        "path": "tests/unit/test_cellprofiler_pipeline_import.py",
+        "sha256": "353f0c1d8e0bc3552d2e418d792794ab0631daa16c78a3e10191b1cc1ea07d73",
+        "role": "Verifies that direct import rejects an enabled interactive-only module explicitly."
       }
     ],
     "findings": [
       "The artifact inventory omitted spatial graphs, and a module-authoring procedure duplicated the task-oriented developer guide inside an explanation.",
-      "The explanation did not state that setting-backed output identities remain in public invocation keywords independently of downstream observation and are consumed before the raw runtime call."
+      "The explanation did not state that setting-backed output identities remain in public invocation keywords independently of downstream observation and are consumed before the raw runtime call.",
+      "Enabled interactive-only modules could otherwise be silently omitted as non-executable declarations; the owning nominal module family now rejects headless import explicitly."
     ],
     "disposition": "revise",
     "validation": [
@@ -341,7 +369,10 @@
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-22, re-read the complete explanation against declaration-owned output identity lowering and public source transport; every active output identity survives reconstruction while declaration-only keywords are consumed before runtime, and the broadened changed-unit suite passed 1,227 tests."
+      "On 2026-08-22, re-read the complete explanation against declaration-owned output identity lowering and public source transport; every active output identity survives reconstruction while declaration-only keywords are consumed before runtime, and the broadened changed-unit suite passed 1,227 tests.",
+      "On 2026-08-27, re-read the complete explanation against the current importer, nominal module roots, interactive-module leaf, and direct import test; documented explicit headless rejection before step emission.",
+      "Focused callable-contract and CellProfiler declaration/import tests passed: 69 tests.",
+      "Passed .venv/bin/python scripts/validate_docs.py docs/source and a warning-fatal clean Sphinx HTML build of all 153 source files."
     ]
   },
   {
@@ -553,7 +584,7 @@
     "authority": [
       {
         "path": "external/python-introspect/src/python_introspect/signature_analyzer.py",
-        "sha256": "c9adfb1701913d470b687f0453882e2d0b4a81f412b8838797830d7795227599",
+        "sha256": "73600e546753640964d4ba5308fdf808ed3a4a6f085417d8ac0745d9e2748ed7",
         "role": "Implements generic callable and signature analysis."
       },
       {
@@ -583,7 +614,10 @@
       "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
       "On 2026-08-21, re-read the transition against signature_analyzer.py and callable_declaration.py after python-introspect 0.1.10.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-25, traced the zero-execution OpenHCS metaprogramming scaffold against every live import and replaced it as an authority with the actual component enum declaration owner."
+      "On 2026-08-25, traced the zero-execution OpenHCS metaprogramming scaffold against every live import and replaced it as an authority with the actual component enum declaration owner.",
+      "On 2026-08-27, re-read the complete reference redirect against python-introspect's current wrapped-annotation and docstring-derived type analysis; the stated ownership boundary remains accurate.",
+      "Focused python-introspect signature-analysis and callable-declaration tests passed: 37 tests.",
+      "Passed .venv/bin/python scripts/validate_docs.py docs/source and a warning-fatal clean Sphinx HTML build of all 153 source files."
     ]
   },
   {
@@ -1018,7 +1052,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
+        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -1129,12 +1163,15 @@
       "On 2026-08-25, re-read the complete reference against the OpenHCS OMERO deployment README and plugin compatibility owner; corrected deployment and application ownership without changing generic PolyStore responsibilities.",
       "On 2026-08-25, re-read the complete page against the package manifest after removing stale OMERO shell and Dockerfile package-data globs; all remaining installation, package-floor, entry-point, and optional-dependency claims remain accurate.",
       "On 2026-08-26, re-read the complete page after ZMQRuntime extended endpoint attempts to accept caller-owned cancellation; the extracted-package ownership boundary remains accurate.",
-      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate."
+      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate.",
+      "On 2026-08-27, re-read the complete reference after the python-introspect floor moved to 0.1.12 and inspected its current callable-analysis owner and tests; the package ownership catalogue remains accurate.",
+      "Focused python-introspect signature-analysis and callable-declaration tests passed: 37 tests.",
+      "Passed .venv/bin/python scripts/validate_docs.py docs/source and a warning-fatal clean Sphinx HTML build of all 153 source files."
     ]
   },
   {
     "path": "docs/source/architecture/external_integrations_overview.rst",
-    "source_sha256": "2aabac138854a098beca2c638141e3b21c68e090907f6b3964e8a221865e23af",
+    "source_sha256": "cd950b20705e1661d76f3c2ba9a66e68a37a88020228083327b77a9e40b688f1",
     "audience": [
       "OpenHCS integrators",
       "architecture reviewers"
@@ -1144,8 +1181,18 @@
     "authority": [
       {
         "path": "openhcs/interop/cellprofiler/pipeline_import.py",
-        "sha256": "a5f611e2c02c2ee9821b9aa3b6110751e6b88875116955f3e4c06a66474bc8b3",
-        "role": "Implements CellProfiler lowering into public OpenHCS pipeline declarations."
+        "sha256": "7ddd5fc47324f1e75e31442185dac5199138ab300b368569c4ef66fc9f7a28d3",
+        "role": "Implements CellProfiler lowering and declaration-owned headless validation before public OpenHCS pipeline declarations are emitted."
+      },
+      {
+        "path": "openhcs/interop/cellprofiler/module_declarations.py",
+        "sha256": "89dd65abc003c464ba6c489f52d3a4fa47be1d5f8b87d26ad72b7537f188cf8b",
+        "role": "Defines the nominal module validation hook queried by the importer."
+      },
+      {
+        "path": "openhcs/interop/cellprofiler/module_artifact_declarations.py",
+        "sha256": "666ec8c9adfd6a9015adf2b226df671534bb7e547cb0d76f1d16c40ac61e30a6",
+        "role": "Defines the interactive-module family that rejects headless import."
       },
       {
         "path": "openhcs/microscopes/microscope_base.py",
@@ -1176,17 +1223,26 @@
         "path": "openhcs/runtime/zmq_server_hooks.py",
         "sha256": "03b95e1761f06d70b3dcf2fb4a27090e7281fdfba66c5c2e24599fb487d463e7",
         "role": "Maps generic targeted interruption onto the exact OpenHCS orchestrator and its owned workers."
+      },
+      {
+        "path": "tests/unit/test_cellprofiler_pipeline_import.py",
+        "sha256": "353f0c1d8e0bc3552d2e418d792794ab0631daa16c78a3e10191b1cc1ea07d73",
+        "role": "Verifies explicit rejection of an interactive-only module during direct import."
       }
     ],
     "findings": [
       "The overview named cancellation ownership but did not explain the generic terminal-state and OpenHCS cooperative-interruption boundary.",
-      "The OMERO summary assigned deployment to the web plugin instead of the OpenHCS deployment bundle and lifecycle owner."
+      "The OMERO summary assigned deployment to the web plugin instead of the OpenHCS deployment bundle and lifecycle owner.",
+      "The CellProfiler summary omitted the declaration-owned headless-import boundary for interactive-only modules."
     ],
     "disposition": "revise",
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
       "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
-      "On 2026-08-25, re-read the complete explanation against the canonical Compose declaration, plugin compatibility owner, and PolyStore boundary; corrected OMERO deployment ownership."
+      "On 2026-08-25, re-read the complete explanation against the canonical Compose declaration, plugin compatibility owner, and PolyStore boundary; corrected OMERO deployment ownership.",
+      "On 2026-08-27, re-read the complete explanation against the current CellProfiler importer, nominal module declarations, and direct import test; added the explicit interactive-only rejection boundary.",
+      "Focused callable-contract and CellProfiler declaration/import tests passed: 69 tests.",
+      "Passed .venv/bin/python scripts/validate_docs.py docs/source and a warning-fatal clean Sphinx HTML build of all 153 source files."
     ]
   },
   {
@@ -1324,7 +1380,7 @@
     "authority": [
       {
         "path": "external/python-introspect/src/python_introspect/signature_analyzer.py",
-        "sha256": "c9adfb1701913d470b687f0453882e2d0b4a81f412b8838797830d7795227599",
+        "sha256": "73600e546753640964d4ba5308fdf808ed3a4a6f085417d8ac0745d9e2748ed7",
         "role": "Implements generic wrapped-target and parameter signature analysis."
       },
       {
@@ -1334,12 +1390,12 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
+        "sha256": "7c2afdec2c6dd65d592162b4ad7feca2ab9363d0b0761d37aee3f8c29a0a39f9",
         "role": "Adds OpenHCS processing, runtime, artifact, scope, and ArrayBridge memory semantics to analysed callables."
       },
       {
         "path": "tests/unit/test_callable_contract.py",
-        "sha256": "4e391e55b8d252dce72104a49836cbdfbbcc5cc96d2edf21afe59fcffc99122d",
+        "sha256": "0158bc4e8328027b8aae9517a301e594a2f6c91ae7276cec55857204dcb70a06",
         "role": "Verifies OpenHCS callable contracts projected from declaration-owned metadata, including execution memory."
       }
     ],
@@ -1355,7 +1411,10 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-read the transition and rebuilt the python-introspect owner documentation after adding declaration projection.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-27, re-read the complete reference redirect against python-introspect's current signature analysis and OpenHCS runtime-owned parameter projection; the generic and domain ownership boundary remains accurate.",
+      "Focused callable-contract and CellProfiler declaration/import tests passed: 69 tests; focused python-introspect signature-analysis and callable-declaration tests passed: 37 tests.",
+      "Passed .venv/bin/python scripts/validate_docs.py docs/source and a warning-fatal clean Sphinx HTML build of all 153 source files."
     ]
   },
   {
@@ -1410,7 +1469,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
+        "sha256": "7c2afdec2c6dd65d592162b4ad7feca2ab9363d0b0761d37aee3f8c29a0a39f9",
         "role": "Projects declaration-owned input, output, and execution memory into immutable callable contracts."
       },
       {
@@ -1472,7 +1531,10 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
-      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
+      "On 2026-08-27, re-read the complete explanation against the callable contract's runtime-owned parameter projection; the documented GPU declaration and planning boundary remains accurate.",
+      "Focused callable-contract and CellProfiler declaration/import tests passed: 69 tests.",
+      "Passed .venv/bin/python scripts/validate_docs.py docs/source and a warning-fatal clean Sphinx HTML build of all 153 source files."
     ]
   },
   {
@@ -1860,7 +1922,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
+        "sha256": "7c2afdec2c6dd65d592162b4ad7feca2ab9363d0b0761d37aee3f8c29a0a39f9",
         "role": "Projects ArrayBridge metadata into immutable callable input, output, and execution memory contracts."
       },
       {
@@ -1886,7 +1948,10 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
-      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests."
+      "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
+      "On 2026-08-27, re-read the complete reference redirect against the callable contract's runtime-owned parameter projection; the ArrayBridge and OpenHCS memory-planning boundary remains accurate.",
+      "Focused callable-contract and CellProfiler declaration/import tests passed: 69 tests.",
+      "Passed .venv/bin/python scripts/validate_docs.py docs/source and a warning-fatal clean Sphinx HTML build of all 153 source files."
     ]
   },
   {

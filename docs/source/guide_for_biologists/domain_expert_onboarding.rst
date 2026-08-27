@@ -136,6 +136,10 @@ semantic evidence. OpenHCS preserves CellProfiler-style image, object,
 measurement, and export semantics by projecting them into OpenHCS compiler and
 runtime authorities.
 
+If the pipeline contains a module that requires interactive desktop input,
+replace or remove that module before import. OpenHCS reports the unsupported
+interaction instead of silently omitting it from the imported pipeline.
+
 Do not start from a blank slate. The source-backed Official30 knowledge document
 maps thirty CellProfiler recipes to lazily generated public OpenHCS declarations.
 Search by biological task plus ``OpenHCS Python`` and retrieve the exact source

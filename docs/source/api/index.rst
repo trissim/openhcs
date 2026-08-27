@@ -54,7 +54,9 @@ CellProfiler import
 
 The result contains ordinary ``FunctionStep`` declarations and a
 ``PipelineConfig``. There is no generated runtime-pipeline object or semantic
-sidecar.
+sidecar. Import validates each enabled module before lowering it. Modules that
+require interactive desktop input are rejected with an error rather than being
+silently omitted from the headless ``FunctionStep`` projection.
 
 Compilation and execution
 -------------------------

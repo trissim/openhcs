@@ -1,7 +1,7 @@
 [
   {
     "path": "docs/source/api/index.rst",
-    "source_sha256": "4ecc17020ba6ce9ecc445c46c0b4f133e1167377297a783043bda47b749822d1",
+    "source_sha256": "76dddb2af078972357bab28b6bf9d76022ba0f184700d853cf06098496d6acea",
     "audience": [
       "Python integrators",
       "application developers"
@@ -36,18 +36,26 @@
       },
       {
         "path": "openhcs/interop/cellprofiler/pipeline_import.py",
-        "sha256": "a5f611e2c02c2ee9821b9aa3b6110751e6b88875116955f3e4c06a66474bc8b3",
+        "sha256": "7ddd5fc47324f1e75e31442185dac5199138ab300b368569c4ef66fc9f7a28d3",
         "role": "Owns the supported CellProfiler pipeline import boundary demonstrated by this API orientation."
+      },
+      {
+        "path": "tests/unit/test_cellprofiler_pipeline_import.py",
+        "sha256": "353f0c1d8e0bc3552d2e418d792794ab0631daa16c78a3e10191b1cc1ea07d73",
+        "role": "Proves direct import rejects modules requiring interactive desktop input instead of omitting them."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The API reference did not state that CellProfiler modules requiring interactive desktop input are rejected instead of being silently omitted from the imported pipeline."
+    ],
+    "disposition": "revise",
     "validation": [
       "Re-read docs/source/api/index.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/config.py; openhcs/core/steps/function_step.py; openhcs/core/orchestrator/orchestrator.py; openhcs/core/compiled_execution.py; tests/unit/test_compiled_execution.py; openhcs/interop/cellprofiler/pipeline_import.py.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/config.py; openhcs/core/steps/function_step.py; openhcs/core/orchestrator/orchestrator.py; openhcs/core/compiled_execution.py; tests/unit/test_compiled_execution.py; openhcs/interop/cellprofiler/pipeline_import.py; tests/unit/test_cellprofiler_pipeline_import.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
-      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings."
+      "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
+      "On 2026-08-27, applied the Diataxis reference boundary and re-read the complete page against the explicit CellProfiler import-validation hook; documented that interactive desktop modules fail clearly rather than disappearing from the public FunctionStep projection."
     ]
   },
   {
@@ -87,19 +95,19 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
+        "sha256": "7c2afdec2c6dd65d592162b4ad7feca2ab9363d0b0761d37aee3f8c29a0a39f9",
         "role": "Declares the compiler-visible callable metadata and contract terms defined by the glossary."
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
+        "sha256": "632189f63da296dfc894c2cbf8b1d3fb4ee8cb44826a9e037149880b314543ae",
         "role": "Declares the nominal processing-contract members defined by the glossary."
       }
     ],
     "findings": [],
     "disposition": "keep",
     "validation": [
-      "Re-read docs/source/appendices/glossary.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read docs/source/appendices/glossary.rst in full against callable-owned form exclusions and registry-owned non-authorable controls; challenged its reference definitions for accuracy, completeness, owner boundaries, and navigation, and found no prose drift.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/artifacts.py; openhcs/core/compiled_step_plan.py; openhcs/core/pipeline/compilation_session.py; openhcs/core/runtime_stores.py; openhcs/core/source_bindings.py; openhcs/core/callable_contract.py; openhcs/processing/backends/lib_registry/unified_registry.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -155,14 +163,14 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
+        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
     "findings": [],
     "disposition": "keep",
     "validation": [
-      "Re-read docs/source/appendices/research_impact.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read docs/source/appendices/research_impact.rst in full after the python-introspect dependency floor advanced to 0.1.12; challenged its explanation boundary and confirmed that retiring unsupported impact claims remains accurate.",
       "Compared every factual claim directly with the current hash-pinned authorities: benchmark/contracts/pipeline.py; pyproject.toml.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -203,7 +211,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
+        "sha256": "632189f63da296dfc894c2cbf8b1d3fb4ee8cb44826a9e037149880b314543ae",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -217,7 +225,7 @@
     ],
     "disposition": "revise",
     "validation": [
-      "Re-read docs/source/concepts/building_intuition.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read docs/source/concepts/building_intuition.rst in full against the full-catalogue editor and owner-declared exclusion changes; challenged its explanation flow and ownership model and found no prose drift.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/pipeline/compiler.py; openhcs/core/source_bindings.py; openhcs/core/artifacts.py; openhcs/processing/backends/lib_registry/unified_registry.py; external/arraybridge/README.md.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -296,7 +304,7 @@
       },
       {
         "path": "openhcs/interop/cellprofiler/pipeline_import.py",
-        "sha256": "a5f611e2c02c2ee9821b9aa3b6110751e6b88875116955f3e4c06a66474bc8b3",
+        "sha256": "7ddd5fc47324f1e75e31442185dac5199138ab300b368569c4ef66fc9f7a28d3",
         "role": "Imports CellProfiler modules into ordinary OpenHCS pipeline declarations through the interop boundary."
       },
       {
@@ -308,7 +316,7 @@
     "findings": [],
     "disposition": "keep",
     "validation": [
-      "Re-read docs/source/concepts/core_model.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read docs/source/concepts/core_model.rst in full against the explicit CellProfiler import-validation hook; challenged its declaration-to-runtime explanation and confirmed that its supported lowering model remains accurate.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/pipeline_document.py; openhcs/core/pipeline/compiler.py; openhcs/core/compiled_execution.py; openhcs/core/runtime_stores.py; openhcs/interop/cellprofiler/pipeline_import.py; openhcs/core/compiled_step_plan.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -343,7 +351,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
+        "sha256": "632189f63da296dfc894c2cbf8b1d3fb4ee8cb44826a9e037149880b314543ae",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -363,12 +371,12 @@
       },
       {
         "path": "openhcs/processing/backends/cellprofiler/secondary.py",
-        "sha256": "10d465b0978369a49335139c2fb16da94c05926a5f7eca40631890541d708eac",
+        "sha256": "fdad8ea330d34e27743caffce52cd0ab37e990528dcf191a640460f9499d35b8",
         "role": "Declares IdentifySecondaryObjects and IdentifyTertiaryObjects as plane-local processing callables."
       },
       {
         "path": "tests/unit/test_callable_contract.py",
-        "sha256": "4e391e55b8d252dce72104a49836cbdfbbcc5cc96d2edf21afe59fcffc99122d",
+        "sha256": "0158bc4e8328027b8aae9517a301e594a2f6c91ae7276cec55857204dcb70a06",
         "role": "Proves callable contract derivation for dimensions, memory types, dtype policy, and outputs."
       },
       {
@@ -382,7 +390,7 @@
     ],
     "disposition": "revise",
     "validation": [
-      "Re-read docs/source/concepts/data_dimensions.rst in full against repository base 32ca17c17 and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read docs/source/concepts/data_dimensions.rst in full against registry form exclusions, explicit secondary-backend default selection, and expanded contract tests; challenged its dimensional explanation and found no semantic drift.",
       "On 2026-08-27, re-read the complete data-dimensions explanation after library registries gained declaration-owned runtime-parameter exclusions; dimensional and runtime-identity claims remain unchanged.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/constants/constants.py; openhcs/core/variable_component_stack_requirement.py; openhcs/core/component_group_scope.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/core/runtime_object_label_domains.py; openhcs/processing/backends/cellprofiler/watershed.py; openhcs/processing/backends/cellprofiler/primary_objects.py; openhcs/processing/backends/cellprofiler/secondary.py; tests/unit/test_callable_contract.py; tests/unit/test_documented_dimensionality.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
@@ -453,14 +461,14 @@
       },
       {
         "path": "tests/unit/test_callable_contract.py",
-        "sha256": "4e391e55b8d252dce72104a49836cbdfbbcc5cc96d2edf21afe59fcffc99122d",
+        "sha256": "0158bc4e8328027b8aae9517a301e594a2f6c91ae7276cec55857204dcb70a06",
         "role": "Proves callable contract derivation for dimensions, memory types, dtype policy, and outputs."
       }
     ],
     "findings": [],
     "disposition": "keep",
     "validation": [
-      "Re-read docs/source/concepts/dtype_config_system.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read docs/source/concepts/dtype_config_system.rst in full after callable contracts began projecting runtime-owned inputs into generic form exclusions; challenged the dtype ownership boundary and found no prose drift.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/config.py; openhcs/core/memory/decorators.py; external/arraybridge/src/arraybridge/decorators.py; tests/unit/test_callable_contract.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -470,7 +478,7 @@
   },
   {
     "path": "docs/source/concepts/function_library.rst",
-    "source_sha256": "ebd6d09fa345ba1d9c220f3a73e5a99dd4f6a98b4fbded6d0713e9638cf0333a",
+    "source_sha256": "0daeec8215a2bed976c285ed6457fa7e8eb05ed5806e6b321b7c357ca600fdd6",
     "audience": [
       "imaging scientists",
       "callable authors"
@@ -480,7 +488,7 @@
     "authority": [
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
+        "sha256": "632189f63da296dfc894c2cbf8b1d3fb4ee8cb44826a9e037149880b314543ae",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -490,7 +498,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
+        "sha256": "7c2afdec2c6dd65d592162b4ad7feca2ab9363d0b0761d37aee3f8c29a0a39f9",
         "role": "Derives callable input, output, execution-framework, dimensional, artifact, and runtime requirements from declarations."
       },
       {
@@ -500,7 +508,7 @@
       },
       {
         "path": "tests/unit/test_callable_contract.py",
-        "sha256": "4e391e55b8d252dce72104a49836cbdfbbcc5cc96d2edf21afe59fcffc99122d",
+        "sha256": "0158bc4e8328027b8aae9517a301e594a2f6c91ae7276cec55857204dcb70a06",
         "role": "Proves callable contract derivation for dimensions, memory types, dtype policy, and outputs."
       },
       {
@@ -520,25 +528,31 @@
       },
       {
         "path": "tests/unit/test_library_registry_discovery.py",
-        "sha256": "2e7163761aa16e60b9f600166d3dc46f329583e9b1d7b22790c08d2156131b51",
+        "sha256": "2f29b963996ded68005ee93871f4c7d40e1b66774228f21df86a036cb4613bd3",
         "role": "Proves declaration-derived catalogue discovery and process policy filtering."
       },
       {
         "path": "tests/unit/test_unified_registry_runtime_payloads.py",
         "sha256": "e731379d3e48fd5c98709203668e09baa195bb0c9301a2b041e1c799fa8140e3",
         "role": "Proves external library runtime controls stay out of authored function parameters."
+      },
+      {
+        "path": "tests/unit/pyqt_gui/test_function_catalog_form_materialization.py",
+        "sha256": "711b69ff0b145b962f0f3518c7a7a77db38d8a545bb9f5ea7d2e259d70598667",
+        "role": "Proves every locally available catalogue declaration materialises through the real desktop function form."
       }
     ],
     "findings": [
       "The page did not explain that optional backend visibility requires a usable runtime and complete declared module inventory.",
       "The callable-contract explanation omitted the independent execution framework and did not state that catalogue admission checks every declared framework role.",
       "The function-pattern explanation did not state the nominal enum-member requirement enforced by callable keyword validation.",
-      "The function-library explanation did not distinguish public catalogue declarations from private decorated implementation helpers."
+      "The function-library explanation did not distinguish public catalogue declarations from private decorated implementation helpers.",
+      "The explanation did not connect contract-owned exclusions and library-owned non-authorable controls to full-catalogue desktop form materialisation."
     ],
     "disposition": "revise",
     "validation": [
       "Re-read docs/source/concepts/function_library.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
-      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/processing/backends/lib_registry/registry_service.py; openhcs/core/callable_contract.py; openhcs/agent/services/function_catalog_service.py; tests/unit/test_callable_contract.py; external/arraybridge/src/arraybridge/types.py; external/arraybridge/src/arraybridge/decorators.py; openhcs/processing/backends/lib_registry/openhcs_registry.py; tests/unit/test_library_registry_discovery.py; tests/unit/test_unified_registry_runtime_payloads.py.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/processing/backends/lib_registry/registry_service.py; openhcs/core/callable_contract.py; openhcs/agent/services/function_catalog_service.py; tests/unit/test_callable_contract.py; external/arraybridge/src/arraybridge/types.py; external/arraybridge/src/arraybridge/decorators.py; openhcs/processing/backends/lib_registry/openhcs_registry.py; tests/unit/test_library_registry_discovery.py; tests/unit/test_unified_registry_runtime_payloads.py; tests/unit/pyqt_gui/test_function_catalog_form_materialization.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
@@ -547,7 +561,8 @@
       "On 2026-08-24, re-read the complete explanation after stdout containment moved out of function-catalog discovery and into the MCP transport; callable ownership and discovery guidance remain unchanged.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
       "On 2026-08-25, re-read the complete explanation against endpoint-owned search, detail, and selected-reference transport; focused catalogue tests plus live desktop and MCP probes confirmed the documented discovery boundary.",
-      "On 2026-08-27, re-read and revised the complete explanation after library registries gained declaration-owned runtime-parameter exclusions; it now distinguishes external runtime controls from authored algorithm parameters."
+      "On 2026-08-27, re-read and revised the complete explanation after library registries gained declaration-owned runtime-parameter exclusions; it now distinguishes external runtime controls from authored algorithm parameters.",
+      "On 2026-08-27, applied the Diataxis explanation boundary and re-read the complete page against callable-owned form exclusions, runtime-tested registry exclusions, and the real full-catalogue form test; clarified why authorable controls remain editable while runtime-owned inputs stay hidden."
     ]
   },
   {
@@ -636,7 +651,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
+        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -661,12 +676,12 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
+        "sha256": "632189f63da296dfc894c2cbf8b1d3fb4ee8cb44826a9e037149880b314543ae",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
         "path": "openhcs/interop/cellprofiler/pipeline_import.py",
-        "sha256": "a5f611e2c02c2ee9821b9aa3b6110751e6b88875116955f3e4c06a66474bc8b3",
+        "sha256": "7ddd5fc47324f1e75e31442185dac5199138ab300b368569c4ef66fc9f7a28d3",
         "role": "Imports CellProfiler modules into ordinary OpenHCS pipeline declarations through the interop boundary."
       },
       {
@@ -703,7 +718,7 @@
     ],
     "disposition": "revise",
     "validation": [
-      "Re-read docs/source/concepts/module_structure.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read docs/source/concepts/module_structure.rst in full against the python-introspect 0.1.12 floor, declaration-owned catalogue inputs, and CellProfiler import validation; challenged the owner map and found no prose drift.",
       "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; .gitmodules; openhcs/core/config.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/interop/cellprofiler/pipeline_import.py; openhcs/runtime/viewer_protocol.py; external/arraybridge/README.md; external/arraybridge/src/arraybridge/types.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -825,7 +840,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
+        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -926,7 +941,7 @@
     ],
     "disposition": "revise",
     "validation": [
-      "Re-read docs/source/getting_started/getting_started.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read docs/source/getting_started/getting_started.rst in full after the python-introspect dependency floor advanced to 0.1.12; challenged the installation how-to flow and confirmed that the supported procedure is unchanged.",
       "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/cli.py; openhcs/mcp/installed_demo.py; openhcs/desktop_installation.py; scripts/render_installer_contract.py; packaging/installers/windows/Install-OpenHCS.ps1; packaging/installers/macos/install-openhcs.sh; packaging/installers/macos/README.md; scripts/smoke_installed_desktop.py; tests/installer/test_installed_desktop_smoke.py; tests/installer/test_installer_contract.py; openhcs/pyqt_gui/services/desktop_update.py; openhcs/pyqt_gui/services/desktop_update_worker.py; openhcs/desktop_deployment.py; tests/unit/test_desktop_deployment.py; tests/unit/pyqt_gui/test_desktop_update.py; tests/unit/pyqt_gui/test_desktop_update_worker.py; .github/workflows/integration-tests.yml.",
       "On 2026-08-24, re-read the complete installation how-to after replacing the manually mirrored installer contract source with a declaration-derived native projection; user-facing installation and update behavior remains unchanged.",
       "Re-read the how-to after the installed macOS smoke began resolving the declaration-owned current environment while retaining the previous environment for recovery; the documented update behaviour remains accurate.",
@@ -1148,7 +1163,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/domain_expert_onboarding.rst",
-    "source_sha256": "3ce80b3689e2ef47f55cdd58de157b92923d3db0bbcf1ef1795c1f8fdee28d04",
+    "source_sha256": "7f162fef711ed6c59ade3f1dfe23fe77fa0bebcda3bc92d6cc0ffd1e2259f94f",
     "audience": [
       "imaging scientists",
       "scientists working with an MCP agent"
@@ -1173,25 +1188,33 @@
       },
       {
         "path": "openhcs/interop/cellprofiler/pipeline_import.py",
-        "sha256": "a5f611e2c02c2ee9821b9aa3b6110751e6b88875116955f3e4c06a66474bc8b3",
+        "sha256": "7ddd5fc47324f1e75e31442185dac5199138ab300b368569c4ef66fc9f7a28d3",
         "role": "Imports CellProfiler modules into ordinary OpenHCS pipeline declarations through the interop boundary."
       },
       {
         "path": "tests/unit/agent/test_architecture_projection_service.py",
         "sha256": "e820969a0499995097af17fbde9b4694f1626c0ca6d70c75fd20bd4d2cdd7be9",
         "role": "Proves that architecture projections come from maintained sources and preserve requested scope."
+      },
+      {
+        "path": "tests/unit/test_cellprofiler_pipeline_import.py",
+        "sha256": "353f0c1d8e0bc3552d2e418d792794ab0631daa16c78a3e10191b1cc1ea07d73",
+        "role": "Proves direct import rejects modules requiring interactive desktop input instead of omitting them."
       }
     ],
-    "findings": [],
-    "disposition": "keep",
+    "findings": [
+      "The onboarding how-to did not tell scientists how to handle CellProfiler modules that require interactive desktop input."
+    ],
+    "disposition": "revise",
     "validation": [
       "Reviewed docs/source/guide_for_biologists/domain_expert_onboarding.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
-      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/agent/capabilities.py; openhcs/agent/services/architecture_projection_service.py; openhcs/agent/services/knowledge_base_service.py; openhcs/interop/cellprofiler/pipeline_import.py; tests/unit/agent/test_architecture_projection_service.py.",
+      "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/agent/capabilities.py; openhcs/agent/services/architecture_projection_service.py; openhcs/agent/services/knowledge_base_service.py; openhcs/interop/cellprofiler/pipeline_import.py; tests/unit/agent/test_architecture_projection_service.py; tests/unit/test_cellprofiler_pipeline_import.py.",
       "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guide_for_biologists`: documentation validation passed: 10 files, 2 Python blocks.",
       "On 2026-08-23, re-reviewed the capability declaration after execution status began exposing the retained generic progress observation; the documented registry, surface, and safety ownership claims remain accurate.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-25, re-read the complete onboarding how-to after capability surfaces gained declaration-derived development-client preflight; its scientist-facing discovery and authoring route remains accurate.",
-      "On 2026-08-26, re-read the complete onboarding how-to against the changed capability declaration; transport instructions now belong to CapabilityTransport members without changing the exposed discovery, authoring, execution, or safety surface."
+      "On 2026-08-26, re-read the complete onboarding how-to against the changed capability declaration; transport instructions now belong to CapabilityTransport members without changing the exposed discovery, authoring, execution, or safety surface.",
+      "On 2026-08-27, applied the Diataxis how-to boundary and re-read the complete page against the CellProfiler import-validation hook and its direct-import test; added the action required before importing a pipeline with interactive desktop modules."
     ]
   },
   {
@@ -1210,7 +1233,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
+        "sha256": "632189f63da296dfc894c2cbf8b1d3fb4ee8cb44826a9e037149880b314543ae",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -1222,7 +1245,7 @@
     "findings": [],
     "disposition": "keep",
     "validation": [
-      "Re-read docs/source/guide_for_biologists/glossary.rst in full against repository base 32ca17c17 and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read docs/source/guide_for_biologists/glossary.rst in full against the declaration-owned catalogue input changes; challenged its concise reference boundary and confirmed that the three axis-processing distinctions remain accurate.",
       "On 2026-08-27, re-read the complete biologist glossary after library registries gained declaration-owned runtime-parameter exclusions; its three axis-processing distinctions remain unchanged.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/constants/constants.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/core/config.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
@@ -1340,7 +1363,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
+        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1364,7 +1387,7 @@
     ],
     "disposition": "redirect",
     "validation": [
-      "Re-read docs/source/guide_for_biologists/installation_and_setup.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read docs/source/guide_for_biologists/installation_and_setup.rst in full after the python-introspect dependency floor advanced to 0.1.12; confirmed that its redirect still reaches the single maintained installation how-to.",
       "On 2026-08-26, re-read the complete compatibility page after native installer transcript and evidence handling changed; retaining one redirect to the canonical installation how-to remains accurate and avoids duplicated guidance.",
       "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/cli.py; packaging/installers/windows/Install-OpenHCS.ps1; packaging/installers/macos/install-openhcs.sh.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
@@ -1400,7 +1423,7 @@
       },
       {
         "path": "openhcs/interop/cellprofiler/pipeline_import.py",
-        "sha256": "a5f611e2c02c2ee9821b9aa3b6110751e6b88875116955f3e4c06a66474bc8b3",
+        "sha256": "7ddd5fc47324f1e75e31442185dac5199138ab300b368569c4ef66fc9f7a28d3",
         "role": "Imports CellProfiler modules into ordinary OpenHCS pipeline declarations through the interop boundary."
       },
       {
@@ -1417,7 +1440,7 @@
     "findings": [],
     "disposition": "keep",
     "validation": [
-      "Re-read docs/source/guide_for_biologists/intro.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read docs/source/guide_for_biologists/intro.rst in full against the explicit CellProfiler import-validation hook; challenged its explanation of supported imports and found no prose drift.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/pipeline/compiler.py; openhcs/interop/cellprofiler/pipeline_import.py; openhcs/processing/backends/lib_registry/registry_service.py; openhcs/pyqt_gui/widgets/plate_manager.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -1820,7 +1843,7 @@
       },
       {
         "path": "openhcs/core/callable_contract.py",
-        "sha256": "1f8db56f980adced92e45b510ebe3ae7280edbe977e092e096950fba98a6b7b4",
+        "sha256": "7c2afdec2c6dd65d592162b4ad7feca2ab9363d0b0761d37aee3f8c29a0a39f9",
         "role": "Derives callable input, output, execution-framework, dimensional, artifact, and runtime requirements from declarations."
       },
       {
@@ -1835,7 +1858,7 @@
       },
       {
         "path": "tests/unit/test_callable_contract.py",
-        "sha256": "4e391e55b8d252dce72104a49836cbdfbbcc5cc96d2edf21afe59fcffc99122d",
+        "sha256": "0158bc4e8328027b8aae9517a301e594a2f6c91ae7276cec55857204dcb70a06",
         "role": "Proves callable contract derivation for dimensions, memory types, dtype policy, and outputs."
       },
       {
@@ -1880,7 +1903,7 @@
     ],
     "disposition": "revise",
     "validation": [
-      "Re-read docs/source/guides/memory_type_integration.rst in full against repository base 32ca17c17 and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read docs/source/guides/memory_type_integration.rst in full after callable contracts began projecting runtime-owned inputs into generic form exclusions; challenged the ArrayBridge/OpenHCS ownership boundary and found no prose drift.",
       "Compared every factual claim directly with the current hash-pinned authorities: external/arraybridge/src/arraybridge/types.py; openhcs/constants/constants.py; openhcs/core/memory/__init__.py; openhcs/core/memory/decorators.py; openhcs/core/callable_contract.py; openhcs/core/compiled_step_plan.py; external/arraybridge/src/arraybridge/decorators.py; tests/unit/test_callable_contract.py; tests/unit/test_memory_type_authority.py; openhcs/core/pipeline/framework_device_assignment.py; openhcs/core/framework_device_resolver.py; openhcs/core/steps/function_runtime.py; openhcs/core/orchestrator/worker_execution.py; tests/unit/test_framework_device_resolver.py; tests/unit/test_framework_execution_scope.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -1966,7 +1989,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
+        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -2005,7 +2028,7 @@
     ],
     "disposition": "revise",
     "validation": [
-      "Re-read docs/source/guides/omero_integration.rst in full against repository base bb4218fae and the current shared worktree; challenged its explanation user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read docs/source/guides/omero_integration.rst in full after the python-introspect dependency floor advanced to 0.1.12; challenged its OMERO ownership explanation and found no affected claim.",
       "Compared every factual claim directly with the current hash-pinned authorities: external/PolyStore/src/polystore/omero_local.py; external/PolyStore/src/polystore/base.py; external/PolyStore/src/polystore/omero_tables.py; openhcs/microscopes/microscope_interfaces.py; tests/unit/test_omero_microscope_metadata.py; openhcs/omero/plugin/README.md; openhcs/omero/docker-compose.yml; openhcs/runtime/omero_instance_manager.py; pyproject.toml; scripts/validate_wheel_deployment.py; tests/unit/test_omero_instance_manager.py; tests/unit/test_validate_wheel_deployment.py; tests/integration/test_main.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -2380,7 +2403,7 @@
       },
       {
         "path": "openhcs/interop/cellprofiler/pipeline_import.py",
-        "sha256": "a5f611e2c02c2ee9821b9aa3b6110751e6b88875116955f3e4c06a66474bc8b3",
+        "sha256": "7ddd5fc47324f1e75e31442185dac5199138ab300b368569c4ef66fc9f7a28d3",
         "role": "Imports CellProfiler modules into ordinary OpenHCS pipeline declarations through the interop boundary."
       },
       {
@@ -2392,7 +2415,7 @@
     "findings": [],
     "disposition": "keep",
     "validation": [
-      "Reviewed docs/source/index.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
+      "On 2026-08-27, re-read docs/source/index.rst in full against the explicit CellProfiler import-validation hook; challenged its Diataxis routing and supported-import overview and found no prose drift.",
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/pipeline_document.py; openhcs/pyqt_gui/main.py; openhcs/interop/cellprofiler/pipeline_import.py; openhcs/mcp/bootstrap.py.",
       "Passed `.venv/bin/python scripts/validate_docs.py docs/source/index.rst`: documentation validation passed: 1 files, 0 Python blocks.",
       "On 2026-08-24, re-read the complete index after bootstrap delegated stdio channel ownership to its transport; the documentation routing claims remain unchanged.",
@@ -2410,7 +2433,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
+        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2434,7 +2457,7 @@
     ],
     "disposition": "redirect",
     "validation": [
-      "Re-read docs/source/installation.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read docs/source/installation.rst in full after the python-introspect dependency floor advanced to 0.1.12; confirmed that its compatibility redirect still reaches the canonical installation procedure.",
       "On 2026-08-26, re-read the complete compatibility page after native installer transcript and evidence handling changed; retaining one redirect to the canonical installation how-to remains accurate and avoids duplicated guidance.",
       "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/cli.py; packaging/installers/windows/Install-OpenHCS.ps1; packaging/installers/macos/install-openhcs.sh.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
@@ -2529,7 +2552,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
+        "sha256": "632189f63da296dfc894c2cbf8b1d3fb4ee8cb44826a9e037149880b314543ae",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -2544,7 +2567,7 @@
       },
       {
         "path": "openhcs/processing/backends/cellprofiler/secondary.py",
-        "sha256": "10d465b0978369a49335139c2fb16da94c05926a5f7eca40631890541d708eac",
+        "sha256": "fdad8ea330d34e27743caffce52cd0ab37e990528dcf191a640460f9499d35b8",
         "role": "Declares the current plane-local IdentifySecondaryObjects and IdentifyTertiaryObjects routes."
       },
       {
@@ -2589,7 +2612,7 @@
       },
       {
         "path": "tests/unit/test_cellprofiler_pipeline_import.py",
-        "sha256": "dd078334441bc4c0e794654da56e6c3b9937b6e592554bf9064514f610512e86",
+        "sha256": "353f0c1d8e0bc3552d2e418d792794ab0631daa16c78a3e10191b1cc1ea07d73",
         "role": "Proves CellProfiler import preserves 3D image, object, and morphology variants from declarations."
       }
     ],
@@ -2598,7 +2621,7 @@
     ],
     "disposition": "revise",
     "validation": [
-      "Re-read docs/source/reference/dimensionality_and_measurements.rst in full against repository base bb4218fae and the current shared worktree; challenged its reference user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read docs/source/reference/dimensionality_and_measurements.rst in full against registry form exclusions, explicit secondary-backend default selection, and expanded import tests; challenged every dimensional capability claim and found no semantic drift.",
       "On 2026-08-27, re-read the complete capability reference after library registries gained declaration-owned runtime-parameter exclusions; segmentation and measurement boundaries remain unchanged.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/aligned_image_payload.py; openhcs/core/runtime_object_label_domains.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/processing/backends/cellprofiler/watershed.py; openhcs/processing/backends/cellprofiler/primary_objects.py; openhcs/processing/backends/cellprofiler/secondary.py; openhcs/processing/backends/cellprofiler/intensity.py; openhcs/processing/backends/cellprofiler/shape.py; openhcs/processing/backends/cellprofiler/area_occupied.py; benchmark/manifests/official30_portable_axis1.json; tests/unit/test_documented_dimensionality.py; tests/unit/test_cellprofiler_watershed_3d.py; tests/unit/test_cellprofiler_library_loading.py; tests/unit/test_cellprofiler_module_execution.py; tests/unit/test_cellprofiler_pipeline_import.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
@@ -2883,19 +2906,19 @@
       },
       {
         "path": "tests/unit/test_library_registry_discovery.py",
-        "sha256": "2e7163761aa16e60b9f600166d3dc46f329583e9b1d7b22790c08d2156131b51",
+        "sha256": "2f29b963996ded68005ee93871f4c7d40e1b66774228f21df86a036cb4613bd3",
         "role": "Proves backend discovery and availability filtering produce the expected callable registry."
       },
       {
         "path": "pyproject.toml",
-        "sha256": "8ed7d70d7fe1e11453fcc79a91f73ffe62b12be14cf10c0b71f88a5a873ea86a",
+        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
     "findings": [],
     "disposition": "keep",
     "validation": [
-      "Re-read docs/source/user_guide/cpu_only_mode.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read docs/source/user_guide/cpu_only_mode.rst in full against declaration-owned catalogue inputs and the python-introspect 0.1.12 floor; challenged the CPU-only workflow and found no behaviour change.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/utils/environment.py; openhcs/processing/backends/lib_registry/registry_service.py; tests/unit/test_library_registry_discovery.py; pyproject.toml.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -3012,7 +3035,7 @@
       },
       {
         "path": "openhcs/processing/backends/lib_registry/unified_registry.py",
-        "sha256": "96dccfdf1636455a59c2365a16fa642126afc8a258180cfec0f05a7bda1682c0",
+        "sha256": "632189f63da296dfc894c2cbf8b1d3fb4ee8cb44826a9e037149880b314543ae",
         "role": "Defines canonical callable metadata and derives the unified catalogue from registry declarations."
       },
       {
@@ -3046,7 +3069,7 @@
     ],
     "disposition": "revise",
     "validation": [
-      "Re-read docs/source/user_guide/custom_functions.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read docs/source/user_guide/custom_functions.rst in full against callable- and registry-owned form exclusions; challenged the authoring steps and confirmed that custom runtime inputs remain declaration-owned.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/memory/decorators.py; openhcs/processing/backends/lib_registry/unified_registry.py; openhcs/processing/custom_functions/manager.py; tests/unit/test_function_catalog_zmq.py; external/arraybridge/src/arraybridge/decorators.py; openhcs/processing/custom_functions/runtime_registry.py; tests/unit/test_custom_function_lifecycle.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
@@ -3083,7 +3106,7 @@
       },
       {
         "path": "tests/unit/test_callable_contract.py",
-        "sha256": "4e391e55b8d252dce72104a49836cbdfbbcc5cc96d2edf21afe59fcffc99122d",
+        "sha256": "0158bc4e8328027b8aae9517a301e594a2f6c91ae7276cec55857204dcb70a06",
         "role": "Proves callable contract derivation for dimensions, memory types, dtype policy, and outputs."
       },
       {
@@ -3097,7 +3120,7 @@
     ],
     "disposition": "revise",
     "validation": [
-      "Re-read docs/source/user_guide/dtype_conversion.rst in full against repository base bb4218fae and the current shared worktree; challenged its how-to user need for accuracy, freshness, duplication, owner boundaries, flow, and navigation.",
+      "On 2026-08-27, re-read docs/source/user_guide/dtype_conversion.rst in full after callable contracts began projecting runtime-owned inputs into generic form exclusions; challenged the dtype task flow and found no behaviour change.",
       "Compared every factual claim directly with the current hash-pinned authorities: openhcs/core/config.py; openhcs/core/memory/decorators.py; external/arraybridge/src/arraybridge/decorators.py; tests/unit/test_callable_contract.py; openhcs/core/steps/abstract.py.",
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",

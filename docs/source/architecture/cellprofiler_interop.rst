@@ -57,8 +57,11 @@ Import flow
 
 ``import_cellprofiler_pipeline`` resolves external files relative to the
 pipeline directory by default or an explicit ``source_root``. Disabled modules
-are ignored. Setup-only declarations do not emit a step; executable module
-declarations emit one or more ordinary steps.
+are ignored. Each enabled module declaration validates whether it can enter a
+headless pipeline before step emission. Setup-only declarations contribute
+configuration without a step; executable declarations emit one or more
+ordinary steps. Interactive-only declarations such as
+``IdentifyObjectsManually`` fail explicitly rather than being silently omitted.
 
 External model, classifier, rules, and similar resource paths are public
 callable keyword values resolved by ``SettingsBinder``. They are not members of
@@ -95,6 +98,7 @@ module subclass owns:
 - parsed revision metadata and module-specific revision interpretation where
   implemented
 - settings binding and repeated-row interpretation
+- headless-import acceptance or explicit rejection
 - whether the module emits a step
 - its public processing callable or callable batch
 - required processing axes and grouping constraints

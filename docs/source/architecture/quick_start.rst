@@ -152,7 +152,9 @@ The public importer lowers a ``.cppipe`` directly to the same declarations:
 
 Setup modules contribute typed source bindings; executable modules become
 ``FunctionStep`` objects. There is no second runtime-pipeline model or generated
-semantic sidecar. See :doc:`cellprofiler_interop` for the ownership boundary.
+semantic sidecar. A module that requires interactive desktop input is rejected
+during headless import rather than being silently omitted. See
+:doc:`cellprofiler_interop` for the ownership boundary.
 
 Configuration and processing semantics
 --------------------------------------

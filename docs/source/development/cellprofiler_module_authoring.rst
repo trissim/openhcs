@@ -12,8 +12,9 @@ Adding or changing a module
    semantic behavior.
 2. Extend that family so inheritance supplies shared behavior.
 3. Declare settings binding, processing configuration, callable resolution,
-   artifact inputs/outputs, invocation/runtime behavior, catalogue ownership,
-   and measurement or relationship semantics at the module declaration.
+   artifact inputs/outputs, invocation/runtime behaviour, catalogue ownership,
+   headless-import eligibility, and measurement or relationship semantics at
+   the module declaration.
 4. Let ``AutoRegisterMeta`` place the concrete declaration in
    ``CellProfilerModule.__registry__``.
 5. Keep ``pipeline_import`` as a lowering pass from parsed ``ModuleBlock``
@@ -38,6 +39,15 @@ Source modules
 Images, metadata, names-and-types, and groups modules contribute directly to
 ``SourceBindingsConfig`` and pipeline grouping. There is no source-schema
 sidecar and no generated runtime-pipeline object.
+
+Interactive modules
+-------------------
+
+If a module requires desktop interaction, inherit the interactive declaration
+family or override ``validate_pipeline_import()`` at the module declaration.
+The importer calls that hook before lowering executable steps, so unsupported
+interaction fails explicitly instead of disappearing from the imported
+pipeline.
 
 Executable modules
 ------------------
