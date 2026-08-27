@@ -2785,7 +2785,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "6c85d9e9f1a49cc5f565b690d7af4812c454f40df5e2f9b16b4cd213d94abc4e",
+    "source_sha256": "faddcb3319b689c204ebc792250f80d1f1cffaad84cc1db8ffc3e0bfca07b2fc",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2849,8 +2849,18 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "e0f6ecbb6c892a11a390814b1ee7a1d864903e4193735f88e7288c9e77c8f3d4",
+        "sha256": "7f0932453837b391a8648800f098ff714ff6548baad6480cd1cbf7b7dce74b5a",
         "role": "Cross-platform source-candidate and published-dependency readiness, installed-wheel live GUI/MCP operation with retained native screenshots, three-stage native-installer workflow proof, signing-helper parse, and staged-update validation matrix."
+      },
+      {
+        "path": "scripts/resolve_successful_job_baseline.py",
+        "sha256": "c29dc3195815508074266165046d2bd51c2823e9ebb5e747d7f0fc7b7cc817e5",
+        "role": "Derives the cumulative Python quality boundary from the latest successful code-quality job on an ancestor workflow run."
+      },
+      {
+        "path": "tests/unit/test_successful_job_baseline.py",
+        "sha256": "d2e7cb0d1595ef16f8fbe5130fc352e644dddb3ec6bc4bb66b664551a62ccb82",
+        "role": "Proves job success remains authoritative when the enclosing workflow fails or is cancelled and excludes unrelated or non-ancestor runs."
       },
       {
         "path": "scripts/smoke_windows_installer_window.ps1",
@@ -2931,7 +2941,7 @@
       "The PyPI installation matrix waited for the exact dependency wheels but then queried each runner's potentially stale package index instead of consuming that projection; every install lane now reuses the hash-pinned wheel requirements.",
       "The macOS disk-image helper retained only the backing device and could leave its synthesized APFS volume mounted; the attachment boundary now carries and releases both exact device identities.",
       "The release-candidate section did not identify the dedicated GUI source gate or distinguish it from installed-package evidence.",
-      "The per-push Python quality comparison could forget a red change after an unrelated follow-up push; it now retains changes since the most recent successful Integration Tests head.",
+      "The per-push Python quality comparison could forget a red change after an unrelated follow-up push; it now retains changes since the most recent ancestor whose code-quality job succeeded.",
       "Local tagging, manual publication, and installer recovery were independent fail-open paths; one readiness authority and one immutable tag-resolution job now bind them to the same exact commit and CI evidence.",
       "PyPI recovery used --skip-existing, which could hide independently rebuilt artifact conflicts; existing release files now stop publication.",
       "Workflow dependencies used movable major-version tags and deprecated Node 20 action releases; every external action now uses a current full-length commit pin maintained through grouped Dependabot updates.",
@@ -2996,7 +3006,8 @@
       "On 2026-08-27, re-read the complete release how-to after Windows native evidence exposed a stale raw-uv and checkout-reinstall path; removing that parallel installation path leaves the metadata-discovered candidate wheelhouse as the single installed artifact authority and strengthens the documented candidate proof.",
       "On 2026-08-27, rechecked the complete release how-to after strict PowerShell acceptance exposed an undeclared test-fixture alias; the managed candidate, staged-update, and publication boundaries remain unchanged.",
       "On 2026-08-27, rechecked the complete release how-to after strict mode exposed a null Compare-Object result in the Windows launcher probe; materializing the comparison as a collection changes no release procedure or product boundary.",
-      "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after Intel native acceptance exposed an upstream wheel-availability boundary and Windows completion capture raced its action row; the page now records the shared binary-wheel path, and focused native-installer regressions passed."
+      "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after Intel native acceptance exposed an upstream wheel-availability boundary and Windows completion capture raced its action row; the page now records the shared binary-wheel path, and focused native-installer regressions passed.",
+      "On 2026-08-27, re-read the complete release how-to after the Python quality baseline moved from whole-workflow success to the owning code-quality job; revised the CI gate explanation and verified the resolver against live GitHub history plus three focused regressions."
     ]
   },
   {
@@ -3055,7 +3066,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "e0f6ecbb6c892a11a390814b1ee7a1d864903e4193735f88e7288c9e77c8f3d4",
+        "sha256": "7f0932453837b391a8648800f098ff714ff6548baad6480cd1cbf7b7dce74b5a",
         "role": "Runs explicitly selected live OMERO variants and preserves component and table-service diagnostics on failure."
       }
     ],
@@ -3096,7 +3107,8 @@
       "On 2026-08-27, re-read the complete OMERO testing how-to after the macOS installer DMG stopped creating an APFS synthesized-volume lifecycle; the independent OMERO matrix and its storage and deployment ownership guidance remain unchanged.",
       "On 2026-08-27, rechecked the complete OMERO testing how-to after Windows native acceptance stopped replacing its installed candidate wheel from the checkout; the independent OMERO lane and owner boundaries remain unchanged.",
       "On 2026-08-27, rechecked the complete OMERO testing how-to after strict mode was added to the independent Windows installer acceptance script; OMERO selection, diagnostics, and lifecycle ownership remain unchanged.",
-      "On 2026-08-27, rechecked the complete OMERO testing how-to after the independent Windows launcher probe normalized an empty comparison result; OMERO selection and ownership remain unchanged."
+      "On 2026-08-27, rechecked the complete OMERO testing how-to after the independent Windows launcher probe normalized an empty comparison result; OMERO selection and ownership remain unchanged.",
+      "On 2026-08-27, re-read the complete OMERO testing how-to after the shared workflow made the Python quality baseline job-owned; the independent OMERO matrix, diagnostics, and lifecycle ownership remain unchanged."
     ]
   },
   {

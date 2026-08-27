@@ -176,9 +176,10 @@ evidence still runs.
 The maintained PyQt workflow suite consequently runs against the exact recorded
 pyqt-reactive source snapshot. Published-dependency and installed-wheel jobs
 remain the proof for the public package boundary. The Python quality gate
-retains every change since the most recent successful Integration Tests head,
-so an unrelated follow-up commit cannot bypass a failed formatter or
-correctness check.
+retains every change since the most recent ancestor whose ``code-quality`` job
+succeeded. Its baseline is therefore independent of unrelated publication and
+platform jobs, while an unrelated follow-up commit still cannot bypass a failed
+formatter or correctness check.
 
 The independent Documentation workflow runs the context-aware ``actionlint``
 checker across every GitHub Actions definition. Its release binary and checksum

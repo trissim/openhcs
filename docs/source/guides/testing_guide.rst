@@ -144,9 +144,10 @@ exercise the declared Intel compatibility lines through the released desktop
 path rather than a test-only resolver configuration.
 
 On ``main``, the Python quality job checks the cumulative change set since the
-most recent successful Integration Tests head. A failed Python change remains
-in scope on later pushes until it is corrected and the complete workflow
-succeeds. Pull requests use their base commit as the corresponding boundary.
+most recent ancestor whose Python quality job succeeded. A failed Python change
+remains in scope on later pushes until that job succeeds, independently of
+publication, installer, or platform outcomes. Pull requests use their base
+commit as the corresponding boundary.
 
 The standard execution matrix uses ``--it-visualizers none``. A separate Xvfb
 job initializes and closes Fiji through PolyStore's declared managed ImageJ

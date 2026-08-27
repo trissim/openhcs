@@ -925,7 +925,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "e0f6ecbb6c892a11a390814b1ee7a1d864903e4193735f88e7288c9e77c8f3d4",
+        "sha256": "7f0932453837b391a8648800f098ff714ff6548baad6480cd1cbf7b7dce74b5a",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -942,6 +942,7 @@
     "disposition": "revise",
     "validation": [
       "On 2026-08-27, re-read docs/source/getting_started/getting_started.rst in full after the python-introspect dependency floor advanced to 0.1.12; challenged the installation how-to flow and confirmed that the supported procedure is unchanged.",
+      "On 2026-08-27, re-read the complete installation how-to after the shared workflow made its Python quality baseline job-owned; native installation, staged update, and package-index isolation claims remain unchanged.",
       "Compared every factual claim directly with the current hash-pinned authorities: pyproject.toml; openhcs/cli.py; openhcs/mcp/installed_demo.py; openhcs/desktop_installation.py; scripts/render_installer_contract.py; packaging/installers/windows/Install-OpenHCS.ps1; packaging/installers/macos/install-openhcs.sh; packaging/installers/macos/README.md; scripts/smoke_installed_desktop.py; tests/installer/test_installed_desktop_smoke.py; tests/installer/test_installer_contract.py; openhcs/pyqt_gui/services/desktop_update.py; openhcs/pyqt_gui/services/desktop_update_worker.py; openhcs/desktop_deployment.py; tests/unit/test_desktop_deployment.py; tests/unit/pyqt_gui/test_desktop_update.py; tests/unit/pyqt_gui/test_desktop_update_worker.py; .github/workflows/integration-tests.yml.",
       "On 2026-08-24, re-read the complete installation how-to after replacing the manually mirrored installer contract source with a declaration-derived native projection; user-facing installation and update behavior remains unchanged.",
       "Re-read the how-to after the installed macOS smoke began resolving the declaration-owned current environment while retaining the previous environment for recovery; the documented update behaviour remains accurate.",
@@ -2104,7 +2105,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "abbbe06514557513069bf78e4737c7cda6822e1ca790947fb42c7a5db8525443",
+    "source_sha256": "e7b3b43f5b7b0fe062abdf04dd93c65c3f1265b104a8e1c99d60d97e7358d4ba",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -2124,8 +2125,18 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "e0f6ecbb6c892a11a390814b1ee7a1d864903e4193735f88e7288c9e77c8f3d4",
+        "sha256": "7f0932453837b391a8648800f098ff714ff6548baad6480cd1cbf7b7dce74b5a",
         "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, retained application and three-stage installer screenshot artifacts, pytest commands, and source-gate coverage artifacts used by CI."
+      },
+      {
+        "path": "scripts/resolve_successful_job_baseline.py",
+        "sha256": "c29dc3195815508074266165046d2bd51c2823e9ebb5e747d7f0fc7b7cc817e5",
+        "role": "Resolves the cumulative changed-Python boundary from the latest successful code-quality job on an ancestor workflow run."
+      },
+      {
+        "path": "tests/unit/test_successful_job_baseline.py",
+        "sha256": "d2e7cb0d1595ef16f8fbe5130fc352e644dddb3ec6bc4bb66b664551a62ccb82",
+        "role": "Proves job-owned baseline selection across failed, cancelled, unrelated, and non-ancestor workflow records."
       },
       {
         "path": "scripts/smoke_windows_installer_window.ps1",
@@ -2233,7 +2244,7 @@
       "The guide attributed integration composition to the root conftest instead of tests/integration/conftest.py and omitted the authority for the VS Code OMERO argument.",
       "The Windows installer section now records the dual-lock staged-update smoke and the subsequent deferred launcher refresh.",
       "The CI section omitted the maintained GUI source gate and described live Napari/Fiji validation as only local or ad hoc despite the dedicated viewer smoke.",
-      "The changed-Python quality gate could forget a failed file on the next push; the guide now records the cumulative successful-head boundary.",
+      "The changed-Python quality gate could forget a failed file on the next push; the guide now records the cumulative successful-job ancestor boundary.",
       "The combined report omitted the foundational unit/core and maintained GUI source gates, and its description implied coverage from uninstrumented jobs; both source gates now emit fail-closed artifacts and the guide names the report's exact evidence boundary.",
       "The native installer section did not record that each supported Windows/macOS architecture now exercises the packaged restart worker against a real parent exit and detached command.",
       "The generated coverage README rendered its update command literally instead of recording when the report was produced; the workflow now appends an ISO 8601 UTC timestamp.",
@@ -2273,6 +2284,7 @@
       "On 2026-08-26, re-read the complete testing how-to against scripts/smoke_installed_gui.py and tests/unit/test_smoke_installed_gui.py after an exact-wheel probe contacted an existing desktop endpoint; the revised probe derives a free pair from UIConfig.zmq through DataControlPortPairAuthority without adding transport-specific dispatch.",
       "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete guide against the exact-wheel live GUI/MCP probe, source candidate workflow, native installer acceptance, and scheduled published-package canary; the probe passed with matching 0.7.27 identities and exact endpoint cleanup.",
       "On 2026-08-26, re-read the complete guide against the metadata-derived desktop extras, candidate-wheel installer, complementary Windows and dual-architecture macOS candidate matrix, and focused workflow ownership tests.",
+      "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read the complete guide after the cumulative Python quality baseline moved to its owning job; revised that gate description and verified the resolver against live GitHub history plus three focused regressions.",
       "On 2026-08-26, applied the Diataxis how-to boundary and re-read the complete guide after native source candidates became independent from published dependency readiness; a real metadata-discovered nine-wheel build-only wheelhouse and focused workflow and installer tests passed, while public-package evidence remained a separate strict lane.",
       "On 2026-08-26, GitHub rejected runner.temp in job-level env before scheduling any work; the build step now publishes its runner-local wheelhouse path for the Windows and macOS installer steps, and focused workflow regressions enforce that context boundary.",
       "On 2026-08-26, re-read the complete testing guide after the Documentation workflow took independent ownership of context-aware workflow validation; actionlint 1.7.12 passed every current workflow from its checksum-verified Linux binary.",
