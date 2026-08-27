@@ -2540,12 +2540,12 @@
     "authority": [
       {
         "path": "scripts/capture_media_gallery.py",
-        "sha256": "2ae351a136f02ebdb8691c12c04d2a68b73588d5fe909165a86bafe069c71807",
+        "sha256": "62b70916743f8e743d899dc5598b0a83a28ee53215d72c95b26a864ec57e4cd0",
         "role": "Owns the typed capture manifest, host-tool discovery, trusted UI snapshot ingestion, X11 capture, deterministic derivative construction, validation, and command-line surface."
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "cc8536df92bc69acc73c30d802d67bbff7f983209b2b50219b7bc81b9a236d3d",
+        "sha256": "e4acad6eed321cdf78235c45ecd87e07c8daf6e4b9a3eb91616605219099cef1",
         "role": "Owns the nominal gallery scenario lattice, capture targets, derivative inventory, source evidence, card rendering, and generated release record."
       },
       {
@@ -2555,7 +2555,7 @@
       },
       {
         "path": "tests/unit/test_capture_media_gallery.py",
-        "sha256": "5f91ac29efc57f936ed6e49a6f138fcdc25c4a1105b8646020a18ec798d0991f",
+        "sha256": "508ded14049dc2060cded87dcfc2d74889e6a5152fa0a9b00cb651c02e58c834",
         "role": "Proves manifest bounds, path containment, no-overwrite rules, trusted snapshot ingestion, X11 capture commands, deterministic FFmpeg projection, atomic builds, and independent derivative validation."
       }
     ],
@@ -2570,7 +2570,8 @@
       "Passed 42 focused capture and website tests, including a real FFmpeg derivative build and independent revalidation.",
       "Passed scripts/validate_docs.py docs/source and a warning-as-error Sphinx build after adding the page to the focused development-guide navigation.",
       "On 2026-08-26, re-read the complete how-to after trusted UI snapshot capture switched from a deleted duplicate command-profile name to the canonical declaration-derived UI bridge timeout policy; the documented timeout, capture, validation, and no-overwrite behavior remains unchanged, and all 23 gallery capture tests passed.",
-      "On 2026-08-27, re-read the complete how-to and gallery declaration after the endpoint-startup source evidence and published derivatives were recaptured; the workflow, ownership, and reproducibility guidance remains accurate, and the declaration-derived record passed its focused gallery and website validation."
+      "On 2026-08-27, re-read the complete how-to and gallery declaration after the endpoint-startup source evidence and published derivatives were recaptured; the workflow, ownership, and reproducibility guidance remains accurate, and the declaration-derived record passed its focused gallery and website validation.",
+      "On 2026-08-27, re-read the complete how-to after capture plans, source evidence, derivative validation, per-scenario reports, host-tool diagnostics, and scenario discovery became nominal records projected through the shared JSON serializer; MediaCategory source, output, transcode-duration, and duration-evidence semantics moved onto its ABC-backed enum leaves, X11 geometry parsing became dataclass-derived, and the release record now reports mixed pointer visibility instead of claiming every clip is pointer-free. The how-to remains an action-oriented maintainer guide and its capture, report, pointer-policy, and validation claims match the current owners."
     ]
   },
   {

@@ -2,20 +2,20 @@
   "captured_at": "2026-08-27",
   "capture_contract": {
     "surface": "real OpenHCS, Napari, and Fiji/ImageJ X11 windows",
-    "visible_interaction_driver": "local MCP calls and native viewer controls",
-    "mouse_visible": false,
+    "visible_interaction_driver": "local MCP calls, native viewer controls, and reviewed UI actions",
+    "pointer_visibility": "mixed",
     "source_formats": [
       "FFV1",
       "PNG"
     ]
   },
-  "schema_version": "openhcs.release-media.v4",
+  "schema_version": "openhcs.release-media.v5",
   "dataset_attribution": {
     "dataset_note": "CellProfiler ExampleCometAssay and ExampleWoundHealing are shown under BSD-3-Clause. Comet fluorescence images were contributed by Scott Floyd and Michael Pacold.",
     "attribution_url": "https://github.com/CellProfiler/examples/tree/4972b59e670a4ae96c3d453803c92eeff378d054",
     "attribution_label": "Source and attribution"
   },
-  "website_provenance_html": "        <aside class=\"gallery-provenance\" aria-label=\"Gallery dataset provenance\">\n          <span>Dataset note</span>\n          <p>\n            CellProfiler ExampleCometAssay and ExampleWoundHealing are shown under BSD-3-Clause. Comet fluorescence images were contributed by Scott Floyd and Michael Pacold.\n            <a href=\"https://github.com/CellProfiler/examples/tree/4972b59e670a4ae96c3d453803c92eeff378d054\">Source and attribution</a>.\n            The pointer-free clips have a\n            <a href=\"assets/gallery/release-media-record.json\">capture and checksum record</a>.\n          </p>\n        </aside>",
+  "website_provenance_html": "        <aside class=\"gallery-provenance\" aria-label=\"Gallery dataset provenance\">\n          <span>Dataset note</span>\n          <p>\n            CellProfiler ExampleCometAssay and ExampleWoundHealing are shown under BSD-3-Clause. Comet fluorescence images were contributed by Scott Floyd and Michael Pacold.\n            <a href=\"https://github.com/CellProfiler/examples/tree/4972b59e670a4ae96c3d453803c92eeff378d054\">Source and attribution</a>.\n            The gallery media have a\n            <a href=\"assets/gallery/release-media-record.json\">capture and checksum record</a>.\n          </p>\n        </aside>",
   "captures": [
     {
       "id": "multi-plate-overview",

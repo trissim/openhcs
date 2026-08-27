@@ -20,7 +20,7 @@ from openhcs.agent.ui_bridge_identities import (
 )
 from openhcs.serialization.json import JsonValue, to_jsonable
 
-RELEASE_MEDIA_SCHEMA_VERSION = "openhcs.release-media.v4"
+RELEASE_MEDIA_SCHEMA_VERSION = "openhcs.release-media.v5"
 RELEASE_MEDIA_RECORD_NAME = "release-media-record.json"
 SCENARIO_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -61,6 +61,14 @@ class GalleryMediaType(Enum):
         member._value_ = value
         member.filename_suffix = filename_suffix
         return member
+
+
+class GalleryPointerVisibility(Enum):
+    """Pointer visibility across the heterogeneous release-media set."""
+
+    HIDDEN = "hidden"
+    VISIBLE = "visible"
+    MIXED = "mixed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +233,16 @@ class GalleryScenarioReleaseRecord:
     published: tuple[GalleryPublishedAssetRecord, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class GalleryScenarioCatalogRecord:
+    """Declaration-derived capture catalog entry for maintainer tooling."""
+
+    scenario_id: str
+    published_paths: tuple[str, ...]
+    capture_target: GalleryCaptureTargetReleaseRecord
+    proof: str
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GalleryScenarioABC(ABC):
     """Declaration owner for one public gallery scenario and all its views."""
@@ -296,6 +314,16 @@ class GalleryScenarioABC(ABC):
         return tuple(
             derivative.path_for(self.scenario_id)
             for derivative in self.derivative_expectations()
+        )
+
+    def catalog_record(self) -> GalleryScenarioCatalogRecord:
+        """Project this declaration for capture-tool discovery."""
+
+        return GalleryScenarioCatalogRecord(
+            scenario_id=self.scenario_id,
+            published_paths=self.published_paths(),
+            capture_target=self.capture_target.release_record(),
+            proof=self.proof,
         )
 
     def derivative_path(self, role: GalleryDerivativeRole) -> str:
@@ -754,7 +782,7 @@ class GalleryCaptureContract:
 
     surface: str
     visible_interaction_driver: str
-    mouse_visible: bool
+    pointer_visibility: GalleryPointerVisibility
     source_formats: tuple[str, ...]
 
 
@@ -774,7 +802,7 @@ class GalleryDatasetAttribution:
                 "          <p>",
                 f"            {escape(self.dataset_note)}",
                 f'            <a href="{escape(self.attribution_url, quote=True)}">{escape(self.attribution_label)}</a>.',
-                "            The pointer-free clips have a",
+                "            The gallery media have a",
                 f'            <a href="assets/gallery/{RELEASE_MEDIA_RECORD_NAME}">capture and checksum record</a>.',
                 "          </p>",
                 "        </aside>",
@@ -825,8 +853,10 @@ GALLERY_RELEASE = GalleryReleaseDeclaration(
     captured_at="2026-08-27",
     capture_contract=GalleryCaptureContract(
         surface="real OpenHCS, Napari, and Fiji/ImageJ X11 windows",
-        visible_interaction_driver="local MCP calls and native viewer controls",
-        mouse_visible=False,
+        visible_interaction_driver=(
+            "local MCP calls, native viewer controls, and reviewed UI actions"
+        ),
+        pointer_visibility=GalleryPointerVisibility.MIXED,
         source_formats=("FFV1", "PNG"),
     ),
     dataset_attribution=GalleryDatasetAttribution(

@@ -16,20 +16,28 @@ from openhcs.serialization.json import to_jsonable
 from scripts.capture_media_gallery import (
     CaptureManifest,
     CaptureRecord,
+    CaptureToolDoctorReport,
     Crop,
     Derivative,
+    DerivativeValidationResult,
+    HostTool,
+    HostToolDeclaration,
+    HostToolStatus,
     MediaGalleryError,
     MediaProbe,
     Trim,
     WindowGeometry,
     _capture_target,
+    _write_json,
     build_manifest,
     build_transcode_command,
     capture_scenario_still,
     capture_ui_bridge_window_source,
     capture_window_still,
+    doctor,
     load_manifest,
     plan_manifest,
+    read_window_geometry,
     record_window,
     resolve_contained_path,
     validate_derivative,
@@ -58,6 +66,54 @@ def _motion_record(*outputs: Derivative) -> CaptureRecord:
         crop=Crop(x=4, y=6, width=1200, height=760),
         trim=Trim(start_seconds=1.25, duration_seconds=8.0),
         outputs=outputs,
+    )
+
+
+def test_cli_json_projection_descends_from_typed_result(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = DerivativeValidationResult(
+        path="example.webp",
+        size_bytes=42,
+        sha256="a" * 64,
+        width=1200,
+        height=800,
+        codec="webp",
+        duration_seconds=None,
+    )
+
+    _write_json(result)
+
+    assert json.loads(capsys.readouterr().out) == {
+        "codec": "webp",
+        "duration_seconds": None,
+        "height": 800,
+        "path": "example.webp",
+        "sha256": "a" * 64,
+        "size_bytes": 42,
+        "width": 1200,
+    }
+
+
+def test_doctor_descends_from_host_tool_declarations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def inspect(declaration: HostToolDeclaration) -> HostToolStatus:
+        return HostToolStatus(
+            executable=declaration.executable,
+            available=True,
+            path=f"/tools/{declaration.executable}",
+            version="test version",
+        )
+
+    monkeypatch.setattr(HostToolDeclaration, "inspect", inspect)
+
+    report = doctor()
+
+    assert isinstance(report, CaptureToolDoctorReport)
+    assert report.schema_version == 2
+    assert tuple(status.executable for status in report.tools) == tuple(
+        tool.value.executable for tool in HostTool
     )
 
 
@@ -336,7 +392,7 @@ def test_plan_is_a_write_free_exact_command_projection(tmp_path: Path) -> None:
 
     assert not source_root.exists()
     assert not output_root.exists()
-    poster_command, webm_command, _mp4_command = plan[0]["commands"]
+    poster_command, webm_command, _mp4_command = plan[0].commands
     assert "-ss" in poster_command
     assert poster_command[poster_command.index("-ss") + 1] == "3.75"
     assert "-t" not in poster_command
@@ -426,7 +482,32 @@ def test_capture_still_projects_real_window_without_pixel_editing(
 
     assert commands[0][1:4] == ("import", "-window", "0x123")
     assert (tmp_path / "raw" / "interface.png").read_bytes() == b"lossless-png"
-    assert report["width"] == 1200
+    assert report.width == 1200
+
+
+def test_window_geometry_parser_descends_from_dataclass_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "scripts.capture_media_gallery._require_tool",
+        lambda _tool: "xdotool",
+    )
+    monkeypatch.setattr(
+        "scripts.capture_media_gallery.run_checked",
+        lambda command: subprocess.CompletedProcess(
+            command,
+            0,
+            "X=11\nY=17\nWIDTH=1400\nHEIGHT=900\nSCREEN=0\n",
+            "",
+        ),
+    )
+
+    assert read_window_geometry("0x123") == WindowGeometry(
+        x=11,
+        y=17,
+        width=1400,
+        height=900,
+    )
 
 
 def test_record_window_projects_fixed_geometry_and_lossless_ffv1(
@@ -471,8 +552,8 @@ def test_record_window_projects_fixed_geometry_and_lossless_ffv1(
     assert command[command.index("-i") + 1] == ":9.0+11,17"
     assert command[command.index("-c:v") + 1] == "ffv1"
     assert (tmp_path / "raw" / "interaction.mkv").read_bytes() == b"lossless-ffv1"
-    assert report["duration_seconds"] == 12.0
-    assert report["mouse_visible"] is False
+    assert report.duration_seconds == 12.0
+    assert report.mouse_visible is False
 
 
 def test_build_preflights_every_existing_output_before_writing(
@@ -556,8 +637,8 @@ def test_derivative_validation_enforces_size_dimensions_codec_and_duration(
             duration_seconds=8.0,
         ),
     )
-    assert report["bytes"] == 50
-    assert report["width"] == 1200
+    assert report.size_bytes == 50
+    assert report.width == 1200
 
     with pytest.raises(MediaGalleryError, match="above its 1280x800 manifest bounds"):
         validate_derivative(
@@ -671,11 +752,11 @@ def test_real_ffmpeg_derivatives_are_bounded_and_revalidate(tmp_path: Path) -> N
         force=True,
     )
 
-    assert {item["path"] for item in build_report[0]["outputs"]} == {
+    assert {item.path for item in build_report[0].outputs} == {
         output.filename for output in outputs
     }
-    assert {item["path"]: item["sha256"] for item in build_report[0]["outputs"]} == {
-        item["path"]: item["sha256"] for item in rebuilt_report[0]["outputs"]
+    assert {item.path: item.sha256 for item in build_report[0].outputs} == {
+        item.path: item.sha256 for item in rebuilt_report[0].outputs
     }
-    assert validation_report[0]["source"]["sha256"]
+    assert validation_report[0].source.sha256
     assert all((output_root / output.filename).is_file() for output in outputs)

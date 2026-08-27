@@ -595,9 +595,9 @@ def test_release_gallery_media_record_matches_published_assets():
         encoding="utf-8"
     ) == gallery_release_record_text(REPO_ROOT)
     assert record["capture_contract"]["visible_interaction_driver"] == (
-        "local MCP calls and native viewer controls"
+        "local MCP calls, native viewer controls, and reviewed UI actions"
     )
-    assert record["capture_contract"]["mouse_visible"] is False
+    assert record["capture_contract"]["pointer_visibility"] == "mixed"
     assert set(record["capture_contract"]["source_formats"]) == {"FFV1", "PNG"}
     assert tuple(capture["id"] for capture in record["captures"]) == tuple(
         card.scenario_id for card in projection.cards

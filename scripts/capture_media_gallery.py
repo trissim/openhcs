@@ -18,8 +18,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ from python_introspect import dataclass_from_mapping
 from openhcs.serialization.json import to_jsonable
 from scripts.gallery_catalog import (
     GalleryCatalogError,
+    GalleryScenarioCatalogRecord,
     GallerySourceCaptureRequest,
     GallerySourceCaptureResult,
     OpenHCSGalleryScenarioCatalog,
@@ -37,7 +39,7 @@ from scripts.gallery_catalog import (
 )
 
 CAPTURE_MANIFEST_SCHEMA_VERSION = 2
-CAPTURE_TOOL_REPORT_SCHEMA_VERSION = 1
+CAPTURE_TOOL_REPORT_SCHEMA_VERSION = 2
 MAX_DERIVED_MOTION_SECONDS = 30.0
 MAX_RAW_RECORDING_SECONDS = 180.0
 OUTPUT_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*\.(?:gif|mp4|webm|webp)$")
@@ -49,11 +51,219 @@ class MediaGalleryError(RuntimeError):
     """Raised when capture input or generated media violates the contract."""
 
 
-class MediaCategory(Enum):
-    """Whether a media file is a still image or a time-varying recording."""
+class MediaCategoryPolicyABC(ABC):
+    """Nominal owner of source/output rules for one media category leaf."""
 
-    STILL = "still"
-    MOTION = "motion"
+    def validate_source(self, record: CaptureRecord) -> None:
+        """Validate source-level rules, then every declared derivative."""
+
+        self.validate_source_bounds(record)
+        for output in record.outputs:
+            self.validate_output(
+                output.encoding.value.category.value,
+                record,
+                output,
+            )
+
+    @abstractmethod
+    def validate_source_bounds(self, record: CaptureRecord) -> None:
+        """Validate source fields owned by this category."""
+
+    @abstractmethod
+    def validate_output(
+        self,
+        output_policy: MediaCategoryPolicyABC,
+        record: CaptureRecord,
+        output: Derivative,
+    ) -> None:
+        """Select the source-specific output rule without caller dispatch."""
+
+    @abstractmethod
+    def validate_for_still_source(
+        self,
+        record: CaptureRecord,
+        output: Derivative,
+    ) -> None:
+        """Validate this output category for a still source."""
+
+    @abstractmethod
+    def validate_for_motion_source(
+        self,
+        record: CaptureRecord,
+        output: Derivative,
+    ) -> None:
+        """Validate this output category for a motion source."""
+
+    @abstractmethod
+    def transcode_duration_arguments(
+        self,
+        record: CaptureRecord,
+    ) -> tuple[str, ...]:
+        """Return output-category-specific FFmpeg duration arguments."""
+
+    @abstractmethod
+    def validate_derivative_duration(
+        self,
+        record: CaptureRecord,
+        output: Derivative,
+        probe: MediaProbe,
+    ) -> None:
+        """Validate output-category-specific duration evidence."""
+
+
+class StillMediaCategoryPolicy(MediaCategoryPolicyABC):
+    """Validation semantics for still sources and still derivatives."""
+
+    def validate_source_bounds(self, record: CaptureRecord) -> None:
+        if record.trim is not None:
+            raise MediaGalleryError("Still captures cannot declare a trim interval.")
+
+    def validate_output(
+        self,
+        output_policy: MediaCategoryPolicyABC,
+        record: CaptureRecord,
+        output: Derivative,
+    ) -> None:
+        output_policy.validate_for_still_source(record, output)
+
+    def validate_for_still_source(
+        self,
+        record: CaptureRecord,
+        output: Derivative,
+    ) -> None:
+        del record
+        if output.fps is not None or output.frame_at_seconds is not None:
+            raise MediaGalleryError(
+                "Still derivatives cannot declare fps or frame_at_seconds."
+            )
+
+    def validate_for_motion_source(
+        self,
+        record: CaptureRecord,
+        output: Derivative,
+    ) -> None:
+        if output.fps is not None or output.frame_at_seconds is None:
+            raise MediaGalleryError(
+                f"Poster output {output.filename} must declare "
+                "frame_at_seconds and no fps."
+            )
+        assert record.trim is not None
+        if output.frame_at_seconds > record.trim.duration_seconds:
+            raise MediaGalleryError(
+                f"Poster frame for {output.filename} falls outside the trim."
+            )
+
+    def transcode_duration_arguments(
+        self,
+        record: CaptureRecord,
+    ) -> tuple[str, ...]:
+        del record
+        return ()
+
+    def validate_derivative_duration(
+        self,
+        record: CaptureRecord,
+        output: Derivative,
+        probe: MediaProbe,
+    ) -> None:
+        del record, output, probe
+
+
+class MotionMediaCategoryPolicy(MediaCategoryPolicyABC):
+    """Validation semantics for motion sources and motion derivatives."""
+
+    def validate_source_bounds(self, record: CaptureRecord) -> None:
+        if record.trim is None:
+            raise MediaGalleryError(
+                "Motion captures must declare an explicit bounded trim interval."
+            )
+
+    def validate_output(
+        self,
+        output_policy: MediaCategoryPolicyABC,
+        record: CaptureRecord,
+        output: Derivative,
+    ) -> None:
+        output_policy.validate_for_motion_source(record, output)
+
+    def validate_for_still_source(
+        self,
+        record: CaptureRecord,
+        output: Derivative,
+    ) -> None:
+        del record, output
+        raise MediaGalleryError(
+            "Still captures can only produce still WebP derivatives."
+        )
+
+    def validate_for_motion_source(
+        self,
+        record: CaptureRecord,
+        output: Derivative,
+    ) -> None:
+        del record
+        if output.fps is None:
+            raise MediaGalleryError(
+                f"Motion output {output.filename} must declare fps."
+            )
+        if output.frame_at_seconds is not None:
+            raise MediaGalleryError("Motion outputs cannot declare frame_at_seconds.")
+
+    def transcode_duration_arguments(
+        self,
+        record: CaptureRecord,
+    ) -> tuple[str, ...]:
+        assert record.trim is not None
+        return ("-t", _format_seconds(record.trim.duration_seconds))
+
+    def validate_derivative_duration(
+        self,
+        record: CaptureRecord,
+        output: Derivative,
+        probe: MediaProbe,
+    ) -> None:
+        if probe.duration_seconds is None:
+            raise MediaGalleryError(
+                f"Motion derivative {output.filename} has no duration."
+            )
+        assert record.trim is not None
+        tolerance = max(0.1, 2.0 / (output.fps or 1))
+        if abs(probe.duration_seconds - record.trim.duration_seconds) > tolerance:
+            raise MediaGalleryError(
+                f"{output.filename} duration is {probe.duration_seconds:g}s; "
+                f"expected {record.trim.duration_seconds:g}s within "
+                f"{tolerance:g}s."
+            )
+
+
+class MediaCategory(Enum):
+    """Whether media is still or time-varying, including its leaf policy."""
+
+    STILL = StillMediaCategoryPolicy()
+    MOTION = MotionMediaCategoryPolicy()
+
+    def validate_source(self, record: CaptureRecord) -> None:
+        """Run this member's source and derivative validation policy."""
+
+        self.value.validate_source(record)
+
+    def transcode_duration_arguments(
+        self,
+        record: CaptureRecord,
+    ) -> tuple[str, ...]:
+        """Return this member's FFmpeg duration arguments."""
+
+        return self.value.transcode_duration_arguments(record)
+
+    def validate_derivative_duration(
+        self,
+        record: CaptureRecord,
+        output: Derivative,
+        probe: MediaProbe,
+    ) -> None:
+        """Validate duration evidence through this member's policy."""
+
+        self.value.validate_derivative_duration(record, output, probe)
 
 
 @dataclass(frozen=True)
@@ -62,6 +272,40 @@ class HostToolDeclaration:
 
     executable: str
     version_arguments: tuple[str, ...]
+
+    def inspect(self) -> HostToolStatus:
+        """Inspect this declared executable without duplicating tool metadata."""
+
+        executable_path = shutil.which(self.executable)
+        version = None
+        if executable_path is not None:
+            process = run_checked((executable_path, *self.version_arguments))
+            lines = process.stdout.splitlines() or process.stderr.splitlines()
+            version = lines[0] if lines else "version command returned no text"
+        return HostToolStatus(
+            executable=self.executable,
+            available=executable_path is not None,
+            path=executable_path,
+            version=version,
+        )
+
+
+@dataclass(frozen=True)
+class HostToolStatus:
+    """Observed availability and version of one declared capture tool."""
+
+    executable: str
+    available: bool
+    path: str | None
+    version: str | None
+
+
+@dataclass(frozen=True)
+class CaptureToolDoctorReport:
+    """Typed host-capability report for the capture-tool boundary."""
+
+    schema_version: int
+    tools: tuple[HostToolStatus, ...]
 
 
 class HostTool(Enum):
@@ -344,48 +588,7 @@ class CaptureRecord:
             raise MediaGalleryError(
                 f"Capture {self.source} declares duplicate output filenames."
             )
-        source_category = self.source_format.value.category
-        if source_category is MediaCategory.STILL and self.trim is not None:
-            raise MediaGalleryError("Still captures cannot declare a trim interval.")
-        if source_category is MediaCategory.MOTION and self.trim is None:
-            raise MediaGalleryError(
-                "Motion captures must declare an explicit bounded trim interval."
-            )
-
-        for output in self.outputs:
-            output_category = output.encoding.value.category
-            if source_category is MediaCategory.STILL:
-                if output_category is not MediaCategory.STILL:
-                    raise MediaGalleryError(
-                        "Still captures can only produce still WebP derivatives."
-                    )
-                if output.fps is not None or output.frame_at_seconds is not None:
-                    raise MediaGalleryError(
-                        "Still derivatives cannot declare fps or frame_at_seconds."
-                    )
-                continue
-
-            if output_category is MediaCategory.MOTION:
-                if output.fps is None:
-                    raise MediaGalleryError(
-                        f"Motion output {output.filename} must declare fps."
-                    )
-                if output.frame_at_seconds is not None:
-                    raise MediaGalleryError(
-                        "Motion outputs cannot declare frame_at_seconds."
-                    )
-                continue
-
-            if output.fps is not None or output.frame_at_seconds is None:
-                raise MediaGalleryError(
-                    f"Poster output {output.filename} must declare "
-                    "frame_at_seconds and no fps."
-                )
-            assert self.trim is not None
-            if output.frame_at_seconds > self.trim.duration_seconds:
-                raise MediaGalleryError(
-                    f"Poster frame for {output.filename} falls outside the trim."
-                )
+        self.source_format.value.category.validate_source(self)
 
     @property
     def source_format(self) -> SourceFormat:
@@ -469,6 +672,57 @@ class PreparedCapture:
     source_path: Path
     output_paths: tuple[Path, ...]
     probe: MediaProbe
+
+    def source_result(self) -> GallerySourceCaptureResult:
+        """Project the validated source through the gallery evidence authority."""
+
+        return GallerySourceCaptureResult(
+            path=str(self.record.source),
+            sha256=sha256_file(self.source_path),
+            width=self.probe.width,
+            height=self.probe.height,
+            duration_seconds=self.probe.duration_seconds,
+            format=self.probe.codec_name,
+        )
+
+
+@dataclass(frozen=True)
+class CapturePlan:
+    """Exact write-free command projection for one declared capture."""
+
+    scenario_id: str
+    source: Path
+    outputs: tuple[Path, ...]
+    commands: tuple[tuple[str, ...], ...]
+
+
+@dataclass(frozen=True)
+class DerivativeValidationResult:
+    """Validated identity and media facts for one published derivative."""
+
+    path: str
+    size_bytes: int
+    sha256: str
+    width: int
+    height: int
+    codec: str
+    duration_seconds: float | None
+
+
+@dataclass(frozen=True)
+class CaptureValidationResult:
+    """Validated source and derivatives for one gallery scenario."""
+
+    scenario_id: str
+    source: GallerySourceCaptureResult
+    outputs: tuple[DerivativeValidationResult, ...]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class WindowRecordingCaptureResult(GallerySourceCaptureResult):
+    """Lossless window-recording evidence including pointer visibility."""
+
+    mouse_visible: bool
 
 
 def capture_ui_bridge_window_source(
@@ -894,8 +1148,9 @@ def build_transcode_command(
         if output.frame_at_seconds is not None:
             seek_seconds += output.frame_at_seconds
         command.extend(("-ss", _format_seconds(seek_seconds)))
-        if output.encoding.value.category is MediaCategory.MOTION:
-            command.extend(("-t", _format_seconds(record.trim.duration_seconds)))
+        command.extend(
+            output.encoding.value.category.transcode_duration_arguments(record)
+        )
     command.extend(output.encoding.value.render_filter(_filters(record, output)))
     command.extend(output.encoding.value.map_arguments)
     command.extend(output.encoding.value.ffmpeg_arguments)
@@ -942,7 +1197,7 @@ def validate_derivative(
     output: Derivative,
     target_path: Path,
     probe: MediaProbe | None = None,
-) -> dict[str, Any]:
+) -> DerivativeValidationResult:
     """Validate one derivative and return reproducibility facts."""
 
     if not target_path.is_file():
@@ -964,28 +1219,16 @@ def validate_derivative(
             f"{output.filename} codec is {probe.codec_name!r}, expected "
             f"{output.encoding.value.codec_name!r}."
         )
-    if output.encoding.value.category is MediaCategory.MOTION:
-        if probe.duration_seconds is None:
-            raise MediaGalleryError(
-                f"Motion derivative {output.filename} has no duration."
-            )
-        assert record.trim is not None
-        tolerance = max(0.1, 2.0 / (output.fps or 1))
-        if abs(probe.duration_seconds - record.trim.duration_seconds) > tolerance:
-            raise MediaGalleryError(
-                f"{output.filename} duration is {probe.duration_seconds:g}s; "
-                f"expected {record.trim.duration_seconds:g}s within "
-                f"{tolerance:g}s."
-            )
-    return {
-        "path": output.filename,
-        "bytes": size_bytes,
-        "sha256": sha256_file(target_path),
-        "width": probe.width,
-        "height": probe.height,
-        "codec": probe.codec_name,
-        "duration_seconds": probe.duration_seconds,
-    }
+    output.encoding.value.category.validate_derivative_duration(record, output, probe)
+    return DerivativeValidationResult(
+        path=output.filename,
+        size_bytes=size_bytes,
+        sha256=sha256_file(target_path),
+        width=probe.width,
+        height=probe.height,
+        codec=probe.codec_name,
+        duration_seconds=probe.duration_seconds,
+    )
 
 
 def sha256_file(path: Path) -> str:
@@ -1027,7 +1270,7 @@ def plan_manifest(
     manifest: CaptureManifest,
     source_root: Path,
     output_root: Path,
-) -> tuple[dict[str, Any], ...]:
+) -> tuple[CapturePlan, ...]:
     """Return exact commands without writing or probing media."""
 
     plans = []
@@ -1039,29 +1282,27 @@ def plan_manifest(
         )
         ffmpeg_name = HostTool.FFMPEG.value.executable
         ffmpeg = shutil.which(ffmpeg_name) or ffmpeg_name
-        commands = [
-            list(
-                build_transcode_command(
-                    record,
-                    output,
-                    source_path,
-                    target_path,
-                    ffmpeg_executable=ffmpeg,
-                )
+        commands = tuple(
+            build_transcode_command(
+                record,
+                output,
+                source_path,
+                target_path,
+                ffmpeg_executable=ffmpeg,
             )
             for output, target_path in zip(
                 record.outputs,
                 output_paths,
                 strict=True,
             )
-        ]
+        )
         plans.append(
-            {
-                "scenario_id": record.scenario_id,
-                "source": str(source_path),
-                "outputs": [str(path) for path in output_paths],
-                "commands": commands,
-            }
+            CapturePlan(
+                scenario_id=record.scenario_id,
+                source=source_path,
+                outputs=output_paths,
+                commands=commands,
+            )
         )
     return tuple(plans)
 
@@ -1112,7 +1353,7 @@ def build_manifest(
     output_root: Path,
     *,
     force: bool = False,
-) -> tuple[dict[str, Any], ...]:
+) -> tuple[CaptureValidationResult, ...]:
     """Build all derivatives atomically and validate every manifest bound."""
 
     prepared_captures = _prepare_captures(manifest, source_root, output_root)
@@ -1134,15 +1375,7 @@ def build_manifest(
     for prepared in prepared_captures:
         record = prepared.record
         source_path = prepared.source_path
-        source_probe = prepared.probe
-        source_report = {
-            "path": str(record.source),
-            "sha256": sha256_file(source_path),
-            "width": source_probe.width,
-            "height": source_probe.height,
-            "duration_seconds": source_probe.duration_seconds,
-        }
-        outputs_report = []
+        outputs_report: list[DerivativeValidationResult] = []
         for output, target_path in zip(
             record.outputs,
             prepared.output_paths,
@@ -1167,11 +1400,11 @@ def build_manifest(
                 temporary_path.unlink(missing_ok=True)
             outputs_report.append(output_report)
         report.append(
-            {
-                "scenario_id": record.scenario_id,
-                "source": source_report,
-                "outputs": outputs_report,
-            }
+            CaptureValidationResult(
+                scenario_id=record.scenario_id,
+                source=prepared.source_result(),
+                outputs=tuple(outputs_report),
+            )
         )
     return tuple(report)
 
@@ -1180,13 +1413,12 @@ def validate_manifest_outputs(
     manifest: CaptureManifest,
     source_root: Path,
     output_root: Path,
-) -> tuple[dict[str, Any], ...]:
+) -> tuple[CaptureValidationResult, ...]:
     """Validate existing sources and derivatives without modifying them."""
 
     report = []
     for prepared in _prepare_captures(manifest, source_root, output_root):
         record = prepared.record
-        source_path = prepared.source_path
         outputs_report = tuple(
             validate_derivative(record, output, target_path)
             for output, target_path in zip(
@@ -1196,14 +1428,11 @@ def validate_manifest_outputs(
             )
         )
         report.append(
-            {
-                "scenario_id": record.scenario_id,
-                "source": {
-                    "path": str(record.source),
-                    "sha256": sha256_file(source_path),
-                },
-                "outputs": outputs_report,
-            }
+            CaptureValidationResult(
+                scenario_id=record.scenario_id,
+                source=prepared.source_result(),
+                outputs=outputs_report,
+            )
         )
     return tuple(report)
 
@@ -1223,27 +1452,25 @@ def read_window_geometry(window_id: str) -> WindowGeometry:
     process = run_checked(
         (xdotool, "getwindowgeometry", "--shell", _validate_window_id(window_id))
     )
+    geometry_fields = frozenset(field.name for field in fields(WindowGeometry))
     values: dict[str, int] = {}
     for line in process.stdout.splitlines():
         key, separator, raw_value = line.partition("=")
-        if separator and key in {"X", "Y", "WIDTH", "HEIGHT"}:
+        field_name = key.lower()
+        if separator and field_name in geometry_fields:
             try:
-                values[key] = int(raw_value)
+                values[field_name] = int(raw_value)
             except ValueError as error:
                 raise MediaGalleryError(
                     f"xdotool returned invalid {key} geometry."
                 ) from error
-    missing = sorted({"X", "Y", "WIDTH", "HEIGHT"} - values.keys())
+    missing = sorted(geometry_fields - values.keys())
     if missing:
         raise MediaGalleryError(
-            f"xdotool did not report complete window geometry: {', '.join(missing)}."
+            "xdotool did not report complete window geometry: "
+            f"{', '.join(name.upper() for name in missing)}."
         )
-    return WindowGeometry(
-        x=values["X"],
-        y=values["Y"],
-        width=values["WIDTH"],
-        height=values["HEIGHT"],
-    )
+    return dataclass_from_mapping(WindowGeometry, values)
 
 
 def _capture_target(
@@ -1269,7 +1496,7 @@ def capture_window_still(
     source_root: Path,
     output: Path,
     window_id: str,
-) -> dict[str, Any]:
+) -> GallerySourceCaptureResult:
     """Capture a real X11 window losslessly without overwriting any source."""
 
     magick = _require_tool(HostTool.MAGICK)
@@ -1289,12 +1516,13 @@ def capture_window_still(
         os.replace(temporary_path, target_path)
     finally:
         temporary_path.unlink(missing_ok=True)
-    return {
-        "path": str(output),
-        "sha256": sha256_file(target_path),
-        "width": probe.width,
-        "height": probe.height,
-    }
+    return GallerySourceCaptureResult(
+        path=str(output),
+        sha256=sha256_file(target_path),
+        width=probe.width,
+        height=probe.height,
+        format="PNG",
+    )
 
 
 def record_window(
@@ -1306,7 +1534,7 @@ def record_window(
     fps: int,
     display: str,
     draw_mouse: bool = True,
-) -> dict[str, Any]:
+) -> WindowRecordingCaptureResult:
     """Record a fixed real X11 window rectangle into a lossless FFV1 source."""
 
     if (
@@ -1363,14 +1591,15 @@ def record_window(
         os.replace(temporary_path, target_path)
     finally:
         temporary_path.unlink(missing_ok=True)
-    return {
-        "path": str(output),
-        "sha256": sha256_file(target_path),
-        "width": probe.width,
-        "height": probe.height,
-        "duration_seconds": probe.duration_seconds,
-        "mouse_visible": draw_mouse,
-    }
+    return WindowRecordingCaptureResult(
+        path=str(output),
+        sha256=sha256_file(target_path),
+        width=probe.width,
+        height=probe.height,
+        duration_seconds=probe.duration_seconds,
+        format="FFV1",
+        mouse_visible=draw_mouse,
+    )
 
 
 def capture_scenario_still(
@@ -1396,27 +1625,17 @@ def capture_scenario_still(
         raise MediaGalleryError(str(error)) from error
 
 
-def doctor() -> dict[str, Any]:
+def doctor() -> CaptureToolDoctorReport:
     """Report availability and versions from the typed host-tool authority."""
 
-    capabilities = {}
-    for tool in HostTool:
-        executable = shutil.which(tool.value.executable)
-        version = None
-        if executable is not None:
-            process = run_checked((executable, *tool.value.version_arguments))
-            lines = process.stdout.splitlines() or process.stderr.splitlines()
-            version = lines[0] if lines else "version command returned no text"
-        capabilities[tool.value.executable] = {
-            "available": executable is not None,
-            "path": executable,
-            "version": version,
-        }
-    return {"schema_version": CAPTURE_TOOL_REPORT_SCHEMA_VERSION, "tools": capabilities}
+    return CaptureToolDoctorReport(
+        schema_version=CAPTURE_TOOL_REPORT_SCHEMA_VERSION,
+        tools=tuple(tool.value.inspect() for tool in HostTool),
+    )
 
 
-def _write_json(value: Any) -> None:
-    print(json.dumps(value, indent=2, sort_keys=True))
+def _write_json(value: object) -> None:
+    print(json.dumps(to_jsonable(value), indent=2, sort_keys=True))
 
 
 def _manifest_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1425,23 +1644,17 @@ def _manifest_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--output-root", type=Path, required=True)
 
 
-def _doctor_operation(_arguments: argparse.Namespace) -> dict[str, Any]:
+def _doctor_operation(_arguments: argparse.Namespace) -> CaptureToolDoctorReport:
     return doctor()
 
 
-def _catalog_operation(_arguments: argparse.Namespace) -> tuple[dict[str, Any], ...]:
-    return tuple(
-        {
-            "scenario_id": scenario.scenario_id,
-            "published_paths": list(scenario.published_paths()),
-            "capture_target": to_jsonable(scenario.capture_target.release_record()),
-            "proof": scenario.proof,
-        }
-        for scenario in gallery_scenarios()
-    )
+def _catalog_operation(
+    _arguments: argparse.Namespace,
+) -> tuple[GalleryScenarioCatalogRecord, ...]:
+    return tuple(scenario.catalog_record() for scenario in gallery_scenarios())
 
 
-def _plan_operation(arguments: argparse.Namespace) -> tuple[dict[str, Any], ...]:
+def _plan_operation(arguments: argparse.Namespace) -> tuple[CapturePlan, ...]:
     return plan_manifest(
         load_manifest(arguments.manifest),
         arguments.source_root,
@@ -1449,7 +1662,9 @@ def _plan_operation(arguments: argparse.Namespace) -> tuple[dict[str, Any], ...]
     )
 
 
-def _build_operation(arguments: argparse.Namespace) -> tuple[dict[str, Any], ...]:
+def _build_operation(
+    arguments: argparse.Namespace,
+) -> tuple[CaptureValidationResult, ...]:
     return build_manifest(
         load_manifest(arguments.manifest),
         arguments.source_root,
@@ -1458,7 +1673,9 @@ def _build_operation(arguments: argparse.Namespace) -> tuple[dict[str, Any], ...
     )
 
 
-def _validate_operation(arguments: argparse.Namespace) -> tuple[dict[str, Any], ...]:
+def _validate_operation(
+    arguments: argparse.Namespace,
+) -> tuple[CaptureValidationResult, ...]:
     return validate_manifest_outputs(
         load_manifest(arguments.manifest),
         arguments.source_root,
@@ -1466,7 +1683,9 @@ def _validate_operation(arguments: argparse.Namespace) -> tuple[dict[str, Any], 
     )
 
 
-def _capture_still_operation(arguments: argparse.Namespace) -> dict[str, Any]:
+def _capture_still_operation(
+    arguments: argparse.Namespace,
+) -> GallerySourceCaptureResult:
     return capture_window_still(
         arguments.source_root,
         arguments.output,
@@ -1476,19 +1695,19 @@ def _capture_still_operation(arguments: argparse.Namespace) -> dict[str, Any]:
 
 def _capture_scenario_still_operation(
     arguments: argparse.Namespace,
-) -> Any:
-    return to_jsonable(
-        capture_scenario_still(
-            arguments.source_root,
-            arguments.output,
-            arguments.scenario_id,
-            descriptor_file_path=arguments.descriptor_file_path,
-            timeout_ms=arguments.timeout_ms,
-        )
+) -> GallerySourceCaptureResult:
+    return capture_scenario_still(
+        arguments.source_root,
+        arguments.output,
+        arguments.scenario_id,
+        descriptor_file_path=arguments.descriptor_file_path,
+        timeout_ms=arguments.timeout_ms,
     )
 
 
-def _record_window_operation(arguments: argparse.Namespace) -> dict[str, Any]:
+def _record_window_operation(
+    arguments: argparse.Namespace,
+) -> WindowRecordingCaptureResult:
     return record_window(
         arguments.source_root,
         arguments.output,
