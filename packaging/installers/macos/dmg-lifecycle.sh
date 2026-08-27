@@ -8,7 +8,6 @@ _openhcs_attach_disk_image() {
   local mount_point=$3
   local attach_plist
   local mounted_device
-  local mounted_volume
 
   if ! attach_plist=$(/usr/bin/hdiutil attach \
     -plist \
@@ -25,13 +24,7 @@ _openhcs_attach_disk_image() {
       "$image_path" >&2
     return 1
   fi
-  if ! mounted_volume=$(/usr/sbin/diskutil info -plist "$mount_point" | \
-    /usr/bin/plutil -extract DeviceNode raw -o - -); then
-    printf 'Could not resolve the volume mounted at %s.\n' "$mount_point" >&2
-    /usr/bin/hdiutil detach -force "$mounted_device" >/dev/null 2>&1 || true
-    return 1
-  fi
-  printf '%s\t%s\n' "$mounted_device" "$mounted_volume"
+  printf '%s\n' "$mounted_device"
 }
 
 openhcs_attach_writable_disk_image() {
@@ -44,34 +37,21 @@ openhcs_attach_readonly_disk_image() {
 
 openhcs_detach_disk_image() {
   local mounted_device=$1
-  local mounted_volume=$2
-  local detach_attempt_limit=10
-  local attempt
 
   /bin/sync
-  # hdiutil owns the image attachment and uses Disk Arbitration to coordinate
-  # filesystem unmount with device teardown.  Unmounting the APFS volume as a
-  # separate first step can strand its synthesized device while the backing
-  # image remains busy.
-  for ((attempt = 1; attempt <= detach_attempt_limit; attempt += 1)); do
-    if /usr/bin/hdiutil detach "$mounted_device"; then
-      return 0
-    fi
-    if ! /usr/sbin/diskutil info "$mounted_device" >/dev/null 2>&1; then
-      return 0
-    fi
-    if ((attempt < detach_attempt_limit)); then
-      /bin/sleep 1
-    fi
-  done
-  if /usr/sbin/diskutil info "$mounted_volume" >/dev/null 2>&1; then
-    /usr/sbin/diskutil unmount force "$mounted_volume"
-  fi
-  if /usr/bin/hdiutil detach -force "$mounted_device"; then
+  if /usr/bin/hdiutil detach "$mounted_device"; then
     return 0
   fi
   if ! /usr/sbin/diskutil info "$mounted_device" >/dev/null 2>&1; then
     return 0
   fi
   return 1
+}
+
+openhcs_cleanup_disk_image() {
+  local mounted_device=$1
+
+  if /usr/sbin/diskutil info "$mounted_device" >/dev/null 2>&1; then
+    /usr/bin/hdiutil detach -force "$mounted_device" >/dev/null 2>&1 || true
+  fi
 }

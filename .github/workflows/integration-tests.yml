@@ -911,10 +911,14 @@ jobs:
             "index-url = $hostilePipIndex"
             "extra-index-url = $hostilePipIndex"
           )
+          $hostileUvConfig = Join-Path $env:RUNNER_TEMP "hostile-uv.toml"
+          Set-Content -LiteralPath $hostileUvConfig -Encoding UTF8 -Value @(
+            "default-index = `"$hostilePipIndex`""
+          )
           $env:PIP_CONFIG_FILE = $hostilePipConfig
           $env:PIP_INDEX_URL = $hostilePipIndex
           $env:PIP_EXTRA_INDEX_URL = $hostilePipIndex
-          $env:UV_CONFIG_FILE = $hostilePipConfig
+          $env:UV_CONFIG_FILE = $hostileUvConfig
           $env:UV_DEFAULT_INDEX = $hostilePipIndex
           $env:UV_INDEX = $hostilePipIndex
           $env:UV_INDEX_URL = $hostilePipIndex
@@ -1521,24 +1525,20 @@ jobs:
             "$installer_app" \
             "$installer_dmg"
           source packaging/installers/macos/dmg-lifecycle.sh
-          attachment=$(openhcs_attach_readonly_disk_image \
+          mounted_device=$(openhcs_attach_readonly_disk_image \
             "$installer_dmg" \
             "$mount_point")
-          IFS=$'\t' read -r mounted_device mounted_volume <<< "$attachment"
           cleanup_dmg_mount() {
             if [[ -n "$mounted_device" ]]; then
-              openhcs_detach_disk_image \
-                "$mounted_device" \
-                "$mounted_volume" || true
+              openhcs_cleanup_disk_image "$mounted_device"
             fi
           }
           trap cleanup_dmg_mount EXIT
           test -d "$mount_point/OpenHCS Installer.app"
           test -f "$mount_point/.VolumeIcon.icns"
           xcrun GetFileInfo -a "$mount_point" | grep -q C
-          openhcs_detach_disk_image "$mounted_device" "$mounted_volume"
+          openhcs_detach_disk_image "$mounted_device"
           mounted_device=
-          mounted_volume=
           trap - EXIT
 
           mkdir -p "$smoke_home"
@@ -1549,10 +1549,13 @@ jobs:
           hostile_pip_config="$RUNNER_TEMP/hostile-pip.ini"
           printf '[global]\nindex-url = %s\nextra-index-url = %s\n' \
             "$hostile_pip_index" "$hostile_pip_index" > "$hostile_pip_config"
+          hostile_uv_config="$RUNNER_TEMP/hostile-uv.toml"
+          printf 'default-index = "%s"\n' \
+            "$hostile_pip_index" > "$hostile_uv_config"
           export PIP_CONFIG_FILE="$hostile_pip_config"
           export PIP_INDEX_URL="$hostile_pip_index"
           export PIP_EXTRA_INDEX_URL="$hostile_pip_index"
-          export UV_CONFIG_FILE="$hostile_pip_config"
+          export UV_CONFIG_FILE="$hostile_uv_config"
           export UV_DEFAULT_INDEX="$hostile_pip_index"
           export UV_INDEX="$hostile_pip_index"
           export UV_INDEX_URL="$hostile_pip_index"

@@ -2818,7 +2818,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "c2f46b3023306aa484be908e84e7ce757e2d247e50239d622dd4c83f6cdf7eb6",
+        "sha256": "1b4762bb33baa1296cb8564c2626056c75ec78f821ca9990ad1daf2bcdf32d94",
         "role": "Cross-platform source-candidate and published-dependency readiness, installed-wheel live GUI/MCP operation with retained native screenshots, three-stage native-installer workflow proof, signing-helper parse, and staged-update validation matrix."
       },
       {
@@ -2960,7 +2960,8 @@
       "On 2026-08-27, rechecked the complete release how-to after native CI proved the updater worker must remain standard-library-only; the source gate now covers that boundary and hostile uv configuration as well as index overrides.",
       "On 2026-08-27, rechecked the complete release how-to after the Windows lane began editing the real destination field, exercising a path with spaces, and launching the background worker without an encoded PowerShell wrapper; its retained evidence claims remain accurate.",
       "On 2026-08-27, re-read the complete release how-to after Windows failure retention expanded to include the exact wizard state and every installer-owned log boundary; its native evidence claims remain accurate.",
-      "On 2026-08-27, re-read the complete release how-to after retained native evidence disproved cross-process destination editing; the smoke now supplies the spaced destination through the shipping installer's declared InstallRoot input and verifies its UI projection before installation."
+      "On 2026-08-27, re-read the complete release how-to after retained native evidence disproved cross-process destination editing; the smoke now supplies the spaced destination through the shipping installer's declared InstallRoot input and verifies its UI projection before installation.",
+      "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after Intel native evidence exposed APFS synthesized-volume teardown and Windows evidence exposed a pip configuration misused as uv TOML; the DMG now uses one HFS+ device lifecycle without retry dispatch and each hostile package-manager fixture uses its native syntax, while the documented release procedure remains accurate."
     ]
   },
   {
@@ -3019,7 +3020,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "c2f46b3023306aa484be908e84e7ce757e2d247e50239d622dd4c83f6cdf7eb6",
+        "sha256": "1b4762bb33baa1296cb8564c2626056c75ec78f821ca9990ad1daf2bcdf32d94",
         "role": "Runs explicitly selected live OMERO variants and preserves component and table-service diagnostics on failure."
       }
     ],
@@ -3056,7 +3057,8 @@
       "On 2026-08-27, rechecked the complete OMERO testing how-to after the native installer workflow changed again; the independent OMERO lane and its owner boundaries remain accurate.",
       "On 2026-08-27, rechecked the complete OMERO testing how-to after the Windows installer destination probe changed; the independent OMERO lane and its owner boundaries remain accurate.",
       "On 2026-08-27, re-read the complete OMERO testing how-to after shared Windows installer diagnostics changed; its independent live-service selection and ownership guidance remains accurate.",
-      "On 2026-08-27, rechecked the complete OMERO testing how-to after the native Windows lane began passing its destination through the installer's declared input; the independent OMERO lane and its owner boundaries remain unchanged."
+      "On 2026-08-27, rechecked the complete OMERO testing how-to after the native Windows lane began passing its destination through the installer's declared input; the independent OMERO lane and its owner boundaries remain unchanged.",
+      "On 2026-08-27, re-read the complete OMERO testing how-to after the macOS installer DMG stopped creating an APFS synthesized-volume lifecycle; the independent OMERO matrix and its storage and deployment ownership guidance remain unchanged."
     ]
   },
   {

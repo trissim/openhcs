@@ -248,7 +248,7 @@ def test_macos_release_is_one_verified_disk_image() -> None:
     assert '-volname "OpenHCS Installer"' in dmg_builder
     assert "-srcfolder" not in dmg_builder
     assert '-size "${image_size_kib}k"' in dmg_builder
-    assert "-fs APFS" in dmg_builder
+    assert "-fs HFS+" in dmg_builder
     assert "-type UDIF" in dmg_builder
     assert "-format UDRW" not in dmg_builder
     assert 'ditto "$installer_app" "$mount_point/OpenHCS Installer.app"' in dmg_builder
@@ -272,20 +272,15 @@ def test_macos_disk_image_cleanup_retains_exact_device_authority() -> None:
     assert "/usr/bin/hdiutil attach" in lifecycle
     assert "-plist" in lifecycle
     assert "system-entities.0.dev-entry" in lifecycle
-    assert 'diskutil info -plist "$mount_point"' in lifecycle
-    assert "plutil -extract DeviceNode" in lifecycle
-    assert 'diskutil unmount force "$mounted_volume"' in lifecycle
     assert "DeviceIdentifier" not in lifecycle
     assert "/bin/sync" in lifecycle
-    assert "local detach_attempt_limit=10" in lifecycle
-    assert "attempt <= detach_attempt_limit" in lifecycle
-    assert "attempt < detach_attempt_limit" in lifecycle
     assert '/usr/bin/hdiutil detach "$mounted_device"' in lifecycle
     assert '/usr/sbin/diskutil info "$mounted_device"' in lifecycle
     assert '/usr/bin/hdiutil detach -force "$mounted_device"' in lifecycle
-    assert lifecycle.index(
-        '/usr/bin/hdiutil detach "$mounted_device"'
-    ) < lifecycle.index('diskutil unmount force "$mounted_volume"')
+    assert "detach_attempt_limit" not in lifecycle
+    assert "/bin/sleep" not in lifecycle
+    assert 'openhcs_cleanup_disk_image "$mounted_device"' in builder
+    assert 'openhcs_cleanup_disk_image "$mounted_device"' in integration
     assert 'hdiutil detach "$mount_point"' not in builder
     assert 'hdiutil detach "$mount_point"' not in integration
 
@@ -516,3 +511,18 @@ def test_macos_installer_registers_agent_clients_through_stable_launcher() -> No
     assert 'codex_config="$HOME/.codex/config.toml"' in macos_smoke
     assert "stable_launcher=" in macos_smoke
     assert "['mcp']" in macos_smoke
+
+
+def test_macos_installer_ci_uses_native_package_manager_config_syntax() -> None:
+    workflow = INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
+    macos_step = workflow[
+        workflow.index(
+            "      - name: Execute and verify macOS installer"
+        ) : workflow.index("      - name: Show macOS installer log on failure")
+    ]
+
+    assert 'hostile_pip_config="$RUNNER_TEMP/hostile-pip.ini"' in macos_step
+    assert 'hostile_uv_config="$RUNNER_TEMP/hostile-uv.toml"' in macos_step
+    assert "printf 'default-index = \"%s\"\\n'" in macos_step
+    assert 'export UV_CONFIG_FILE="$hostile_uv_config"' in macos_step
+    assert 'export UV_CONFIG_FILE="$hostile_pip_config"' not in macos_step

@@ -898,7 +898,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "c2f46b3023306aa484be908e84e7ce757e2d247e50239d622dd4c83f6cdf7eb6",
+        "sha256": "1b4762bb33baa1296cb8564c2626056c75ec78f821ca9990ad1daf2bcdf32d94",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -956,7 +956,8 @@
       "On 2026-08-27, rechecked the complete installation how-to after Windows acceptance began editing the shipping destination field and projecting background output without an encoded wrapper; its user-facing behavior remains accurate.",
       "On 2026-08-27, re-read the complete installation how-to after Windows failure evidence began retaining the wizard state plus custom-root, default-root, and bootstrap logs; its user procedure remains accurate.",
       "On 2026-08-27, re-read the complete installation how-to after the native smoke stopped mutating another process's controls and began passing the requested destination through the installer's existing InstallRoot input; the user procedure remains accurate.",
-      "On 2026-08-27, re-read the complete installation how-to after the Windows installed demo exposed an overlong compiled-code cache path; the cache now follows the registered per-user platform data authority independently of the selected install folder, with no change to the documented user procedure."
+      "On 2026-08-27, re-read the complete installation how-to after the Windows installed demo exposed an overlong compiled-code cache path; the cache now follows the registered per-user platform data authority independently of the selected install folder, with no change to the documented user procedure.",
+      "On 2026-08-27, applied the Diataxis installation how-to boundary and re-read the complete page after the macOS DMG adopted a single-device HFS+ lifecycle and native CI separated pip INI from uv TOML fixtures; the downloaded artifact and user procedure are unchanged."
     ]
   },
   {
@@ -2080,7 +2081,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "c2f46b3023306aa484be908e84e7ce757e2d247e50239d622dd4c83f6cdf7eb6",
+        "sha256": "1b4762bb33baa1296cb8564c2626056c75ec78f821ca9990ad1daf2bcdf32d94",
         "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, retained application and three-stage installer screenshot artifacts, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
@@ -2247,7 +2248,8 @@
       "On 2026-08-27, rechecked the complete testing how-to after Windows acceptance began editing the real destination field, exercising spaces, and rejecting encoded background launch; the documented evidence remains accurate.",
       "On 2026-08-27, re-read the complete testing how-to after the Windows native lane began retaining its exact failure window and every installer-owned log boundary; the documented behavioral evidence remains accurate.",
       "On 2026-08-27, re-read the complete testing how-to after retained native evidence disproved cross-process destination editing; the smoke now passes the spaced destination through the shipping installer's declared InstallRoot input and verifies the real Options page before installation.",
-      "On 2026-08-27, re-read the complete testing how-to after the Windows installed demo exposed a 265-character Numba cache artifact; the native lane now exercises the same user-local platform-derived cache path projected by production launchers, and the documented evidence boundary remains accurate."
+      "On 2026-08-27, re-read the complete testing how-to after the Windows installed demo exposed a 265-character Numba cache artifact; the native lane now exercises the same user-local platform-derived cache path projected by production launchers, and the documented evidence boundary remains accurate.",
+      "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read the complete guide after Intel CI exposed APFS synthesized-volume teardown and Windows CI exposed cross-tool hostile-config syntax; the native lanes now use one HFS+ device lifecycle and independent valid pip and uv fixtures while retaining the same installed-product evidence."
     ]
   },
   {

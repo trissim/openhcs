@@ -766,6 +766,21 @@ def test_windows_installer_ci_exercises_long_path_update_cleanup() -> None:
     )
 
 
+def test_windows_installer_ci_uses_native_package_manager_config_syntax() -> None:
+    workflow = INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
+    smoke_step = workflow[
+        workflow.index(
+            "      - name: Execute and verify Windows installer"
+        ) : workflow.index("      - name: Show Windows installer log on failure")
+    ]
+
+    assert '"hostile-pip.ini"' in smoke_step
+    assert '"hostile-uv.toml"' in smoke_step
+    assert '"default-index = `"$hostilePipIndex`""' in smoke_step
+    assert "$env:UV_CONFIG_FILE = $hostileUvConfig" in smoke_step
+    assert "$env:UV_CONFIG_FILE = $hostilePipConfig" not in smoke_step
+
+
 def test_windows_desktop_refresh_reuses_cancellable_process_authority() -> None:
     source = _source()
 

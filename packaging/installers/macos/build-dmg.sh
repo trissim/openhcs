@@ -27,19 +27,18 @@ build_root=$(mktemp -d "${TMPDIR:-/tmp}/openhcs-dmg-build.XXXXXX")
 mount_point="$build_root/mount"
 writable_dmg="$build_root/OpenHCS-macOS-Installer-writable.dmg"
 mounted_device=
-mounted_volume=
 
 cleanup() {
   local exit_code=$?
   trap - EXIT
   if [[ -n "$mounted_device" ]]; then
-    if ! openhcs_detach_disk_image "$mounted_device" "$mounted_volume"; then
-      printf 'Could not detach %s; preserving build directory at %s.\n' \
-        "$mounted_device" "$build_root" >&2
-      exit 1
-    fi
+    openhcs_cleanup_disk_image "$mounted_device"
   fi
-  rm -rf "$build_root"
+  if ((exit_code == 0)); then
+    rm -rf "$build_root"
+  else
+    printf 'Preserving failed disk-image build at %s.\n' "$build_root" >&2
+  fi
   exit "$exit_code"
 }
 trap cleanup EXIT
@@ -54,13 +53,12 @@ fi
 hdiutil create \
   -volname "OpenHCS Installer" \
   -size "${image_size_kib}k" \
-  -fs APFS \
+  -fs HFS+ \
   -type UDIF \
   "$writable_dmg"
-attachment=$(openhcs_attach_writable_disk_image \
+mounted_device=$(openhcs_attach_writable_disk_image \
   "$writable_dmg" \
   "$mount_point")
-IFS=$'\t' read -r mounted_device mounted_volume <<< "$attachment"
 
 ditto "$installer_app" "$mount_point/OpenHCS Installer.app"
 ditto "$installer_icon" "$mount_point/.VolumeIcon.icns"
@@ -71,9 +69,8 @@ xcrun SetFile -a V "$mount_point/.VolumeIcon.icns"
 xcrun SetFile -a C "$mount_point"
 xcrun GetFileInfo -a "$mount_point" | grep -q C
 
-openhcs_detach_disk_image "$mounted_device" "$mounted_volume"
+openhcs_detach_disk_image "$mounted_device"
 mounted_device=
-mounted_volume=
 
 hdiutil convert \
   "$writable_dmg" \
