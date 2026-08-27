@@ -82,6 +82,12 @@ recognize, even when the workflow containing the defect cannot schedule jobs.
 A repository-wide regression separately keeps expression-bearing ``run``
 blocks below GitHub's hosted parser ceiling.
 
+The Website workflow validates gallery generation against the exact recorded
+source candidates rather than waiting for their PyPI releases. Its validation
+job resolves the required projects from submodule metadata, while deployment
+consumes the checked-in dependency-free gallery projection. Website evidence
+therefore remains available while the separate publication gate is red.
+
 The Windows installer smoke also exercises a staged update while both the old
 environment entry point and the stable GUI launcher are held without delete
 sharing. It then releases the launcher and verifies that its deferred desktop

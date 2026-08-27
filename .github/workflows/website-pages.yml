@@ -50,6 +50,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -59,29 +61,49 @@ jobs:
       - name: Install website test dependencies
         run: |
           python -m pip install pytest
-          mapfile -t declared_requirements < <(
+          mapfile -t local_project_paths < <(
             python - <<'PY'
           from pathlib import Path
 
-          from scripts.validate_local_release_floors import read_project
+          from packaging.utils import canonicalize_name
+
+          from scripts.validate_local_release_floors import (
+              discover_local_projects,
+              read_project,
+          )
 
           project = read_project(Path("pyproject.toml"))
-          required_names = {"python-introspect", "metaclass-registry"}
-          requirements = {
-              requirement.name: str(requirement)
-              for requirement in project.dependencies
-              if requirement.name in required_names
+          required_names = {
+              canonicalize_name(name)
+              for name in ("python-introspect", "metaclass-registry")
           }
-          missing_names = required_names - requirements.keys()
-          if missing_names:
+          declared_names = {
+              canonicalize_name(requirement.name)
+              for requirement in project.dependencies
+          }
+          undeclared_names = required_names - declared_names
+          if undeclared_names:
               raise SystemExit(
                   "Missing website dependencies in project metadata: "
-                  + ", ".join(sorted(missing_names))
+                  + ", ".join(sorted(undeclared_names))
               )
-          print(*(requirements[name] for name in sorted(required_names)), sep="\n")
+          local_projects = {
+              candidate.canonical_name: candidate
+              for candidate in discover_local_projects()
+          }
+          missing_sources = required_names - local_projects.keys()
+          if missing_sources:
+              raise SystemExit(
+                  "Missing website dependency submodules: "
+                  + ", ".join(sorted(missing_sources))
+              )
+          print(
+              *(local_projects[name].path.parent for name in sorted(required_names)),
+              sep="\n",
+          )
           PY
           )
-          python -m pip install "${declared_requirements[@]}"
+          python -m pip install "${local_project_paths[@]}"
 
       - name: Test, build, and validate landing page
         run: |

@@ -346,6 +346,29 @@ def test_code_quality_toolchain_is_reproducibly_pinned() -> None:
     assert all(re.fullmatch(r"[A-Za-z0-9_.-]+==[^=\s]+", item) for item in requirements)
 
 
+def test_website_source_validation_uses_local_candidate_owners() -> None:
+    workflow = yaml.safe_load(
+        (WORKFLOW_ROOT / "website-pages.yml").read_text(encoding="utf-8")
+    )
+    validate_job = workflow["jobs"]["validate"]
+    checkout_step = next(
+        step
+        for step in validate_job["steps"]
+        if step.get("name") == "Check out repository"
+    )
+    install_step = next(
+        step
+        for step in validate_job["steps"]
+        if step.get("name") == "Install website test dependencies"
+    )
+    install_script = install_step["run"]
+
+    assert checkout_step["with"]["submodules"] == "recursive"
+    assert "discover_local_projects" in install_script
+    assert 'python -m pip install "${local_project_paths[@]}"' in install_script
+    assert 'python -m pip install "${declared_requirements[@]}"' not in install_script
+
+
 def test_publish_workflow_consumes_release_requirements_authority() -> None:
     workflow = (WORKFLOW_ROOT / "publish.yml").read_text(encoding="utf-8")
     requirements = RELEASE_REQUIREMENTS.read_text(encoding="utf-8")

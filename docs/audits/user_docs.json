@@ -2105,7 +2105,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "e7b3b43f5b7b0fe062abdf04dd93c65c3f1265b104a8e1c99d60d97e7358d4ba",
+    "source_sha256": "4f79aae4fd336cf08cc482fd95487f73e1f9284695cb30f0249aee598010afaa",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -2164,6 +2164,11 @@
         "role": "Independently validates every workflow with a pinned and checksum-verified context-aware actionlint release before building documentation."
       },
       {
+        "path": ".github/workflows/website-pages.yml",
+        "sha256": "a8dc30197730575b6e96f85b570df70646a29309c1bb7355cbd0f716cc63f865",
+        "role": "Validates gallery generation against metadata-resolved source candidates before deploying the checked-in dependency-free website projection."
+      },
+      {
         "path": "tests/unit/test_ci_action_pinning.py",
         "sha256": "ef540fdc31ce7415adf55e8a6dd16f6524cc44d833e0b94c4e778a7435ba2799",
         "role": "Proves the independent workflow validator has a pinned version, checksum, and exact invocation, and rejects expression-bearing run blocks above GitHub's hosted parser ceiling."
@@ -2190,8 +2195,8 @@
       },
       {
         "path": "tests/unit/test_ci_package_boundaries.py",
-        "sha256": "8aeed26a6c8804b2ab78cec45a376bdfd1c94e592b86d988c6537c206bdeef97",
-        "role": "Proves source-gate coverage fails closed and that cross-platform candidate and published GUI canaries retain their typed screenshot evidence."
+        "sha256": "d252ee5bee9bc136585d46ccf634577869fdf335c238fa004b2586eb4c4b27b7",
+        "role": "Proves source-gate coverage fails closed, website validation uses local candidate owners, and cross-platform candidate and published GUI canaries retain their typed screenshot evidence."
       },
       {
         "path": "scripts/smoke_installed_desktop.py",
@@ -2263,7 +2268,8 @@
       "Cross-platform GUI canaries proved readiness and MCP actions but discarded the rendered UI, so native theming regressions had no retained evidence; candidate and published-package jobs now upload typed, hash-verified window snapshots.",
       "The installed-GUI canary bypassed the production logging setup and therefore could pass while its execution server advertised an empty log; the probe now applies LoggingConfig and verifies readable endpoint output.",
       "Native installer tests exercised worker mode without proving that the visible applications could start or drive installation; each supported lane now activates the shipping wizard and retains its welcome, progress, and completion states.",
-      "The Windows installer evidence harness captured its welcome frame when only the top-level handle existed, before child controls painted; capture now requires the real primary control and synchronizes recursive rendering with desktop composition."
+      "The Windows installer evidence harness captured its welcome frame when only the top-level handle existed, before child controls painted; capture now requires the real primary control and synchronizes recursive rendering with desktop composition.",
+      "Website validation attempted to install an unpublished first-party dependency from PyPI; it now resolves the required source candidates from the recursively recorded submodules while deployment continues to consume the dependency-free checked-in projection."
     ],
     "disposition": "revise",
     "validation": [
@@ -2315,7 +2321,8 @@
       "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read the complete guide after the Windows native harness gained strict PowerShell variable enforcement; its documented installed-product and evidence boundaries remain accurate.",
       "On 2026-08-27, rechecked the complete testing how-to after strict mode exposed a null comparison in the Windows launcher probe; the array-normalized assertion preserves the documented evidence boundary.",
       "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read and revised the complete guide after Intel native acceptance exposed an upstream wheel-availability boundary and Windows completion capture raced its action row; the documented dual-architecture and retained-evidence gates match the corrected harness.",
-      "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read the complete guide after exact-head evidence exposed a stale inline resolver assertion and an unpainted Windows welcome capture; the guide remains task-focused, and 48 focused CI and installer regressions passed."
+      "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read the complete guide after exact-head evidence exposed a stale inline resolver assertion and an unpainted Windows welcome capture; the guide remains task-focused, and 48 focused CI and installer regressions passed.",
+      "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read and revised the complete guide after the Website source-validation lane tried to resolve an unpublished first-party floor from PyPI; the page now distinguishes metadata-resolved source validation from dependency-free deployment, 25 CI-boundary tests passed, and a fresh Bash environment passed the catalogue, 19 website tests, and site build."
     ]
   },
   {

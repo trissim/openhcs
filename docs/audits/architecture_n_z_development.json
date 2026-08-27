@@ -2935,7 +2935,7 @@
       },
       {
         "path": "tests/unit/test_ci_package_boundaries.py",
-        "sha256": "8aeed26a6c8804b2ab78cec45a376bdfd1c94e592b86d988c6537c206bdeef97",
+        "sha256": "d252ee5bee9bc136585d46ccf634577869fdf335c238fa004b2586eb4c4b27b7",
         "role": "Proves publication consumes central release requirements and that candidate and published GUI matrices retain their typed screenshot evidence."
       }
     ],
@@ -3015,7 +3015,8 @@
       "On 2026-08-27, rechecked the complete release how-to after strict mode exposed a null Compare-Object result in the Windows launcher probe; materializing the comparison as a collection changes no release procedure or product boundary.",
       "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after Intel native acceptance exposed an upstream wheel-availability boundary and Windows completion capture raced its action row; the page now records the shared binary-wheel path, and focused native-installer regressions passed.",
       "On 2026-08-27, re-read the complete release how-to after the Python quality baseline moved from whole-workflow success to the owning code-quality job; revised the CI gate explanation and verified the resolver against live GitHub history plus three focused regressions.",
-      "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after exact-head evidence exposed a stale inline resolver assertion and an unpainted Windows welcome capture; the page remains accurate without implementation detail, and 48 focused CI and installer regressions passed."
+      "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after exact-head evidence exposed a stale inline resolver assertion and an unpainted Windows welcome capture; the page remains accurate without implementation detail, and 48 focused CI and installer regressions passed.",
+      "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after the Website source-validation workflow moved from unpublished PyPI candidates to metadata-resolved submodules; this does not change the documented release-candidate or publication gates, and 25 focused CI-boundary tests passed."
     ]
   },
   {
