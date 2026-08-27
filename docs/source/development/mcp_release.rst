@@ -253,23 +253,26 @@ workflow resolves that tag to one commit, verifies its release-candidate
 evidence, and checks out that commit in every participating job.
 
 If the tag workflow failed before uploading anything to PyPI, publish the
-Python and MCP distributions from that tag:
+complete release from that tag:
 
 .. code-block:: bash
 
    RELEASE_VERSION=$(python -c 'from scripts.sync_mcp_release_metadata import read_package_version; print(read_package_version())')
    gh workflow run publish.yml \
      --field release_version="$RELEASE_VERSION" \
-     --field publish_python_package=true
+     --field publish_python_package=true \
+     --field publish_desktop_installers=true
 
 This path validates and smoke-tests the built wheel, publishes the wheel and
-source distribution to PyPI, then publishes the matching official MCP Registry
-entry. It does not create another tag, GitHub Release, or native installer. It
-does not skip existing PyPI files: an existing version is a conflict that must
-be investigated, not treated as proof that independently built artifacts match.
+source distribution to PyPI, assembles the GitHub Release with both native
+installers, then publishes the matching official MCP Registry entry. It reuses
+the existing tag. The upload remains fail-closed when that PyPI version already
+exists so independently rebuilt files cannot be mistaken for the published
+artifacts.
 
-To build native installers from the current release workflow and attach them
-to an existing version tag without republishing PyPI or the MCP Registry:
+If PyPI publication completed before GitHub Release assembly, rebuild the
+release assets from the verified tag without uploading the Python distribution
+again:
 
 .. code-block:: bash
 
@@ -278,9 +281,10 @@ to an existing version tag without republishing PyPI or the MCP Registry:
      --field publish_python_package=false \
      --field publish_desktop_installers=true
 
-This path is useful when package publication completed before native assets.
-It renders the installer contract from the version authority at the verified
-tag commit and attaches only artifacts built from that same commit.
+This path rebuilds and validates the wheel and source distribution, builds both
+native installers, attaches the complete asset set to the existing tag, and
+continues to MCP Registry publication. Every artifact comes from the exact
+commit resolved by the release tag.
 
 Native installer signing
 ------------------------

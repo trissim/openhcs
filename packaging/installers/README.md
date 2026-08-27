@@ -127,7 +127,7 @@ mounted nonzero viewer payloads, and the smoke shuts down only its dynamically
 allocated TCP runtime/viewer endpoints. Before making either file a release
 asset, the tag workflow resolves one annotated release tag to an exact commit
 and requires successful Integration Tests and Documentation runs for that
-commit. Normal and recovery installer builds then check out that same commit
+commit. Normal and release-recovery builds then check out that same commit
 before rendering the pinned contract.
 
 Users can run the same portable acceptance after installation:
@@ -149,7 +149,7 @@ release workflow requires:
   image through ``notarytool``, the ticket is stapled, and both stapling and
   Gatekeeper validation succeed.
 
-Until those publisher credentials are available, tag and installer-recovery
+Until those publisher credentials are available, tag and release-recovery
 workflows publish unsigned native assets and disclose that trust mode in their
 workflow summaries and GitHub Release text. Providing the Windows certificate
 thumbprint or macOS signing certificate selects the signed path; after that

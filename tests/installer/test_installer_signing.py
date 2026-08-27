@@ -249,7 +249,7 @@ def test_release_workflow_signs_when_configured_and_discloses_fallback() -> None
 
     publish_job = workflow[
         workflow.index("  build-and-publish:") : workflow.index(
-            "  publish-installer-recovery-release:"
+            "  publish-release-recovery:"
         )
     ]
     assert (
@@ -258,7 +258,7 @@ def test_release_workflow_signs_when_configured_and_discloses_fallback() -> None
     )
 
     recovery_job = workflow[
-        workflow.index("  publish-installer-recovery-release:") : workflow.index(
+        workflow.index("  publish-release-recovery:") : workflow.index(
             "  publish-mcp-registry:"
         )
     ]
@@ -268,7 +268,8 @@ def test_release_workflow_signs_when_configured_and_discloses_fallback() -> None
         in recovery_job
     )
     assert "pattern: openhcs-*-installer" in recovery_job
-    assert "files: installer-assets/*" in recovery_job
+    assert "dist/*" in recovery_job
+    assert "installer-assets/*" in recovery_job
 
 
 def test_local_and_pull_request_installer_builds_only_parse_trust_helpers() -> None:

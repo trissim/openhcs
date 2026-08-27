@@ -363,6 +363,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
+          tag_name: ${{ needs.verify-release-commit.outputs.release_tag }}
           files: |
             dist/*
             installer-assets/*
@@ -370,7 +371,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  publish-installer-recovery-release:
+  publish-release-recovery:
     needs: [verify-release-commit, build-windows-installer, build-macos-installer]
     if: >-
       always() &&
@@ -383,6 +384,24 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify-release-commit.outputs.release_sha }}
+          submodules: recursive
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Rebuild release distributions
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r scripts/requirements.txt
+          python -m build
+          python -m scripts.validate_wheel_deployment dist/*.whl
+          python -m twine check dist/*
+
       - name: Download desktop installers
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -390,26 +409,23 @@ jobs:
           path: installer-assets
           merge-multiple: true
 
-      - name: Create or update installer release
+      - name: Create or update complete release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ needs.verify-release-commit.outputs.release_tag }}
-          files: installer-assets/*
+          files: |
+            dist/*
+            installer-assets/*
           generate_release_notes: true
-          body: >-
-            Native installer signing is opportunistic during the current
-            bootstrap period. Assets are signed and verified when publisher
-            credentials are configured; otherwise the workflow publishes
-            visibly disclosed unsigned installers rather than withholding
-            native downloads.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-mcp-registry:
-    needs: [verify-release-commit, build-and-publish]
+    needs: [verify-release-commit, build-and-publish, publish-release-recovery]
     if: >-
       always() &&
       (needs.build-and-publish.result == 'success' ||
+      needs.publish-release-recovery.result == 'success' ||
       (github.event_name == 'workflow_dispatch' &&
       !inputs.publish_python_package &&
       !inputs.publish_desktop_installers)) &&

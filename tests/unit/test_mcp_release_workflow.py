@@ -164,33 +164,51 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
         "github.event_name == 'push' || inputs.publish_desktop_installers"
     )
     assert "if" not in github_release
+    assert github_release["with"]["tag_name"] == (
+        "${{ needs.verify-release-commit.outputs.release_tag }}"
+    )
 
-    installer_recovery = workflow["jobs"]["publish-installer-recovery-release"]
-    assert installer_recovery["needs"] == [
+    release_recovery = workflow["jobs"]["publish-release-recovery"]
+    assert release_recovery["needs"] == [
         "verify-release-commit",
         "build-windows-installer",
         "build-macos-installer",
     ]
-    assert "!inputs.publish_python_package" in installer_recovery["if"]
-    recovery_steps = installer_recovery["steps"]
+    assert "!inputs.publish_python_package" in release_recovery["if"]
+    recovery_steps = release_recovery["steps"]
     recovery_step_names = tuple(step.get("name") for step in recovery_steps)
     assert "Require existing release tag" not in recovery_step_names
+    recovery_checkout = recovery_steps[0]
+    assert recovery_checkout["with"] == {
+        "ref": "${{ needs.verify-release-commit.outputs.release_sha }}",
+        "submodules": "recursive",
+    }
+    rebuild_step = recovery_steps[
+        recovery_step_names.index("Rebuild release distributions")
+    ]["run"]
+    assert "python -m build" in rebuild_step
+    assert "scripts.validate_wheel_deployment" in rebuild_step
+    assert "python -m twine check dist/*" in rebuild_step
     release_step = recovery_steps[
-        recovery_step_names.index("Create or update installer release")
+        recovery_step_names.index("Create or update complete release")
     ]
     assert release_step["with"]["tag_name"] == (
         "${{ needs.verify-release-commit.outputs.release_tag }}"
     )
+    assert "dist/*" in release_step["with"]["files"]
+    assert "installer-assets/*" in release_step["with"]["files"]
 
     registry_job = workflow["jobs"]["publish-mcp-registry"]
     assert registry_job["needs"] == [
         "verify-release-commit",
         "build-and-publish",
+        "publish-release-recovery",
     ]
     registry_condition = registry_job["if"]
     assert "always()" in registry_condition
     assert "github.event_name == 'workflow_dispatch'" in registry_condition
     assert "needs.build-and-publish.result == 'success'" in registry_condition
+    assert "needs.publish-release-recovery.result == 'success'" in registry_condition
     assert "!inputs.publish_python_package" in registry_condition
     assert "needs.verify-release-commit.result == 'success'" in registry_condition
     assert registry_job["permissions"] == {
