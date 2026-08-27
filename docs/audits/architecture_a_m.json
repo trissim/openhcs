@@ -1698,7 +1698,7 @@
       },
       {
         "path": "openhcs/desktop_deployment.py",
-        "sha256": "0f8687fc714cc2fabaa77351b36b198563f377c98eba765008c81f902d7edf65",
+        "sha256": "d5393386a14b693af3356484bdcb560e8a3cc0faea061352f46854c0cfead051",
         "role": "Owns Windows stable-launcher publication and bounded deferral while a valid launcher is live."
       },
       {
@@ -1775,7 +1775,8 @@
       "On 2026-08-26, re-read the complete distribution explanation after the shared MCP regression began proving the declaration-owned execution submission default; capability, transport, packaging, and projection ownership remain accurate.",
       "On 2026-08-27, re-read the complete distribution explanation against the uv-owned desktop environment lifecycle and declaration-derived package-index isolation; revised its packaging explanation and confirmed the remaining ownership claims.",
       "On 2026-08-27, rechecked the complete explanation after native CI exposed the detached updater's standalone boundary; the update plan now carries the declaration-derived package-source policy without importing application code, and the page reflects that ownership.",
-      "On 2026-08-27, re-read the complete distribution explanation after Windows native acceptance exposed an install-root-dependent Numba cache path; process environment semantics now derive the cache through the existing registered host-platform application-data authority, while desktop launchers remain projections of that declaration."
+      "On 2026-08-27, re-read the complete distribution explanation after Windows native acceptance exposed an install-root-dependent Numba cache path; process environment semantics now derive the cache through the existing registered host-platform application-data authority, while desktop launchers remain projections of that declaration.",
+      "On 2026-08-27, rechecked the complete distribution explanation after the pinned formatter normalized its desktop-deployment authority; the change is mechanical and all ownership and launcher projections remain unchanged."
     ]
   },
   {

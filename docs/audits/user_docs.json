@@ -878,7 +878,7 @@
       },
       {
         "path": "openhcs/desktop_deployment.py",
-        "sha256": "0f8687fc714cc2fabaa77351b36b198563f377c98eba765008c81f902d7edf65",
+        "sha256": "d5393386a14b693af3356484bdcb560e8a3cc0faea061352f46854c0cfead051",
         "role": "Owns platform-specific managed environment paths, launchers, shortcuts, and atomic desktop publication."
       },
       {
@@ -957,7 +957,8 @@
       "On 2026-08-27, re-read the complete installation how-to after Windows failure evidence began retaining the wizard state plus custom-root, default-root, and bootstrap logs; its user procedure remains accurate.",
       "On 2026-08-27, re-read the complete installation how-to after the native smoke stopped mutating another process's controls and began passing the requested destination through the installer's existing InstallRoot input; the user procedure remains accurate.",
       "On 2026-08-27, re-read the complete installation how-to after the Windows installed demo exposed an overlong compiled-code cache path; the cache now follows the registered per-user platform data authority independently of the selected install folder, with no change to the documented user procedure.",
-      "On 2026-08-27, applied the Diataxis installation how-to boundary and re-read the complete page after the macOS DMG adopted a single-device HFS+ lifecycle and native CI separated pip INI from uv TOML fixtures; the downloaded artifact and user procedure are unchanged."
+      "On 2026-08-27, applied the Diataxis installation how-to boundary and re-read the complete page after the macOS DMG adopted a single-device HFS+ lifecycle and native CI separated pip INI from uv TOML fixtures; the downloaded artifact and user procedure are unchanged.",
+      "On 2026-08-27, rechecked the complete installation how-to after the pinned formatter normalized the desktop-deployment authority; no installer behavior or user procedure changed."
     ]
   },
   {

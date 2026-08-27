@@ -41,9 +41,7 @@ from openhcs.resources.brand import (
 from openhcs.utils.environment import OpenHCSProcessEnvironment
 
 _UV_EXECUTABLE_ENVIRONMENT_VARIABLE = "OPENHCS_UV_EXECUTABLE"
-DESKTOP_RESTART_EXECUTABLE_ENVIRONMENT_VARIABLE = (
-    "OPENHCS_DESKTOP_RESTART_EXECUTABLE"
-)
+DESKTOP_RESTART_EXECUTABLE_ENVIRONMENT_VARIABLE = "OPENHCS_DESKTOP_RESTART_EXECUTABLE"
 _DISTRIBUTION_NAME = "openhcs"
 _WINDOWS_GUI_PE_SUBSYSTEM = 2
 
@@ -441,16 +439,16 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
                     "[StringComparison]::OrdinalIgnoreCase)) {"
                 ),
                 (
-                    "    throw \"The installed current-environment pointer is invalid. "
-                    "Re-run the official OpenHCS installer to repair it.\""
+                    '    throw "The installed current-environment pointer is invalid. '
+                    'Re-run the official OpenHCS installer to repair it."'
                 ),
                 "}",
                 (
                     "$entryPoint = Join-Path $environmentRoot "
-                    f"\"Scripts\\{context.application.command_entry_point}.exe\""
+                    f'"Scripts\\{context.application.command_entry_point}.exe"'
                 ),
                 "if (-not (Test-Path -LiteralPath $entryPoint -PathType Leaf)) {",
-                "    throw \"The current OpenHCS command entry point is unavailable.\"",
+                '    throw "The current OpenHCS command entry point is unavailable."',
                 "}",
                 f'$env:{OpenHCSProcessEnvironment.cpu_only_key} = "true"',
                 (
@@ -486,9 +484,9 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
 
         from openhcs.gui_startup import STARTUP_HANDOFF_EVENT_ENVIRONMENT
 
-        source = (
-            files("openhcs.resources.windows") / "OpenHCSLauncher.cs"
-        ).read_text(encoding="utf-8")
+        source = (files("openhcs.resources.windows") / "OpenHCSLauncher.cs").read_text(
+            encoding="utf-8"
+        )
         environment_container_relative = context.environment_root.parent.relative_to(
             context.install_root
         )
@@ -523,9 +521,7 @@ class WindowsDesktopDeployment(DesktopDeploymentAuthority):
             "__OPENHCS_MCP_STABLE_COMMAND_ENVIRONMENT__": (
                 MCP_STABLE_LAUNCH_COMMAND_ENVIRONMENT_VARIABLE
             ),
-            "__OPENHCS_STARTUP_HANDOFF_EVENT__": (
-                STARTUP_HANDOFF_EVENT_ENVIRONMENT
-            ),
+            "__OPENHCS_STARTUP_HANDOFF_EVENT__": (STARTUP_HANDOFF_EVENT_ENVIRONMENT),
             "__OPENHCS_STABLE_MCP_COMMAND_JSON__": cls._stable_mcp_command(
                 context,
                 powershell_executable=powershell_executable,
@@ -803,11 +799,15 @@ finally {
             raise DesktopDeploymentError(
                 "The Windows installation pointer is not the stable OpenHCS launcher."
             )
-        gui_executable = context.environment_root / "Scripts" / (
-            f"{context.application.gui_entry_point}.exe"
+        gui_executable = (
+            context.environment_root
+            / "Scripts"
+            / (f"{context.application.gui_entry_point}.exe")
         )
-        entry_executable = context.environment_root / "Scripts" / (
-            f"{context.application.command_entry_point}.exe"
+        entry_executable = (
+            context.environment_root
+            / "Scripts"
+            / (f"{context.application.command_entry_point}.exe")
         )
         icon_path = brand_asset_path(BrandAsset.WINDOWS_ICON)
         for required_path in (gui_executable, entry_executable, icon_path):
@@ -823,9 +823,7 @@ finally {
 
         desktop_directory = self._desktop_directory(powershell_executable)
         desktop_directory.mkdir(parents=True, exist_ok=True)
-        shortcut_path = desktop_directory / (
-            f"{context.application.product_name}.lnk"
-        )
+        shortcut_path = desktop_directory / (f"{context.application.product_name}.lnk")
         application_launcher_path = (
             context.install_root / self._application_launcher_name
         )
@@ -941,18 +939,13 @@ class MacOSDesktopDeployment(DesktopDeploymentAuthority):
 
     @staticmethod
     def application_path(context: DesktopDeploymentContext) -> Path:
-        return context.home / "Applications" / (
-            f"{context.application.product_name}.app"
+        return (
+            context.home / "Applications" / (f"{context.application.product_name}.app")
         )
 
     @classmethod
     def application_launcher_path(cls, context: DesktopDeploymentContext) -> Path:
-        return (
-            cls.application_path(context)
-            / "Contents"
-            / "MacOS"
-            / "launch-openhcs"
-        )
+        return cls.application_path(context) / "Contents" / "MacOS" / "launch-openhcs"
 
     @classmethod
     def environment_launcher_source(cls, context: DesktopDeploymentContext) -> str:
@@ -961,9 +954,7 @@ class MacOSDesktopDeployment(DesktopDeploymentAuthority):
             [str(stable_launcher), "mcp"], separators=(",", ":")
         )
         entry_point = (
-            context.environment_root
-            / "bin"
-            / context.application.command_entry_point
+            context.environment_root / "bin" / context.application.command_entry_point
         )
         return "\n".join(
             (
@@ -990,7 +981,7 @@ class MacOSDesktopDeployment(DesktopDeploymentAuthority):
                     f"export {MCP_INSTALLATION_POINTER_ENVIRONMENT_VARIABLE}="
                     f"{shlex.quote(str(context.installation_pointer))}"
                 ),
-                f"exec {shlex.quote(str(entry_point))} \"$@\"",
+                f'exec {shlex.quote(str(entry_point))} "$@"',
                 "",
             )
         )
@@ -1050,9 +1041,7 @@ class MacOSDesktopDeployment(DesktopDeploymentAuthority):
                 "The macOS installation pointer is not the current environment link."
             )
         entry_point = (
-            context.environment_root
-            / "bin"
-            / context.application.command_entry_point
+            context.environment_root / "bin" / context.application.command_entry_point
         )
         icon_path = brand_asset_path(BrandAsset.MACOS_ICON)
         for required_path in (entry_point, icon_path):
@@ -1066,9 +1055,7 @@ class MacOSDesktopDeployment(DesktopDeploymentAuthority):
         applications_directory.mkdir(parents=True, exist_ok=True)
         desktop_directory.mkdir(parents=True, exist_ok=True)
         application_path = self.application_path(context)
-        desktop_link = desktop_directory / (
-            f"{context.application.product_name}.app"
-        )
+        desktop_link = desktop_directory / (f"{context.application.product_name}.app")
         if _path_exists(desktop_link) and not desktop_link.is_symlink():
             raise DesktopDeploymentError(
                 "Refusing to replace a non-link Desktop item: " f"{desktop_link}"
@@ -1144,9 +1131,7 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parse_arguments(argv)
     pointer = arguments.installation_pointer
     if pointer is None:
-        raw_pointer = os.environ.get(
-            MCP_INSTALLATION_POINTER_ENVIRONMENT_VARIABLE
-        )
+        raw_pointer = os.environ.get(MCP_INSTALLATION_POINTER_ENVIRONMENT_VARIABLE)
         if raw_pointer is None:
             raise DesktopDeploymentError(
                 "OpenHCS was not launched through a native installer-managed "
