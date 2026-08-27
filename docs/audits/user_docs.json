@@ -2077,7 +2077,7 @@
       },
       {
         "path": "scripts/macos_installer_window_probe.swift",
-        "sha256": "0ad349dc73d993b43e13cb9c73d9be32cbf4315bbd01a82b963c17399c15dbf1",
+        "sha256": "45b22046ae4c98d697beba8a6f91fa3d72c07083b91dcec83a48811795b0552d",
         "role": "Queries one exact macOS installer window, projects its native identity and bounds, and activates the window's declared default accessibility control."
       },
       {

@@ -60,7 +60,7 @@ private struct InstallerDefaultControl {
 
     private func elements(
         of owner: AXUIElement,
-        attribute: CFString
+        attribute: String
     ) throws -> [AXUIElement] {
         let value = try attributeValue(of: owner, attribute: attribute)
         guard let elements = value as? [AXUIElement] else {
@@ -73,7 +73,7 @@ private struct InstallerDefaultControl {
 
     private func element(
         of owner: AXUIElement,
-        attribute: CFString
+        attribute: String
     ) throws -> AXUIElement {
         let value = try attributeValue(of: owner, attribute: attribute)
         guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
@@ -86,7 +86,7 @@ private struct InstallerDefaultControl {
 
     private func text(
         of owner: AXUIElement,
-        attribute: CFString
+        attribute: String
     ) throws -> String {
         let value = try attributeValue(of: owner, attribute: attribute)
         guard let text = value as? String else {
@@ -99,7 +99,7 @@ private struct InstallerDefaultControl {
 
     private func flag(
         of owner: AXUIElement,
-        attribute: CFString
+        attribute: String
     ) throws -> Bool {
         let value = try attributeValue(of: owner, attribute: attribute)
         guard let flag = value as? Bool else {
@@ -112,12 +112,12 @@ private struct InstallerDefaultControl {
 
     private func attributeValue(
         of owner: AXUIElement,
-        attribute: CFString
+        attribute: String
     ) throws -> CFTypeRef {
         var value: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(
             owner,
-            attribute,
+            attribute as CFString,
             &value
         )
         guard result == .success, let value else {
