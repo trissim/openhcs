@@ -898,7 +898,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "89841287251e5219fc4662fe523496b6468568e6da2d0a0ed7680a4f83316c57",
+        "sha256": "3243b4061d71a7226b54095ec1de91532a8718a24b0aa09affce8b95158dd493",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -958,7 +958,8 @@
       "On 2026-08-27, re-read the complete installation how-to after the native smoke stopped mutating another process's controls and began passing the requested destination through the installer's existing InstallRoot input; the user procedure remains accurate.",
       "On 2026-08-27, re-read the complete installation how-to after the Windows installed demo exposed an overlong compiled-code cache path; the cache now follows the registered per-user platform data authority independently of the selected install folder, with no change to the documented user procedure.",
       "On 2026-08-27, applied the Diataxis installation how-to boundary and re-read the complete page after the macOS DMG adopted a single-device HFS+ lifecycle and native CI separated pip INI from uv TOML fixtures; the downloaded artifact and user procedure are unchanged.",
-      "On 2026-08-27, rechecked the complete installation how-to after the pinned formatter normalized the desktop-deployment authority; no installer behavior or user procedure changed."
+      "On 2026-08-27, rechecked the complete installation how-to after the pinned formatter normalized the desktop-deployment authority; no installer behavior or user procedure changed.",
+      "On 2026-08-27, re-read the complete installation how-to after native Windows acceptance removed a stale raw-uv and source-checkout reinstall path; the shipping installer remains the sole environment publisher and the user procedure is unchanged."
     ]
   },
   {
@@ -2082,7 +2083,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "89841287251e5219fc4662fe523496b6468568e6da2d0a0ed7680a4f83316c57",
+        "sha256": "3243b4061d71a7226b54095ec1de91532a8718a24b0aa09affce8b95158dd493",
         "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, retained application and three-stage installer screenshot artifacts, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
@@ -2250,7 +2251,8 @@
       "On 2026-08-27, re-read the complete testing how-to after the Windows native lane began retaining its exact failure window and every installer-owned log boundary; the documented behavioral evidence remains accurate.",
       "On 2026-08-27, re-read the complete testing how-to after retained native evidence disproved cross-process destination editing; the smoke now passes the spaced destination through the shipping installer's declared InstallRoot input and verifies the real Options page before installation.",
       "On 2026-08-27, re-read the complete testing how-to after the Windows installed demo exposed a 265-character Numba cache artifact; the native lane now exercises the same user-local platform-derived cache path projected by production launchers, and the documented evidence boundary remains accurate.",
-      "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read the complete guide after Intel CI exposed APFS synthesized-volume teardown and Windows CI exposed cross-tool hostile-config syntax; the native lanes now use one HFS+ device lifecycle and independent valid pip and uv fixtures while retaining the same installed-product evidence."
+      "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read the complete guide after Intel CI exposed APFS synthesized-volume teardown and Windows CI exposed cross-tool hostile-config syntax; the native lanes now use one HFS+ device lifecycle and independent valid pip and uv fixtures while retaining the same installed-product evidence.",
+      "On 2026-08-27, re-read the complete testing how-to after the Windows native lane stopped dry-running uv and reinstalling OpenHCS from the checkout after a successful candidate install; launcher repair, staged update, and retained screenshots now continue against the actual installer-published wheel."
     ]
   },
   {

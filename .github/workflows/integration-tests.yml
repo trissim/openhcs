@@ -1083,26 +1083,6 @@ jobs:
               "'$($longestInstalledPath.FullName)'."
             )
           }
-          $installerUv = Join-Path $installRoot "bootstrap\uv\uv.exe"
-          & $installerUv `
-            --no-config pip install `
-            --dry-run `
-            --python $environmentPython `
-            --upgrade "openhcs==$releaseVersion"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Installer-owned uv could not resolve the stable OpenHCS update."
-          }
-          # Keep the published release as the installer acceptance input, then
-          # replace only OpenHCS with the checked-out candidate so the launcher
-          # and packaged asset paths are exercised from a production layout.
-          & $installerUv `
-            --no-config pip install `
-            --python $environmentPython `
-            --reinstall-package openhcs `
-            $env:GITHUB_WORKSPACE
-          if ($LASTEXITCODE -ne 0) {
-            throw "Could not install the OpenHCS candidate for launcher verification."
-          }
           $deploymentJson = & $environmentPython `
             -I -m openhcs.desktop_deployment_cli `
             --installation-pointer=$($summary.launcher_path) `
