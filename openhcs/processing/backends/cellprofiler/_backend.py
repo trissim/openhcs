@@ -65,7 +65,9 @@ class CellProfilerBackendRegistrySnapshot:
 
     @property
     def registry(self) -> dict[str, type[BackendStrategyT]]:
-        return cast(dict[str, type[BackendStrategyT]], self.strategy_family.__registry__)
+        return cast(
+            dict[str, type[BackendStrategyT]], self.strategy_family.__registry__
+        )
 
     def available_backend_providers(self) -> tuple[CellProfilerBackendProvider, ...]:
         providers = (
@@ -157,7 +159,9 @@ class DefaultCellProfilerBackendProviderSelection(CellProfilerBackendProviderSel
 
 
 @dataclass(frozen=True, slots=True)
-class ExplicitCellProfilerBackendProviderSelection(CellProfilerBackendProviderSelection):
+class ExplicitCellProfilerBackendProviderSelection(
+    CellProfilerBackendProviderSelection
+):
     """Select one explicit CellProfiler backend provider without fallback."""
 
     registry_key = "explicit"
@@ -268,9 +272,7 @@ class CellProfilerBackendAuthority:
         """Return the registry key for one memory/provider backend implementation."""
         provider = cls.provider(backend_provider)
         return (
-            cls.memory_type(memory_type).value
-            + _BACKEND_KEY_SEPARATOR
-            + provider.value
+            cls.memory_type(memory_type).value + _BACKEND_KEY_SEPARATOR + provider.value
         )
 
 

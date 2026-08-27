@@ -24,6 +24,7 @@ from skimage import morphology as morph
 from skimage import transform as trans
 
 from openhcs.core.artifacts import ArtifactSpec, ImageArtifactType
+
 # Use direct import from core memory decorators to avoid circular imports
 from openhcs.core.memory import numpy as numpy_func
 from openhcs.core.pipeline.function_contracts import artifact_inputs

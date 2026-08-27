@@ -213,13 +213,11 @@ SaveImages:[module_num:3|enabled:True]
 def test_direct_import_rejects_interactive_manual_identification() -> None:
     cppipe_path = Path("pipelines/interactive.cppipe")
     filemanager = _MemoryFileManager(
-        {
-            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+        {cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
 IdentifyObjectsManually:[module_num:1|enabled:True]
     Select the input image:DNA
     Name the objects to be identified:ManualObjects
-"""
-        }
+"""}
     )
 
     with pytest.raises(ValueError, match="requires interactive desktop input"):

@@ -394,9 +394,7 @@ def test_object_measurement_inputs_do_not_invent_self_lineage() -> None:
         available=objects,
     )
 
-    object_inputs = contract.artifact_inputs.for_artifact_type(
-        ObjectLabelsArtifactType
-    )
+    object_inputs = contract.artifact_inputs.for_artifact_type(ObjectLabelsArtifactType)
 
     assert tuple(spec.name for spec in object_inputs.specs) == (
         "Cells",
@@ -438,7 +436,9 @@ def test_optional_object_special_input_does_not_consume_primary_image() -> None:
     ) == (image,)
 
 
-def test_callable_abi_exposes_no_fixed_object_input_candidate_for_wrong_cardinality() -> None:
+def test_callable_abi_exposes_no_fixed_object_input_candidate_for_wrong_cardinality() -> (
+    None
+):
     invocation = next(normalize_function_pattern(combineobjects).iter_items())
     only_one = ArtifactSpec.output("OnlyOne", ObjectLabelsArtifactType)
     blocks, consumed = CombineobjectsModule.module_blocks_for_invocation(
@@ -487,9 +487,7 @@ def test_callable_abi_rejects_raw_object_label_return_before_runtime() -> None:
         CellProfilerModule.validate_callable_artifact_abi(
             invalid,
             _abi_contract(
-                outputs=(
-                    ArtifactSpec.output("Objects", ObjectLabelsArtifactType),
-                ),
+                outputs=(ArtifactSpec.output("Objects", ObjectLabelsArtifactType),),
             ),
         )
 
@@ -701,9 +699,10 @@ def test_fixed_return_slots_follow_nominal_contract_output_order() -> None:
     )
 
     for contract, func, artifact_types in contracts_and_functions:
-        assert tuple(
-            spec.artifact_type for spec in contract.trailing_return_output_specs
-        ) == artifact_types, func.__name__
+        assert (
+            tuple(spec.artifact_type for spec in contract.trailing_return_output_specs)
+            == artifact_types
+        ), func.__name__
         assert len(get_args(get_type_hints(func)["return"])) == (
             len(contract.trailing_return_output_specs) + 1
         )

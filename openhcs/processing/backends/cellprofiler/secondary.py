@@ -32,7 +32,7 @@ from openhcs.core.measurement_row_materialization import (
 )
 from openhcs.core.pipeline.function_contracts import (
     special_inputs,
-    )
+)
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,

@@ -27,7 +27,7 @@ from openhcs.core.measurement_row_materialization import (
 from openhcs.core.pipeline.function_contracts import (
     runtime_bound_parameters,
     special_inputs,
-    )
+)
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_image_values import (
     image_payload_data,
@@ -1403,7 +1403,9 @@ class DisplayDataOnImageModule(
     setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
         SettingToKeywordBinding.input(image_input_setting, ImageArtifactType),
         SettingToKeywordBinding.input(
-            object_input_setting, ObjectLabelsArtifactType, runtime_parameter_name="labels"
+            object_input_setting,
+            ObjectLabelsArtifactType,
+            runtime_parameter_name="labels",
         ),
         SettingToKeywordBinding.output(image_output_setting, ImageArtifactType),
         SettingToKeywordBinding(

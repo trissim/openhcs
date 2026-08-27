@@ -9,6 +9,7 @@ Doctrinal Clauses:
 - Clause 88 — No Inferred Capabilities: Explicit TensorFlow dependency
 - Clause 106-A — Declared Memory Types: All methods specify TensorFlow tensors
 """
+
 from __future__ import annotations
 
 import logging
@@ -51,7 +52,9 @@ logger = logging.getLogger(__name__)
 
 
 @tensorflow_func
-def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1) -> "tf.Tensor":
+def create_linear_weight_mask(
+    height: int, width: int, margin_ratio: float = 0.1
+) -> "tf.Tensor":
     """
     Create a 2D weight mask that linearly ramps from 0 at the edges to 1 in the center.
 
@@ -76,14 +79,12 @@ def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1
 
         # Update slices of the weight_y tensor
         weight_y = tf.tensor_scatter_nd_update(
-            weight_y,
-            tf.stack([tf.range(margin_y)], axis=1),
-            ramp_top
+            weight_y, tf.stack([tf.range(margin_y)], axis=1), ramp_top
         )
         weight_y = tf.tensor_scatter_nd_update(
             weight_y,
             tf.stack([tf.range(height - margin_y, height)], axis=1),
-            ramp_bottom
+            ramp_bottom,
         )
 
     weight_x = tf.ones(width, dtype=tf.float32)
@@ -93,14 +94,10 @@ def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1
 
         # Update slices of the weight_x tensor
         weight_x = tf.tensor_scatter_nd_update(
-            weight_x,
-            tf.stack([tf.range(margin_x)], axis=1),
-            ramp_left
+            weight_x, tf.stack([tf.range(margin_x)], axis=1), ramp_left
         )
         weight_x = tf.tensor_scatter_nd_update(
-            weight_x,
-            tf.stack([tf.range(width - margin_x, width)], axis=1),
-            ramp_right
+            weight_x, tf.stack([tf.range(width - margin_x, width)], axis=1), ramp_right
         )
 
     # Create 2D weight mask using outer product
@@ -126,11 +123,14 @@ def _validate_3d_array(array: Any, name: str = "input") -> None:
     # No need to check for TensorFlow availability here
 
     if not isinstance(array, tf.Tensor):
-        raise TypeError(f"{name} must be a TensorFlow tensor, got {type(array)}. "
-                       f"No automatic conversion is performed to maintain explicit contracts.")
+        raise TypeError(
+            f"{name} must be a TensorFlow tensor, got {type(array)}. "
+            f"No automatic conversion is performed to maintain explicit contracts."
+        )
 
     if len(array.shape) != 3:
         raise ValueError(f"{name} must be a 3D tensor, got {len(array.shape)}D")
+
 
 def _gaussian_blur(image: "tf.Tensor", sigma: float) -> "tf.Tensor":
     """
@@ -152,15 +152,11 @@ def _gaussian_blur(image: "tf.Tensor", sigma: float) -> "tf.Tensor":
     img = tf.expand_dims(tf.expand_dims(image, 0), -1)
 
     # Apply Gaussian blur
-    blurred = tf.image.gaussian_blur(
-        img,
-        [kernel_size, kernel_size],
-        sigma,
-        "REFLECT"
-    )
+    blurred = tf.image.gaussian_blur(img, [kernel_size, kernel_size], sigma, "REFLECT")
 
     # Remove batch and channel dimensions
     return tf.squeeze(blurred)
+
 
 @tensorflow_func
 def sharpen(
@@ -219,13 +215,14 @@ def sharpen(
 
     return result
 
+
 @tensorflow_func
 def percentile_normalize(
     image: "tf.Tensor",
     low_percentile: float = 1.0,
     high_percentile: float = 99.0,
     target_min: float = 0.0,
-    target_max: float = 65535.0
+    target_max: float = 65535.0,
 ) -> "tf.Tensor":
     """
     Normalize a 3D image using percentile-based contrast stretching.
@@ -256,7 +253,9 @@ def percentile_normalize(
         # Calculate indices for percentiles
         slice_size = tf.cast(tf.size(flat_slice), tf.float32)
         low_idx = tf.cast(tf.math.floor(slice_size * low_percentile / 100.0), tf.int32)
-        high_idx = tf.cast(tf.math.floor(slice_size * high_percentile / 100.0), tf.int32)
+        high_idx = tf.cast(
+            tf.math.floor(slice_size * high_percentile / 100.0), tf.int32
+        )
 
         # Get percentile values
         p_low = sorted_slice[low_idx]
@@ -281,13 +280,14 @@ def percentile_normalize(
 
     return result
 
+
 @tensorflow_func
 def stack_percentile_normalize(
     stack: "tf.Tensor",
     low_percentile: float = 1.0,
     high_percentile: float = 99.0,
     target_min: float = 0.0,
-    target_max: float = 65535.0
+    target_max: float = 65535.0,
 ) -> "tf.Tensor":
     """
     Normalize a stack using global percentile-based contrast stretching.
@@ -311,6 +311,7 @@ def stack_percentile_normalize(
     # This is memory-efficient and doesn't require sorting the entire array
     try:
         import tensorflow_probability as tfp
+
         p_low = tf.cast(tfp.stats.percentile(stack, low_percentile), tf.float32)
         p_high = tf.cast(tfp.stats.percentile(stack, high_percentile), tf.float32)
     except ImportError:
@@ -322,7 +323,9 @@ def stack_percentile_normalize(
         # Calculate indices for percentiles
         stack_size = tf.cast(tf.size(flat_stack), tf.float32)
         low_idx = tf.cast(tf.math.floor(stack_size * low_percentile / 100.0), tf.int32)
-        high_idx = tf.cast(tf.math.floor(stack_size * high_percentile / 100.0), tf.int32)
+        high_idx = tf.cast(
+            tf.math.floor(stack_size * high_percentile / 100.0), tf.int32
+        )
 
         # Get percentile values and cast to float32 for consistency
         p_low = tf.cast(sorted_stack[low_idx], tf.float32)
@@ -334,10 +337,13 @@ def stack_percentile_normalize(
 
     # Clip and normalize to target range (match NumPy implementation exactly)
     clipped = tf.clip_by_value(stack, p_low, p_high)
-    normalized = (clipped - p_low) * (target_max - target_min) / (p_high - p_low) + target_min
+    normalized = (clipped - p_low) * (target_max - target_min) / (
+        p_high - p_low
+    ) + target_min
     normalized = tf.cast(normalized, tf.uint16)
 
     return normalized
+
 
 @tensorflow_func
 def create_composite(
@@ -382,7 +388,7 @@ def create_composite(
     if len(weights) < len(images):
         weights = weights + [0.0] * (len(images) - len(weights))
     # Truncate weights if longer than images
-    weights = weights[:len(images)]
+    weights = weights[: len(images)]
 
     first_image = images[0]
     shape = first_image.shape
@@ -430,6 +436,7 @@ def create_composite(
 
     return composite
 
+
 @artifact_inputs(ArtifactSpec.input("mask", ImageArtifactType, parameter_name="mask"))
 @tensorflow_func
 def apply_mask(image: "tf.Tensor", mask: "tf.Tensor") -> "tf.Tensor":
@@ -458,7 +465,9 @@ def apply_mask(image: "tf.Tensor", mask: "tf.Tensor") -> "tf.Tensor":
         # Apply 2D mask to each Z-slice
         result_list = []
         for z in range(image.shape[0]):
-            result_list.append(tf.cast(image[z], tf.float32) * tf.cast(mask, tf.float32))
+            result_list.append(
+                tf.cast(image[z], tf.float32) * tf.cast(mask, tf.float32)
+            )
 
         result = tf.stack(result_list, axis=0)
         return tf.cast(result, image.dtype)
@@ -476,6 +485,7 @@ def apply_mask(image: "tf.Tensor", mask: "tf.Tensor") -> "tf.Tensor":
 
     # If we get here, the mask is neither 2D nor 3D TensorFlow tensor
     raise TypeError(f"mask must be a 2D or 3D TensorFlow tensor, got {type(mask)}")
+
 
 @tensorflow_func
 def create_weight_mask(
@@ -497,6 +507,7 @@ def create_weight_mask(
     height, width = shape
     return create_linear_weight_mask(height, width, margin_ratio)
 
+
 @tensorflow_func
 def max_projection(stack: "tf.Tensor") -> "tf.Tensor":
     """
@@ -514,6 +525,7 @@ def max_projection(stack: "tf.Tensor") -> "tf.Tensor":
     projection_2d = tf.reduce_max(stack, axis=0)
     return tf.expand_dims(projection_2d, axis=0)
 
+
 @tensorflow_func
 def mean_projection(stack: "tf.Tensor") -> "tf.Tensor":
     """
@@ -528,7 +540,9 @@ def mean_projection(stack: "tf.Tensor") -> "tf.Tensor":
     _validate_3d_array(stack)
 
     # Create mean projection
-    projection_2d = tf.cast(tf.reduce_mean(tf.cast(stack, tf.float32), axis=0), stack.dtype)
+    projection_2d = tf.cast(
+        tf.reduce_mean(tf.cast(stack, tf.float32), axis=0), stack.dtype
+    )
     return tf.expand_dims(projection_2d, axis=0)
 
 
@@ -537,7 +551,7 @@ def stack_equalize_histogram(
     stack: "tf.Tensor",
     bins: int = 65536,
     range_min: float = 0.0,
-    range_max: float = 65535.0
+    range_max: float = 65535.0,
 ) -> "tf.Tensor":
     """
     Apply histogram equalization to an entire stack.
@@ -568,11 +582,7 @@ def stack_equalize_histogram(
     # Calculate the histogram
     # TensorFlow doesn't have a direct equivalent to numpy's histogram
     # We'll use tf.histogram_fixed_width
-    hist = tf.histogram_fixed_width(
-        flat_stack,
-        [range_min, range_max],
-        nbins=bins
-    )
+    hist = tf.histogram_fixed_width(flat_stack, [range_min, range_max], nbins=bins)
 
     # Calculate cumulative distribution function (CDF)
     cdf = tf.cumsum(hist)
@@ -580,7 +590,15 @@ def stack_equalize_histogram(
     # Normalize the CDF to the input dtype range
     # Avoid division by zero
     if tf.reduce_max(cdf) > 0:
-        if input_dtype in [tf.uint8, tf.uint16, tf.uint32, tf.int8, tf.int16, tf.int32, tf.int64]:
+        if input_dtype in [
+            tf.uint8,
+            tf.uint16,
+            tf.uint32,
+            tf.int8,
+            tf.int16,
+            tf.int32,
+            tf.int64,
+        ]:
             # Get dtype max value
             if input_dtype == tf.uint8:
                 dtype_max = 255.0
@@ -604,10 +622,14 @@ def stack_equalize_histogram(
     # We don't need bin width for the lookup table approach
 
     # Scale input values to bin indices
-    indices = tf.cast(tf.clip_by_value(
-        tf.math.floor((flat_stack - range_min) / (range_max - range_min) * bins),
-        0, bins - 1
-    ), tf.int32)
+    indices = tf.cast(
+        tf.clip_by_value(
+            tf.math.floor((flat_stack - range_min) / (range_max - range_min) * bins),
+            0,
+            bins - 1,
+        ),
+        tf.int32,
+    )
 
     # Look up CDF values
     equalized_flat = tf.gather(cdf, indices)
@@ -617,6 +639,7 @@ def stack_equalize_histogram(
 
     # Convert back to input dtype
     return tf.cast(equalized_stack, input_dtype)
+
 
 class TensorFlowStackProjectionStrategy(
     EnumKeyedStrategyMixin[StackProjectionMethod],
@@ -664,11 +687,10 @@ def create_projection(
 
     return TensorFlowStackProjectionStrategy.for_enum_member(method).apply(stack)
 
+
 @tensorflow_func
 def tophat(
-    image: "tf.Tensor",
-    selem_radius: int = 50,
-    downsample_factor: int = 4
+    image: "tf.Tensor", selem_radius: int = 50, downsample_factor: int = 4
 ) -> "tf.Tensor":
     """
     Apply white top-hat filter to a 3D image for background removal.
@@ -702,25 +724,31 @@ def tophat(
         new_w = tf.cast(tf.shape(image[z])[1] // downsample_factor, tf.int32)
 
         # Resize using TensorFlow's resize function
-        image_small = tf.squeeze(tf.image.resize(
-            img_4d,
-            [new_h, new_w],
-            method=tf.image.ResizeMethod.BILINEAR
-        ), axis=[0, -1])
+        image_small = tf.squeeze(
+            tf.image.resize(
+                img_4d, [new_h, new_w], method=tf.image.ResizeMethod.BILINEAR
+            ),
+            axis=[0, -1],
+        )
 
         # 2) Create a circular structuring element
         small_selem_radius = tf.maximum(1, selem_radius // downsample_factor)
         small_grid_size = 2 * small_selem_radius + 1
 
         # Create grid for structuring element
-        y_range = tf.range(-small_selem_radius, small_selem_radius + 1, dtype=tf.float32)
-        x_range = tf.range(-small_selem_radius, small_selem_radius + 1, dtype=tf.float32)
+        y_range = tf.range(
+            -small_selem_radius, small_selem_radius + 1, dtype=tf.float32
+        )
+        x_range = tf.range(
+            -small_selem_radius, small_selem_radius + 1, dtype=tf.float32
+        )
         small_y_grid, small_x_grid = tf.meshgrid(y_range, x_range)
 
         # Create circular mask
         small_mask = tf.cast(
-            tf.sqrt(tf.square(small_y_grid) + tf.square(small_x_grid)) <= small_selem_radius,
-            tf.float32
+            tf.sqrt(tf.square(small_y_grid) + tf.square(small_x_grid))
+            <= small_selem_radius,
+            tf.float32,
         )
 
         # 3) Apply white top-hat using TensorFlow's morphological operations
@@ -734,7 +762,7 @@ def tophat(
         padded = tf.pad(
             tf.expand_dims(tf.expand_dims(image_small, 0), -1),
             [[0, 0], [pad_size, pad_size], [pad_size, pad_size], [0, 0]],
-            mode='SYMMETRIC'
+            mode="SYMMETRIC",
         )
 
         # For erosion, we need to find the minimum value in the neighborhood
@@ -752,7 +780,7 @@ def tophat(
             neg_padded + mask_complement * large_neg,
             tf.tile(mask_expanded, [1, 1, 1, 1]),
             strides=[1, 1, 1, 1],
-            padding='VALID'
+            padding="VALID",
         )
 
         # Convert back to positive
@@ -763,7 +791,7 @@ def tophat(
         padded_eroded = tf.pad(
             eroded,
             [[0, 0], [pad_size, pad_size], [pad_size, pad_size], [0, 0]],
-            mode='SYMMETRIC'
+            mode="SYMMETRIC",
         )
 
         # For dilation, we need to find the maximum value in the neighborhood
@@ -772,7 +800,7 @@ def tophat(
             padded_eroded,
             tf.tile(mask_expanded, [1, 1, 1, 1]),
             strides=[1, 1, 1, 1],
-            padding='VALID'
+            padding="VALID",
         )
 
         # Remove batch and channel dimensions
@@ -786,11 +814,14 @@ def tophat(
 
         # 5) Upscale background to original size
         background_4d = tf.expand_dims(tf.expand_dims(background_small, 0), -1)
-        background_large = tf.squeeze(tf.image.resize(
-            background_4d,
-            tf.shape(image[z])[:2],
-            method=tf.image.ResizeMethod.BILINEAR
-        ), axis=[0, -1])
+        background_large = tf.squeeze(
+            tf.image.resize(
+                background_4d,
+                tf.shape(image[z])[:2],
+                method=tf.image.ResizeMethod.BILINEAR,
+            ),
+            axis=[0, -1],
+        )
 
         # 6) Subtract background and clip negative values
         slice_result = tf.maximum(tf.cast(image[z], tf.float32) - background_large, 0.0)
