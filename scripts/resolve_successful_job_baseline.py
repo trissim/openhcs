@@ -1,16 +1,15 @@
-#!/usr/bin/env python3
 """Resolve the newest ancestor whose named GitHub Actions job succeeded."""
 
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 import json
 import os
-from pathlib import PurePosixPath
 import subprocess
 import sys
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any
 
 

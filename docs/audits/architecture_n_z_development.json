@@ -2854,7 +2854,7 @@
       },
       {
         "path": "scripts/resolve_successful_job_baseline.py",
-        "sha256": "c29dc3195815508074266165046d2bd51c2823e9ebb5e747d7f0fc7b7cc817e5",
+        "sha256": "8e6541a53dac376176a63cb449e9166a425ef673954847cccd96fe444d60ad48",
         "role": "Derives the cumulative Python quality boundary from the latest successful code-quality job on an ancestor workflow run."
       },
       {
@@ -2864,8 +2864,13 @@
       },
       {
         "path": "scripts/smoke_windows_installer_window.ps1",
-        "sha256": "34cca9125254894232d768d1187c5be515e7a01db67b231543eeee6fc8af5e63",
-        "role": "Drives the shipping Windows installer through its real native controls and retains exact welcome, progress, completion, failure, and durable-log evidence."
+        "sha256": "c41cb5b5b0ae935e43843fe0589911b41dbbf616917866bf6d02b98d14dd8044",
+        "role": "Drives the shipping Windows installer through its real native controls, synchronizes rendered child controls before capture, and retains exact welcome, progress, completion, failure, and durable-log evidence."
+      },
+      {
+        "path": "tests/installer/test_windows_simple_installer.py",
+        "sha256": "3ab5b37fb4deee277f9deee41dc61deab5235e245e5ff37c98f32b06fde65697",
+        "role": "Proves the Windows native wizard waits for rendered controls, synchronizes window composition, and retains each declared installer evidence state."
       },
       {
         "path": "scripts/smoke_macos_installer_window.sh",
@@ -2929,7 +2934,7 @@
       },
       {
         "path": "tests/unit/test_ci_package_boundaries.py",
-        "sha256": "efe41a0bda50271838e0e1a1dffa2fb8279a25e44497437dd44d8defff80af15",
+        "sha256": "8aeed26a6c8804b2ab78cec45a376bdfd1c94e592b86d988c6537c206bdeef97",
         "role": "Proves publication consumes central release requirements and that candidate and published GUI matrices retain their typed screenshot evidence."
       }
     ],
@@ -2954,7 +2959,8 @@
       "The native source-candidate matrix still depended on published first-party tags, so the real installer and staged-update jobs were skipped exactly while those dependency releases were being prepared; the native lane now builds its complete wheelhouse from metadata-discovered submodules while the separate PyPI lane remains fail-closed on publication readiness.",
       "Cross-platform GUI canaries proved readiness and MCP actions but discarded the rendered UI, leaving native theming regressions outside retained evidence; candidate and published-package jobs now upload typed, hash-verified window snapshots.",
       "The installed-GUI canary constructed the application below the production logging boundary, so a successful endpoint could advertise an empty log; the probe now applies its declared logging configuration and fails unless the exact advertised log contains output.",
-      "Native installer acceptance invoked worker mode without proving that either shipping wizard could start or drive installation; each supported lane now activates the shipping wizard and retains its welcome, progress, and completion states."
+      "Native installer acceptance invoked worker mode without proving that either shipping wizard could start or drive installation; each supported lane now activates the shipping wizard and retains its welcome, progress, and completion states.",
+      "The Windows installer evidence harness captured its welcome frame when only the top-level handle existed, before child controls painted; capture now requires the real primary control and synchronizes recursive rendering with desktop composition."
     ],
     "disposition": "revise",
     "validation": [
@@ -3007,7 +3013,8 @@
       "On 2026-08-27, rechecked the complete release how-to after strict PowerShell acceptance exposed an undeclared test-fixture alias; the managed candidate, staged-update, and publication boundaries remain unchanged.",
       "On 2026-08-27, rechecked the complete release how-to after strict mode exposed a null Compare-Object result in the Windows launcher probe; materializing the comparison as a collection changes no release procedure or product boundary.",
       "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after Intel native acceptance exposed an upstream wheel-availability boundary and Windows completion capture raced its action row; the page now records the shared binary-wheel path, and focused native-installer regressions passed.",
-      "On 2026-08-27, re-read the complete release how-to after the Python quality baseline moved from whole-workflow success to the owning code-quality job; revised the CI gate explanation and verified the resolver against live GitHub history plus three focused regressions."
+      "On 2026-08-27, re-read the complete release how-to after the Python quality baseline moved from whole-workflow success to the owning code-quality job; revised the CI gate explanation and verified the resolver against live GitHub history plus three focused regressions.",
+      "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after exact-head evidence exposed a stale inline resolver assertion and an unpainted Windows welcome capture; the page remains accurate without implementation detail, and 48 focused CI and installer regressions passed."
     ]
   },
   {

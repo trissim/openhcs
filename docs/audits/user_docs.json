@@ -2130,7 +2130,7 @@
       },
       {
         "path": "scripts/resolve_successful_job_baseline.py",
-        "sha256": "c29dc3195815508074266165046d2bd51c2823e9ebb5e747d7f0fc7b7cc817e5",
+        "sha256": "8e6541a53dac376176a63cb449e9166a425ef673954847cccd96fe444d60ad48",
         "role": "Resolves the cumulative changed-Python boundary from the latest successful code-quality job on an ancestor workflow run."
       },
       {
@@ -2140,8 +2140,13 @@
       },
       {
         "path": "scripts/smoke_windows_installer_window.ps1",
-        "sha256": "34cca9125254894232d768d1187c5be515e7a01db67b231543eeee6fc8af5e63",
-        "role": "Drives the shipping Windows installer through its real native controls and retains exact welcome, progress, completion, failure, and durable-log evidence."
+        "sha256": "c41cb5b5b0ae935e43843fe0589911b41dbbf616917866bf6d02b98d14dd8044",
+        "role": "Drives the shipping Windows installer through its real native controls, synchronizes rendered child controls before capture, and retains exact welcome, progress, completion, failure, and durable-log evidence."
+      },
+      {
+        "path": "tests/installer/test_windows_simple_installer.py",
+        "sha256": "3ab5b37fb4deee277f9deee41dc61deab5235e245e5ff37c98f32b06fde65697",
+        "role": "Proves the Windows native wizard waits for rendered controls, synchronizes window composition, and retains each declared installer evidence state."
       },
       {
         "path": "scripts/smoke_macos_installer_window.sh",
@@ -2185,7 +2190,7 @@
       },
       {
         "path": "tests/unit/test_ci_package_boundaries.py",
-        "sha256": "efe41a0bda50271838e0e1a1dffa2fb8279a25e44497437dd44d8defff80af15",
+        "sha256": "8aeed26a6c8804b2ab78cec45a376bdfd1c94e592b86d988c6537c206bdeef97",
         "role": "Proves source-gate coverage fails closed and that cross-platform candidate and published GUI canaries retain their typed screenshot evidence."
       },
       {
@@ -2257,7 +2262,8 @@
       "The native installer source job still depended on public first-party release tags and therefore skipped the real Windows and macOS installer paths while dependency candidates were unpublished; it now builds the complete metadata-discovered source wheelhouse independently, while the PyPI installation lane remains publication-gated.",
       "Cross-platform GUI canaries proved readiness and MCP actions but discarded the rendered UI, so native theming regressions had no retained evidence; candidate and published-package jobs now upload typed, hash-verified window snapshots.",
       "The installed-GUI canary bypassed the production logging setup and therefore could pass while its execution server advertised an empty log; the probe now applies LoggingConfig and verifies readable endpoint output.",
-      "Native installer tests exercised worker mode without proving that the visible applications could start or drive installation; each supported lane now activates the shipping wizard and retains its welcome, progress, and completion states."
+      "Native installer tests exercised worker mode without proving that the visible applications could start or drive installation; each supported lane now activates the shipping wizard and retains its welcome, progress, and completion states.",
+      "The Windows installer evidence harness captured its welcome frame when only the top-level handle existed, before child controls painted; capture now requires the real primary control and synchronizes recursive rendering with desktop composition."
     ],
     "disposition": "revise",
     "validation": [
@@ -2308,7 +2314,8 @@
       "On 2026-08-27, re-read the complete testing how-to after the Windows native lane stopped dry-running uv and reinstalling OpenHCS from the checkout after a successful candidate install; launcher repair, staged update, and retained screenshots now continue against the actual installer-published wheel.",
       "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read the complete guide after the Windows native harness gained strict PowerShell variable enforcement; its documented installed-product and evidence boundaries remain accurate.",
       "On 2026-08-27, rechecked the complete testing how-to after strict mode exposed a null comparison in the Windows launcher probe; the array-normalized assertion preserves the documented evidence boundary.",
-      "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read and revised the complete guide after Intel native acceptance exposed an upstream wheel-availability boundary and Windows completion capture raced its action row; the documented dual-architecture and retained-evidence gates match the corrected harness."
+      "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read and revised the complete guide after Intel native acceptance exposed an upstream wheel-availability boundary and Windows completion capture raced its action row; the documented dual-architecture and retained-evidence gates match the corrected harness.",
+      "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read the complete guide after exact-head evidence exposed a stale inline resolver assertion and an unpainted Windows welcome capture; the guide remains task-focused, and 48 focused CI and installer regressions passed."
     ]
   },
   {

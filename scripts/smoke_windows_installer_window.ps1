@@ -24,6 +24,9 @@ using System.Text;
 public static class OpenHCSInstallerWindowProbe
 {
     private const uint ButtonClick = 0x00F5;
+    private const uint RedrawInvalidate = 0x0001;
+    private const uint RedrawAllChildren = 0x0080;
+    private const uint RedrawUpdateNow = 0x0100;
 
     private delegate bool EnumerateWindowCallback(IntPtr window, IntPtr state);
 
@@ -69,6 +72,18 @@ public static class OpenHCSInstallerWindowProbe
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsWindowVisible(IntPtr window);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RedrawWindow(
+        IntPtr window,
+        IntPtr updateRectangle,
+        IntPtr updateRegion,
+        uint redrawFlags
+    );
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmFlush();
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr SendMessageW(
         IntPtr window,
@@ -94,6 +109,27 @@ public static class OpenHCSInstallerWindowProbe
         }
         SendMessageW(child, ButtonClick, IntPtr.Zero, IntPtr.Zero);
         return true;
+    }
+
+    public static void SynchronizeWindowRendering(IntPtr window)
+    {
+        if (!RedrawWindow(
+            window,
+            IntPtr.Zero,
+            IntPtr.Zero,
+            RedrawInvalidate | RedrawAllChildren | RedrawUpdateNow
+        ))
+        {
+            throw new System.ComponentModel.Win32Exception(
+                Marshal.GetLastWin32Error(),
+                "Could not redraw the installer window"
+            );
+        }
+        int status = DwmFlush();
+        if (status < 0)
+        {
+            Marshal.ThrowExceptionForHR(status);
+        }
     }
 
     private static IntPtr FindUniqueVisibleChild(
@@ -143,6 +179,9 @@ function Save-InstallerWindowEvidence {
         [Parameter(Mandatory = $true)][string]$Stage
     )
 
+    [OpenHCSInstallerWindowProbe]::SynchronizeWindowRendering(
+        $windowProcess.MainWindowHandle
+    )
     $rectangle = New-Object OpenHCSInstallerWindowProbe+WindowRectangle
     if (-not [OpenHCSInstallerWindowProbe]::GetWindowRect(
         $windowProcess.MainWindowHandle,
@@ -328,12 +367,13 @@ try {
         throw "The native installer did not show '$ExpectedTitle' within 30 seconds."
     }
 
+    $interactionDeadline = [DateTime]::UtcNow.AddSeconds(30)
+    Wait-InstallerVisibleText -Name "Next >" -Deadline $interactionDeadline
     Save-InstallerWindowEvidence `
         -EvidenceName "installer-window" `
         -ScreenshotName "installer-welcome" `
         -Stage "welcome"
 
-    $interactionDeadline = [DateTime]::UtcNow.AddSeconds(30)
     Invoke-InstallerButton -Name "Next >" -Deadline $interactionDeadline
     Wait-InstallerVisibleText `
         -Name "Installation options" `

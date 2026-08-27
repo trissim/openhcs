@@ -695,6 +695,9 @@ def test_windows_installer_ci_drives_and_captures_the_shipping_wizard() -> None:
     assert '"ParentProcessId = {0}" -f $launcherProcess.Id' in probe
     assert "$candidateProcess.MainWindowTitle -eq $ExpectedTitle" in probe
     assert "GetWindowRect" in probe
+    assert "SynchronizeWindowRendering(" in probe
+    assert "RedrawWindow(" in probe
+    assert "DwmFlush()" in probe
     assert "private const uint ButtonClick = 0x00F5;" in probe
     assert "EnumChildWindows(" in probe
     assert "FindUniqueVisibleChild(" in probe
@@ -705,6 +708,7 @@ def test_windows_installer_ci_drives_and_captures_the_shipping_wizard() -> None:
     assert "Wait-InstallerVisibleText" in probe
     assert "UIAutomation" not in probe
     assert 'Invoke-InstallerButton -Name "Next >"' in probe
+    assert 'Wait-InstallerVisibleText -Name "Next >"' in probe
     assert "Wait-InstallerLogLine" in probe
     assert "[IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete" in probe
     assert "catch [IO.IOException]" in probe
@@ -713,6 +717,9 @@ def test_windows_installer_ci_drives_and_captures_the_shipping_wizard() -> None:
     assert "$installationDeadline = [DateTime]::UtcNow.AddMinutes(20)" in probe
     assert "$graphics.CopyFromScreen(" in probe
     assert '-ScreenshotName "installer-welcome"' in probe
+    assert probe.index('Wait-InstallerVisibleText -Name "Next >"') < probe.index(
+        '-ScreenshotName "installer-welcome"'
+    )
     assert '"installer-progress"' in probe
     assert '"installer-finished"' in probe
     assert '"installer-smoke-error.txt"' in probe

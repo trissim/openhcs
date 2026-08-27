@@ -304,24 +304,33 @@ def test_source_unit_gate_does_not_fetch_release_tags() -> None:
     assert "git submodule foreach --recursive git fetch --tags --force" not in unit_job
 
 
-def test_code_quality_gate_carries_red_python_changes_until_a_green_head() -> None:
-    workflow = (WORKFLOW_ROOT / "integration-tests.yml").read_text(encoding="utf-8")
-    match = re.search(
-        r"(?ms)^  code-quality:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
-        workflow,
+def test_code_quality_gate_uses_job_owned_baseline() -> None:
+    workflow = yaml.safe_load(
+        (WORKFLOW_ROOT / "integration-tests.yml").read_text(encoding="utf-8")
     )
+    quality_job = workflow["jobs"]["code-quality"]
+    checkout_step = next(
+        step for step in quality_job["steps"] if step.get("name") == "Checkout"
+    )
+    gate_step = next(
+        step
+        for step in quality_job["steps"]
+        if step.get("name") == "Enforce quality on changed Python files"
+    )
+    gate_script = gate_step["run"]
 
-    assert match is not None
-    quality_job = match.group("body")
-    assert "fetch-depth: 0" in quality_job
-    assert "actions: read" in workflow
-    assert "github.event.pull_request.base.sha" in quality_job
-    assert "actions/workflows/integration-tests.yml/runs" in quality_job
-    assert "-f status=success" in quality_job
-    assert "git merge-base --is-ancestor" in quality_job
-    assert "git diff --name-only --diff-filter=ACMR -z" in quality_job
-    assert '"$quality_base_sha" "$GITHUB_SHA"' in quality_job
-    assert 'black --check "${changed_python_files[@]}"' in quality_job
+    assert checkout_step["with"]["fetch-depth"] == 0
+    assert workflow["permissions"]["actions"] == "read"
+    assert gate_step["env"]["GH_TOKEN"] == "${{ github.token }}"
+    assert (
+        "github.event.pull_request.base.sha"
+        in gate_step["env"]["PULL_REQUEST_BASE_SHA"]
+    )
+    assert "python scripts/resolve_successful_job_baseline.py" in gate_script
+    assert "git merge-base --is-ancestor" in gate_script
+    assert "git diff --name-only --diff-filter=ACMR -z" in gate_script
+    assert '"$quality_base_sha" "$GITHUB_SHA"' in gate_script
+    assert 'black --check "${changed_python_files[@]}"' in gate_script
 
 
 def test_code_quality_toolchain_is_reproducibly_pinned() -> None:
