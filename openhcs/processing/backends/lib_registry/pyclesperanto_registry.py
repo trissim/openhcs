@@ -111,12 +111,16 @@ class PyclesperantoRegistry(RuntimeTestingRegistryBase):
         """Keep output allocation and device selection at library defaults."""
 
         signature = inspect.signature(func)
-        return tuple(
-            name
-            for parameter in PyclesperantoRuntimeParameter
-            for name in (parameter.declared_name(signature),)
-            if name is not None
-        )
+        runtime_owned = {
+            *super().runtime_owned_parameter_names(func),
+            *(
+                name
+                for parameter in PyclesperantoRuntimeParameter
+                for name in (parameter.declared_name(signature),)
+                if name is not None
+            ),
+        }
+        return tuple(name for name in signature.parameters if name in runtime_owned)
 
     def _preprocess_input(self, image, func_name: str):
         return self._convert_input_dtype(image, func_name)

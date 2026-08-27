@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import inspect
+from dataclasses import replace
 from typing import get_args, get_type_hints
 
 import numpy as np
 import pytest
+from python_introspect import parameter_exclusions
 
 from openhcs.core.aligned_image_payload import AlignedImageStack
-from openhcs.core.callable_contract import CallableContract
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
     ArtifactOutputPlan,
@@ -20,31 +20,32 @@ from openhcs.core.artifacts import (
     ImageArtifactType,
     InputGroupLineageSourceRelation,
     InputStackBroadcastSourceRelation,
-    SourceStackLineageSourceRelation,
     MeasurementsArtifactType,
     ObjectLabelsArtifactType,
     ObjectLineageArtifactType,
     RelationshipsArtifactType,
+    SourceStackLineageSourceRelation,
     SpatialGridArtifactType,
 )
+from openhcs.core.callable_contract import CallableContract
+from openhcs.core.config import LazyDtypeConfig
 from openhcs.core.function_patterns import (
     FunctionInvocationKey,
     normalize_function_pattern,
 )
-from openhcs.core.config import LazyDtypeConfig
 from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
-from openhcs.core.runtime_relationships import DirectedObjectRelationshipPayload
+from openhcs.core.pipeline.artifact_planning import artifact_producers_for_outputs
 from openhcs.core.pipeline.function_contracts import (
     annotation_produces_runtime_type,
     runtime_bound_parameter_names_from_callable,
 )
-from openhcs.core.pipeline.artifact_planning import artifact_producers_for_outputs
+from openhcs.core.runtime_relationships import DirectedObjectRelationshipPayload
 from openhcs.core.runtime_tabular_values import ColumnarRows
-from openhcs.interop.cellprofiler.module_declarations import (
-    CellProfilerModule,
-)
 from openhcs.interop.cellprofiler.module_artifact_declarations import (
     MeasurementArtifactOutputModule,
+)
+from openhcs.interop.cellprofiler.module_declarations import (
+    CellProfilerModule,
 )
 from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 from openhcs.processing.backends.cellprofiler.colocalization import (
@@ -100,7 +101,6 @@ from openhcs.processing.backends.cellprofiler.watershed import (
     WatershedModule,
     watershed_cellprofiler4,
 )
-from python_introspect import parameter_exclusions
 
 
 def test_flag_image_backend_owns_threshold_evaluation() -> None:
@@ -516,7 +516,7 @@ def test_callable_abi_rejects_raw_measurement_rows_before_runtime() -> None:
     assert runtime_calls == []
 
 
-def test_registered_measurement_modules_publish_typed_columnar_rows() -> None:
+def test_executable_measurement_modules_publish_typed_columnar_rows() -> None:
     def contains_columnar_rows(annotation: object) -> bool:
         return annotation_produces_runtime_type(
             annotation,
@@ -528,7 +528,10 @@ def test_registered_measurement_modules_publish_typed_columnar_rows() -> None:
 
     violations = []
     for module_type in set(CellProfilerModule.__registry__.values()):
-        if not issubclass(module_type, MeasurementArtifactOutputModule):
+        if not (
+            issubclass(module_type, MeasurementArtifactOutputModule)
+            and module_type.emits_function_step()
+        ):
             continue
         typed_functions = []
         for function_name in (

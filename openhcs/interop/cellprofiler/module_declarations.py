@@ -4,17 +4,20 @@ This file owns the registered CellProfiler module catalog and discovery boundary
 """
 
 from __future__ import annotations
+
+import importlib
+import inspect
 from abc import ABC
 from collections.abc import Callable, Iterable
 from dataclasses import replace
-import importlib
-import inspect
 from typing import (
     TYPE_CHECKING,
     Any,
     ClassVar,
 )
+
 from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict, RegistryConfig
+
 from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.artifacts import ArtifactSpec, ArtifactSpecRef
@@ -28,16 +31,6 @@ from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
 from openhcs.core.source_bindings import (
     SourceBindingsConfig,
 )
-from openhcs.interop.cellprofiler_setting_normalization import (
-    normalize_cellprofiler_setting_name,
-)
-from openhcs.interop.cellprofiler.setting_names import (
-    setting_name_matches,
-    setting_names,
-)
-from openhcs.interop.cellprofiler.runtime.measurement_recording import (
-    TableMeasurementRecordRowsMixin,
-)
 from openhcs.interop.cellprofiler.module_artifact_contracts import (
     CellProfilerModuleArtifactContracts,
 )
@@ -49,6 +42,16 @@ from openhcs.interop.cellprofiler.module_measurement_features import (
 )
 from openhcs.interop.cellprofiler.module_settings import (
     CellProfilerModuleSettings,
+)
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    TableMeasurementRecordRowsMixin,
+)
+from openhcs.interop.cellprofiler.setting_names import (
+    setting_name_matches,
+    setting_names,
+)
+from openhcs.interop.cellprofiler_setting_normalization import (
+    normalize_cellprofiler_setting_name,
 )
 from openhcs.processing.backends.lib_registry.openhcs_registry import (
     OpenHCSFunctionCatalogDeclaration,
@@ -421,6 +424,12 @@ class CellProfilerModule(
     def emits_function_step(cls) -> bool:
         """Return whether an enabled parsed module emits an executable step."""
         return True
+
+    @classmethod
+    def validate_pipeline_import(cls, module: "ModuleBlock") -> None:
+        """Validate whether one parsed module can enter a headless pipeline."""
+
+        del cls, module
 
     @classmethod
     def uses_cellprofiler_runtime_adapter(cls) -> bool:

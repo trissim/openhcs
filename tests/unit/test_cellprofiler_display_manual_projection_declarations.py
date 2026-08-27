@@ -23,29 +23,29 @@ from openhcs.core.function_patterns import (
 )
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
 from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
-from openhcs.core.pipeline.artifact_planning import artifact_producers_for_outputs
 from openhcs.core.measurement_row_materialization import (
     MeasurementSparseColumnarRows,
 )
-from openhcs.core.runtime_object_labels import object_label_dense_array
-from openhcs.core.runtime_measurements import MeasurementTable
-from openhcs.core.runtime_tabular_values import (
-    FieldSpec,
-)
+from openhcs.core.pipeline.artifact_planning import artifact_producers_for_outputs
 from openhcs.core.runtime_measurements import (
     MeasurementScope,
     MeasurementSubject,
+    MeasurementTable,
 )
-from openhcs.core.runtime_tabular_values import ColumnarRows
+from openhcs.core.runtime_object_labels import object_label_dense_array
+from openhcs.core.runtime_tabular_values import (
+    ColumnarRows,
+    FieldSpec,
+)
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 from openhcs.processing.backends.cellprofiler.display_modules import (
-    ObjectOrImage,
     DisplayDensityPlotModule,
     DisplayHistogramModule,
     DisplayPlatemapModule,
     DisplayScatterPlotModule,
+    ObjectOrImage,
     display_density_plot,
     display_histogram,
     display_platemap,
@@ -60,13 +60,13 @@ from openhcs.processing.backends.cellprofiler.manual_objects import (
     IdentifyObjectsManuallyModule,
     identify_objects_manually,
 )
-from openhcs.processing.backends.cellprofiler.shape import (
-    MeasureObjectSizeShapeModule,
-)
 from openhcs.processing.backends.cellprofiler.projection import (
     MakeProjectionModule,
     ProjectionType,
     make_projection,
+)
+from openhcs.processing.backends.cellprofiler.shape import (
+    MeasureObjectSizeShapeModule,
 )
 
 
@@ -231,7 +231,7 @@ def test_display_declarations_consume_prior_measurements_and_emit_one_nominal_ta
     )
 
 
-def test_manual_and_projection_declarations_preserve_exact_output_order() -> None:
+def test_edit_and_projection_declarations_preserve_exact_output_order() -> None:
     image = ArtifactSpec.output("InputImage", ImageArtifactType)
     objects = ArtifactSpec.output("Objects", ObjectLabelsArtifactType)
     producers = artifact_producers_for_outputs(
@@ -258,18 +258,6 @@ def test_manual_and_projection_declarations_preserve_exact_output_order() -> Non
         available=(image, objects),
         producers=producers,
     )
-    manual_contract = _contract(
-        IdentifyObjectsManuallyModule,
-        _module(
-            "IdentifyObjectsManually",
-            {
-                "Select the input image": "InputImage",
-                "Name the objects to be identified": "ManualObjects",
-            },
-        ),
-        available=(image,),
-        producers=producers[:1],
-    )
     projection_contract = _contract(
         MakeProjectionModule,
         _module(
@@ -285,20 +273,13 @@ def test_manual_and_projection_declarations_preserve_exact_output_order() -> Non
         producers=producers[:1],
     )
 
-    assert tuple(
-        spec.artifact_type for spec in edit_contract.artifact_inputs
-    ) == (ObjectLabelsArtifactType,)
+    assert tuple(spec.artifact_type for spec in edit_contract.artifact_inputs) == (
+        ObjectLabelsArtifactType,
+    )
     assert tuple(spec.artifact_type for spec in edit_contract.artifact_outputs) == (
         MeasurementsArtifactType,
         ObjectLabelsArtifactType,
         ObjectLineageArtifactType,
-    )
-    assert tuple(
-        spec.artifact_type for spec in manual_contract.artifact_inputs
-    ) == (ImageArtifactType,)
-    assert tuple(spec.artifact_type for spec in manual_contract.artifact_outputs) == (
-        MeasurementsArtifactType,
-        ObjectLabelsArtifactType,
     )
     assert tuple(
         spec.artifact_type for spec in projection_contract.artifact_inputs
@@ -309,6 +290,19 @@ def test_manual_and_projection_declarations_preserve_exact_output_order() -> Non
         ImageArtifactType,
         MeasurementsArtifactType,
     )
+
+
+def test_interactive_manual_identification_rejects_headless_cppipe_import() -> None:
+    with pytest.raises(ValueError, match="requires interactive desktop input"):
+        IdentifyObjectsManuallyModule.validate_pipeline_import(
+            _module(
+                "IdentifyObjectsManually",
+                {
+                    "Select the input image": "InputImage",
+                    "Name the objects to be identified": "ManualObjects",
+                },
+            )
+        )
 
 
 def test_histogram_float_range_reconstructs_as_one_cellprofiler_setting_row() -> None:

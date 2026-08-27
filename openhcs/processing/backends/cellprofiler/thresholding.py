@@ -1,13 +1,14 @@
 """Threshold diagnostic backends for CellProfiler-compatible processing."""
 
 from __future__ import annotations
+
+import logging
+import math
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from functools import lru_cache
-import logging
-import math
-import time
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -20,28 +21,30 @@ from typing import (
     Unpack,
     get_type_hints,
 )
+
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
+
 from openhcs.constants.constants import MemoryType, VariableComponents
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
-from openhcs.core.callable_contract import runtime_image_execution_mode
-from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import artifact_inputs
+from openhcs.core.artifacts import (
+    ArtifactSpec,
+    ImageArtifactType,
+    ImageMeasurementSubjectRelation,
+)
+from openhcs.core.callable_contract import (
+    KeywordRuntimeParameter,
+    runtime_image_execution_mode,
+)
 from openhcs.core.measurement_row_materialization import (
     DataclassMeasurementColumnarRows,
     MeasurementSparseColumnarRows,
 )
+from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline.function_contracts import runtime_bound_parameters
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
-from openhcs.core.runtime_profile import RuntimeProfileLogger
-from openhcs.core.runtime_tabular_values import (
-    FieldSpec,
-)
-from openhcs.core.runtime_measurements import (
-    MeasurementRowAxisField,
-    MeasurementScalarLiteral,
-)
 from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
     image_intensity_scale_for_dtype,
@@ -49,17 +52,28 @@ from openhcs.core.runtime_image_values import (
     image_payload_data,
     image_payload_metadata,
 )
-from openhcs.core.runtime_tabular_values import ColumnarRows
+from openhcs.core.runtime_measurements import (
+    MeasurementRowAxisField,
+    MeasurementScalarLiteral,
+)
+from openhcs.core.runtime_profile import RuntimeProfileLogger
+from openhcs.core.runtime_tabular_values import (
+    ColumnarRows,
+    FieldSpec,
+)
+from openhcs.core.steps.function_runtime import RuntimeCallableKwargs
 from openhcs.interop.cellprofiler.image_normalization import (
     normalize_cellprofiler_image_payload,
 )
-from openhcs.interop.cellprofiler.settings_binder import (
-    SettingToKeywordBinding,
-    coerce_cellprofiler_enum,
-    normalize_cellprofiler_setting_name,
-    parse_cellprofiler_bool,
-    parse_cellprofiler_float,
-    parse_cellprofiler_int,
+from openhcs.interop.cellprofiler.module_artifact_declarations import (
+    MeasurementArtifactOutputModule,
+)
+from openhcs.interop.cellprofiler.module_declarations import (
+    CellProfilerModule,
+)
+from openhcs.interop.cellprofiler.module_settings import (
+    BoundModuleSettings,
+    CellProfilerModuleSettings,
 )
 from openhcs.interop.cellprofiler.runtime.measurement_recording import (
     FieldDerivedMeasurementFeatureModule,
@@ -70,24 +84,21 @@ from openhcs.interop.cellprofiler.runtime.measurement_recording import (
 from openhcs.interop.cellprofiler.runtime.measurement_rows import (
     ModuleOwnedResultMeasurementRows,
 )
-from openhcs.core.steps.function_runtime import RuntimeCallableKwargs
-from openhcs.interop.cellprofiler.module_settings import (
-    BoundModuleSettings,
-    CellProfilerModuleSettings,
-)
-from openhcs.interop.cellprofiler.module_declarations import (
-    CellProfilerModule,
-)
-from openhcs.interop.cellprofiler.module_artifact_declarations import (
-    MeasurementArtifactOutputModule,
-)
 from openhcs.interop.cellprofiler.setting_names import setting_values
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    coerce_cellprofiler_enum,
+    normalize_cellprofiler_setting_name,
+    parse_cellprofiler_bool,
+    parse_cellprofiler_float,
+    parse_cellprofiler_int,
+)
 from openhcs.processing.backends.cellprofiler._backend import (
-    BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    BackendProviderInput,
+    CellProfilerBackendAuthority,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    CellProfilerBackendAuthority,
 )
 from openhcs.processing.backends.cellprofiler.enum_attributes import (
     CellProfilerEnumAttributeMixin,
@@ -129,21 +140,16 @@ from openhcs.processing.backends.cellprofiler.thresholding_threshold_numba_otsu 
     _yen_threshold_numba,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.core.artifacts import (
-    ArtifactSpec,
-    ImageArtifactType,
-    ImageMeasurementSubjectRelation,
-)
 
 if TYPE_CHECKING:
     from openhcs.core.artifacts import ArtifactSpecCollection, ArtifactSpecRelation
     from openhcs.core.function_patterns import FunctionInvocationKey
     from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
     from openhcs.interop.cellprofiler.parser import ModuleBlock
-    from openhcs.interop.cellprofiler.settings_binder import SettingsBinder
     from openhcs.interop.cellprofiler.runtime.output_record_request import (
         CellProfilerOutputRecordRequest,
     )
+    from openhcs.interop.cellprofiler.settings_binder import SettingsBinder
 
 CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE = 1.3488
 THRESHOLD_BACKEND_REGISTRY_KEY = "backend_key"
@@ -2648,14 +2654,15 @@ class ThresholdResult(AdaptiveObjectThresholdResult):
         )
 
 
-@artifact_inputs(
-    ArtifactSpec.input(
-        "mask",
-        ImageArtifactType,
-        parameter_name="mask",
-        required=False,
-    )
-)
+class _ThresholdEmbeddedMaskRuntimeParameter(KeywordRuntimeParameter):
+    """Mask projected from the primary image payload when one is present."""
+
+    parameter_name = "mask"
+    annotation_type = np.ndarray | None
+    parameter_default = None
+
+
+@runtime_bound_parameters(_ThresholdEmbeddedMaskRuntimeParameter)
 @runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
 @numpy(contract=ProcessingContract.PURE_2D)
 def threshold(

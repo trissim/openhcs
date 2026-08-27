@@ -1,32 +1,12 @@
-from enum import Enum
 import inspect
+from enum import Enum
+
 import pytest
+
 from openhcs.core.callable_contract import CallableContract
-from openhcs.interop.cellprofiler.settings_binder import (
-    SettingToKeywordBinding,
-    SettingsBinder,
-    normalize_cellprofiler_setting_name,
-    parse_cellprofiler_int,
-)
-from openhcs.interop.cellprofiler.parser import (
-    CPPipeParser,
-    ModuleBlock,
-    ModuleSetting,
-)
 from openhcs.interop.cellprofiler.measurement_scope import (
     CellProfilerMeasurementTargetScope,
 )
-from openhcs.processing.backends.cellprofiler.colocalization import (
-    MeasureColocalizationModule,
-)
-from openhcs.processing.backends.cellprofiler.texture import MeasureTextureModule
-from openhcs.processing.backends.cellprofiler.grid import (
-    DefineGridCycleScope,
-    DefineGridManualModule,
-    DiameterChoice,
-    ShapeChoice,
-)
-from openhcs.interop.cellprofiler.setting_names import setting_names
 from openhcs.interop.cellprofiler.module_declarations import (
     CellProfilerModule,
 )
@@ -34,7 +14,27 @@ from openhcs.interop.cellprofiler.module_settings import (
     ModuleSettingCoverageStatus,
     UnmappedModuleSettingsError,
 )
-from openhcs.processing.backends.cellprofiler.morphology import ResizeObjectsModule
+from openhcs.interop.cellprofiler.parser import (
+    CPPipeParser,
+    ModuleBlock,
+    ModuleSetting,
+)
+from openhcs.interop.cellprofiler.setting_names import setting_names
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingsBinder,
+    SettingToKeywordBinding,
+    normalize_cellprofiler_setting_name,
+    parse_cellprofiler_int,
+)
+from openhcs.processing.backends.cellprofiler.colocalization import (
+    MeasureColocalizationModule,
+)
+from openhcs.processing.backends.cellprofiler.grid import (
+    DefineGridCycleScope,
+    DefineGridManualModule,
+    DiameterChoice,
+    ShapeChoice,
+)
 from openhcs.processing.backends.cellprofiler.image_geometry import (
     InterpolationMethod,
     MaskImageModule,
@@ -44,12 +44,14 @@ from openhcs.processing.backends.cellprofiler.image_geometry import (
 from openhcs.processing.backends.cellprofiler.image_quality import (
     MeasureImageQualityModule,
 )
-from openhcs.processing.backends.cellprofiler.shape import (
-    MeasureObjectSizeShapeModule,
-)
 from openhcs.processing.backends.cellprofiler.measurement_math import (
     CalculateMathModule,
 )
+from openhcs.processing.backends.cellprofiler.morphology import ResizeObjectsModule
+from openhcs.processing.backends.cellprofiler.shape import (
+    MeasureObjectSizeShapeModule,
+)
+from openhcs.processing.backends.cellprofiler.texture import MeasureTextureModule
 from openhcs.processing.backends.cellprofiler.watershed import WatershedModule
 
 
@@ -733,6 +735,57 @@ def test_enhance_or_suppress_features_settings_bind_to_runtime_kwargs():
     assert not bound.unmapped_kwargs
 
 
+def test_match_template_resolves_cellprofiler_template_file(tmp_path):
+    template_path = tmp_path / "template.png"
+    template_path.write_bytes(b"template fixture")
+    module = ModuleBlock(
+        name="MatchTemplate",
+        module_num=7,
+        setting_records=[
+            ModuleSetting("Image", "OrigGreen"),
+            ModuleSetting("Template", "template.png"),
+            ModuleSetting("Output", "MatchedGreen"),
+        ],
+    )
+
+    module_type = CellProfilerModule.require_module(module.name)
+    bound = module_type.bind_settings(
+        module,
+        binder=SettingsBinder(source_root=tmp_path),
+    )
+
+    assert bound.kwargs == {
+        "image": "OrigGreen",
+        "template_path": template_path,
+        "output": "MatchedGreen",
+    }
+    assert not bound.unmapped_kwargs
+
+
+def test_match_template_reads_its_declared_template_file(tmp_path):
+    import numpy as np
+    from imageio.v3 import imwrite
+
+    from openhcs.processing.backends.cellprofiler.feature_enhancement import (
+        match_template,
+    )
+
+    template = np.array(
+        [[0, 1, 0], [1, 1, 1], [0, 1, 0]],
+        dtype=np.uint8,
+    )
+    image = np.zeros((1, 9, 9), dtype=np.float32)
+    image[0, 3:6, 3:6] = template
+    template_path = tmp_path / "template.png"
+    imwrite(template_path, template)
+
+    matched = match_template(image, template_path)
+
+    assert matched.shape == image.shape
+    assert matched.dtype == np.float32
+    assert np.unravel_index(np.argmax(matched[0]), matched[0].shape) == (4, 4)
+
+
 def test_smooth_settings_bind_to_runtime_kwargs():
     module = ModuleBlock(
         name="Smooth",
@@ -847,9 +900,12 @@ def test_calculate_math_settings_bind_from_module_declaration():
     )
     bound = _bind_declared_module_settings(module)
     assert bound.kwargs["output_name"] == "Ratio"
-    assert bound.kwargs[
-        CalculateMathModule.numerator_objects_binding.require_parameter_name()
-    ] == "Nuclei"
+    assert (
+        bound.kwargs[
+            CalculateMathModule.numerator_objects_binding.require_parameter_name()
+        ]
+        == "Nuclei"
+    )
     assert (
         bound.kwargs[
             CalculateMathModule.denominator_objects_binding.require_parameter_name()
@@ -1461,9 +1517,11 @@ def test_measure_object_size_shape_splits_repeated_object_sets_into_invocations(
     blocks = MeasureObjectSizeShapeModule.invocation_module_blocks(module)
     bound = tuple(_bind_declared_module_settings(block) for block in blocks)
 
-    assert tuple(
-        item.kwargs["select_object_sets_to_measure"] for item in bound
-    ) == ("Comet", "CometHead", "CometTail")
+    assert tuple(item.kwargs["select_object_sets_to_measure"] for item in bound) == (
+        "Comet",
+        "CometHead",
+        "CometTail",
+    )
     assert all(item.kwargs["calculate_advanced"] is False for item in bound)
 
 
@@ -1910,12 +1968,14 @@ def test_setting_bindings_preserve_sparse_identity_by_signature():
         CorrectIlluminationCalculateModule,
     )
 
-    assert "input_partition_type" not in inspect.signature(
-        SettingToKeywordBinding
-    ).parameters
-    assert "partition_type" not in inspect.signature(
-        SettingToKeywordBinding.input
-    ).parameters
+    assert (
+        "input_partition_type"
+        not in inspect.signature(SettingToKeywordBinding).parameters
+    )
+    assert (
+        "partition_type"
+        not in inspect.signature(SettingToKeywordBinding.input).parameters
+    )
 
     module_type = CorrectIlluminationCalculateModule
     function_parameters = inspect.signature(module_type.require_callable()).parameters
@@ -2235,9 +2295,7 @@ def test_repeated_choice_bindings_retain_nominal_enum_values():
         OperandChoice.BINARY_IMAGE,
         OperandChoice.OBJECTS,
     )
-    assert outline_bound.kwargs["outline_source_kinds"] == (
-        OutlineSourceKind.OBJECTS,
-    )
+    assert outline_bound.kwargs["outline_source_kinds"] == (OutlineSourceKind.OBJECTS,)
 
 
 def test_filter_objects_requires_canonical_additional_object_count_row():

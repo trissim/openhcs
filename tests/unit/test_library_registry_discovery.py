@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import textwrap
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -183,6 +184,35 @@ def test_runtime_discovery_requires_an_array_main_flow_output() -> None:
     assert rejected is False
     assert accepted_contract is not None
     assert accepted is True
+
+
+def test_runtime_tested_registries_share_unwritable_parameter_projection() -> None:
+    """cuCIM and scikit-image derive editor exclusions from one owner."""
+
+    from openhcs.processing.backends.lib_registry.cupy_registry import CupyRegistry
+    from openhcs.processing.backends.lib_registry.scikit_image_registry import (
+        SkimageRegistry,
+    )
+
+    class DeprecatedDefault:
+        pass
+
+    def external_function(
+        image: np.ndarray,
+        required_value: int,
+        threshold: float = 0.5,
+        callback: Callable[[np.ndarray], np.ndarray] = np.sum,
+        opaque=None,
+        deprecated_value: int = DeprecatedDefault,
+    ) -> np.ndarray:
+        del required_value, threshold, callback, opaque, deprecated_value
+        return image
+
+    expected = ("callback", "opaque", "deprecated_value")
+    assert (
+        SkimageRegistry().runtime_owned_parameter_names(external_function) == expected
+    )
+    assert CupyRegistry().runtime_owned_parameter_names(external_function) == expected
 
 
 def test_registry_cache_miss_is_prepared_out_of_process(monkeypatch) -> None:

@@ -28,6 +28,7 @@ import logging
 import os
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable as CallableABC
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from functools import lru_cache, wraps
@@ -43,6 +44,8 @@ from typing import (
     MutableMapping,
     Optional,
     Tuple,
+    get_args,
+    get_origin,
     get_type_hints,
 )
 
@@ -50,7 +53,12 @@ import numpy as np
 from arraybridge import MemoryContractAttribute, SliceBySliceRuntimeParameter
 from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict, RegistryConfig
 from polystore import atomic_write_json
-from python_introspect import RuntimeParameterDeclarationABC
+from python_introspect import (
+    RuntimeParameterDeclarationABC,
+    SignatureAnalyzer,
+    is_union_type,
+    resolve_annotated,
+)
 
 from openhcs.constants import MemoryType
 from openhcs.core.aligned_image_payload import AlignedImageStack
@@ -2290,16 +2298,44 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         self,
         func: Callable[..., Any],
     ) -> tuple[str, ...]:
-        """Return library-declared parameters owned by adapter execution.
+        """Keep non-authorable library controls at their declared defaults.
 
-        Runtime-tested libraries may expose optional output buffers, device
-        handles, or comparable execution controls in their Python signature.
-        Their registry owns whether those parameters remain at library defaults
-        instead of becoming authored pipeline values.
+        Runtime-discovered libraries commonly expose callbacks, opaque values,
+        and callable deprecation sentinels that cannot be authored faithfully by
+        a parameter editor.  The shared runtime-tested declaration family owns
+        that projection for every such library.
         """
 
-        del func
-        return ()
+        signature = inspect.signature(func)
+        return tuple(
+            parameter_name
+            for parameter_name, parameter_info in SignatureAnalyzer.analyze(
+                func,
+                skip_first_param=False,
+            ).items()
+            if not self._annotation_has_authored_value(parameter_info.param_type)
+            or self._has_callable_default(signature.parameters[parameter_name])
+        )
+
+    @classmethod
+    def _annotation_has_authored_value(cls, annotation: object) -> bool:
+        """Return whether an inferred annotation contains an editable value."""
+
+        resolved = resolve_annotated(annotation)
+        if is_union_type(resolved):
+            return any(
+                member is not type(None) and cls._annotation_has_authored_value(member)
+                for member in get_args(resolved)
+            )
+        return resolved is not Any and get_origin(resolved) is not CallableABC
+
+    @staticmethod
+    def _has_callable_default(parameter: inspect.Parameter) -> bool:
+        """Return whether a callable object is serving as a library default."""
+
+        return parameter.default is not inspect.Parameter.empty and callable(
+            parameter.default
+        )
 
     def create_library_adapter(
         self, original_func: Callable, contract: ProcessingContract

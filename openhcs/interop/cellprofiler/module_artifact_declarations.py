@@ -1,6 +1,7 @@
 """Nominal artifact declarations authorities for CellProfiler modules."""
 
 from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import replace
@@ -10,12 +11,7 @@ from typing import (
     Any,
     ClassVar,
 )
-from openhcs.core.callable_contract import (
-    CallableContract,
-    ImagePayloadConsumption,
-)
-from openhcs.core.config import StepSourceBindingsConfig
-from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
+
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
     ArtifactOutputPlan,
@@ -27,13 +23,19 @@ from openhcs.core.artifacts import (
     ImageArtifactType,
     ImageMeasurementSubjectRelation,
     InputGroupLineageSourceRelation,
+    MeasurementsArtifactType,
     ObjectLabelsArtifactType,
     ObjectLineageArtifactType,
     ObjectMeasurementSubjectRelation,
-    MeasurementsArtifactType,
     SourceStackLineageSourceRelation,
 )
+from openhcs.core.callable_contract import (
+    CallableContract,
+    ImagePayloadConsumption,
+)
+from openhcs.core.config import StepSourceBindingsConfig
 from openhcs.core.equivalence.policy import normalize_runtime_identifier
+from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
 from openhcs.core.runtime_measurements import (
     MeasurementScope,
     RuntimeMeasurementFeature,
@@ -42,35 +44,36 @@ from openhcs.core.runtime_relationships import ObjectRelationshipDeclaration
 from openhcs.core.source_bindings import (
     SourceBindingsConfig,
 )
-from openhcs.interop.cellprofiler.settings_binder import (
-    MeasurementFeatureSettingBinding,
-    SettingToKeywordBinding,
-)
-from openhcs.interop.cellprofiler.setting_names import (
-    SettingNameFamily,
-)
 from openhcs.interop.cellprofiler.runtime.measurement_recording import (
     CurrentPayloadMeasurementRecordMixin,
     RelationshipMeasurementRecordRowsMixin,
 )
+from openhcs.interop.cellprofiler.setting_names import (
+    SettingNameFamily,
+)
+from openhcs.interop.cellprofiler.settings_binder import (
+    MeasurementFeatureSettingBinding,
+    SettingToKeywordBinding,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from openhcs.core.function_patterns import (
         FunctionInvocationKey,
+    )
+    from openhcs.core.runtime_image_values import ImagePayloadMetadata
+    from openhcs.core.runtime_tabular_values import ColumnarRows
+    from openhcs.core.steps.function_runtime import (
+        RuntimeCallableKwargs,
+        RuntimeFunctionOutput,
     )
     from openhcs.interop.cellprofiler.measurement_scope import (
         CellProfilerMeasurementTargetScope,
     )
-    from openhcs.core.runtime_image_values import ImagePayloadMetadata
-    from openhcs.core.runtime_tabular_values import ColumnarRows
     from openhcs.interop.cellprofiler.parser import ModuleBlock
     from openhcs.interop.cellprofiler.runtime.output_record_request import (
         CellProfilerOutputRecordRequest,
-    )
-    from collections.abc import Callable
-    from openhcs.core.steps.function_runtime import (
-        RuntimeCallableKwargs,
-        RuntimeFunctionOutput,
     )
 from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 from openhcs.interop.cellprofiler.module_measurement_features import ObjectCountFeature
@@ -185,14 +188,18 @@ class PerObjectMeasurementExecutionModule(PlaneRuntimeArtifactModule):
         return bool(object_inputs)
 
 
-class SourceSetupCellProfilerModule(CellProfilerModule, ABC):
-    """Nominal root for setup modules that only contribute source declarations."""
+class NonExecutableCellProfilerModule(CellProfilerModule, ABC):
+    """Nominal root for artifact declarations that emit no function step."""
 
     function_name = None
 
     @classmethod
     def emits_function_step(cls) -> bool:
         return False
+
+
+class SourceSetupCellProfilerModule(NonExecutableCellProfilerModule, ABC):
+    """Nominal root for setup modules that only contribute source declarations."""
 
     @classmethod
     @abstractmethod
@@ -202,6 +209,21 @@ class SourceSetupCellProfilerModule(CellProfilerModule, ABC):
         config: "SourceBindingsConfig",
     ) -> "SourceBindingsConfig":
         """Return source declarations contributed by this setup module."""
+
+
+class InteractiveCellProfilerModule(NonExecutableCellProfilerModule, ABC):
+    """Nominal root for artifact modules requiring desktop interaction."""
+
+    @classmethod
+    def validate_pipeline_import(cls, module: "ModuleBlock") -> None:
+        """Reject headless import instead of silently omitting interaction."""
+
+        del module
+        raise ValueError(
+            f"CellProfiler module {cls.require_module_name()!r} requires "
+            "interactive desktop input and cannot be imported as a headless "
+            "OpenHCS FunctionStep."
+        )
 
 
 class ObjectArtifactInputModule(CellProfilerModule):
@@ -343,13 +365,13 @@ class ObjectArtifactOutputModule(
         request: "CellProfilerOutputRecordRequest",
     ) -> "ColumnarRows":
         """Emit canonical count and location rows for declared object outputs."""
-        from openhcs.core.runtime_measurements import MeasurementRowAxisField
-        from openhcs.core.runtime_tabular_values import FieldSpec
         from openhcs.core.measurement_row_materialization import (
             ConcatenatedColumnarRows,
             MeasurementProjectedColumnarRows,
             MeasurementRowsAxisProjection,
         )
+        from openhcs.core.runtime_measurements import MeasurementRowAxisField
+        from openhcs.core.runtime_tabular_values import FieldSpec
         from openhcs.interop.cellprofiler.measurement_lookup import (
             CellProfilerMeasurementFeature,
         )
@@ -820,8 +842,7 @@ class SourceQualifiedWideMeasurementRowsModule(
             wide_measurement_feature_columns,
         )
         from openhcs.core.runtime_measurements import MeasurementRowAxisField
-        from openhcs.core.runtime_tabular_values import FieldSpec
-        from openhcs.core.runtime_tabular_values import ColumnarRows
+        from openhcs.core.runtime_tabular_values import ColumnarRows, FieldSpec
 
         if not isinstance(rows, ColumnarRows):
             raise TypeError(

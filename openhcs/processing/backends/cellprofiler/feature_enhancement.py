@@ -1,33 +1,36 @@
 """Converted from CellProfiler: EnhanceOrSuppressFeatures."""
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar
+
 import numpy as np
-from numba import njit
 from metaclass_registry import AutoRegisterMeta
-from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
-from openhcs.interop.cellprofiler.settings_binder import (
-    SettingToKeywordBinding,
-    coerce_cellprofiler_enum,
-)
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.interop.cellprofiler.module_settings import (
-    BoundModuleSettings,
-)
-from openhcs.interop.cellprofiler.module_declarations import (
-    CellProfilerModule,
-)
+from numba import njit
+
+from openhcs.core.artifacts import ImageArtifactType
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_image_values import (
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
 )
-from openhcs.core.artifacts import ArtifactSpec, ImageArtifactType
-from openhcs.core.pipeline.function_contracts import artifact_inputs
+from openhcs.core.vfs_protocol import PlateInputFile
+from openhcs.interop.cellprofiler.module_declarations import (
+    CellProfilerModule,
+)
+from openhcs.interop.cellprofiler.module_settings import (
+    BoundModuleSettings,
+)
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    SourceFileSettingBinding,
+    coerce_cellprofiler_enum,
+)
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 if TYPE_CHECKING:
     from openhcs.interop.cellprofiler.parser import ModuleBlock
@@ -113,14 +116,15 @@ def enhance_or_suppress_features(
     )
 
 
-class EnhanceOrSuppressFeaturesModule(
-    CellProfilerModule
-):
+class EnhanceOrSuppressFeaturesModule(CellProfilerModule):
     module_name = "EnhanceOrSuppressFeatures"
     function_name = "enhance_or_suppress_features"
     validated = True
     confidence = 1.0
-    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (SettingToKeywordBinding.input("Select the input image", ImageArtifactType),SettingToKeywordBinding.output("Name the output image", ImageArtifactType),SettingToKeywordBinding("Select the operation", "method"),
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        SettingToKeywordBinding.input("Select the input image", ImageArtifactType),
+        SettingToKeywordBinding.output("Name the output image", ImageArtifactType),
+        SettingToKeywordBinding("Select the operation", "method"),
         SettingToKeywordBinding("Feature type", "enhance_method"),
         SettingToKeywordBinding("Smoothing scale", "smoothing_value"),
         SettingToKeywordBinding("Shear angle", "dic_angle"),
@@ -128,7 +132,8 @@ class EnhanceOrSuppressFeaturesModule(
         SettingToKeywordBinding("Enhancement method", "neurite_method"),
         SettingToKeywordBinding("Speed and accuracy", "speckle_accuracy"),
         SettingToKeywordBinding("Range of hole sizes", "dark_hole_radius_range"),
-        SettingToKeywordBinding("Feature size", "feature_size"),)
+        SettingToKeywordBinding("Feature size", "feature_size"),
+    )
     ignored_settings = ("Rescale result image",)
 
     @classmethod
@@ -153,36 +158,22 @@ class EnhanceOrSuppressFeaturesModule(
         )
 
 
-@artifact_inputs(
-    ArtifactSpec.input(
-        "template",
-        ImageArtifactType,
-        parameter_name="template",
-        required=False,
-    )
-)
 @numpy(contract=ProcessingContract.PURE_3D)
 def match_template(
-    image: np.ndarray, template: np.ndarray | None = None, pad_input: bool = True
+    image: np.ndarray,
+    template_path: PlateInputFile,
+    pad_input: bool = True,
 ) -> np.ndarray:
     """Match an image template using normalized cross-correlation.
 
     Args:
-        template: Reference pattern to locate; when omitted, the second input
-            slice is used as the template.
+        template_path: Plate-relative cropped reference image to locate.
         pad_input: Preserve the input spatial size by padding correlation edges.
     """
     from skimage.feature import match_template as skimage_match_template
+    from skimage.io import imread
 
-    if template is None:
-        if image.shape[0] < 2:
-            raise ValueError(
-                "When template is not provided, image must have at least 2 slices in dimension 0: [input_image, template]."
-            )
-        output = skimage_match_template(
-            image=image[0], template=image[1], pad_input=pad_input
-        )
-        return output[np.newaxis, ...].astype(np.float32)
+    template = np.asarray(imread(template_path))
     template_2d = template[0] if template.ndim == 3 else template
     return np.stack(
         [
@@ -476,3 +467,9 @@ class MatchTemplateModule(CellProfilerModule):
     function_name = "match_template"
     validated = True
     confidence = 1.0
+    template_binding = SourceFileSettingBinding("Template", "template_path")
+    setting_bindings = (
+        SettingToKeywordBinding.input("Image", ImageArtifactType),
+        template_binding,
+        SettingToKeywordBinding.output("Output", ImageArtifactType),
+    )

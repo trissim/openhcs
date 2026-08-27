@@ -12,35 +12,35 @@ the resulting label images.
 
 from __future__ import annotations
 
-import numpy as np
 from dataclasses import dataclass
-from openhcs.core.memory.decorators import numpy
-from openhcs.core.measurement_row_materialization import (
-    DataclassMeasurementColumnarRows,
-)
-from openhcs.interop.cellprofiler.module_declarations import (
-    CellProfilerModule,
-)
-from openhcs.interop.cellprofiler.module_artifact_declarations import (
-    MeasurementArtifactOutputModule,
-    ObjectArtifactOutputModule,
-)
-from openhcs.core.runtime_object_labels import (
-    ObjectLabelValue,
-    object_label_dense_array,
-)
-from openhcs.core.runtime_object_label_building import (
-    SourceImageObjectLabelBuildRequest,
-)
-from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
-from openhcs.interop.cellprofiler.settings_binder import SettingToKeywordBinding
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+
+import numpy as np
+
 from openhcs.core.artifacts import (
     ArtifactSpec,
     ImageArtifactType,
     ObjectLabelsArtifactType,
 )
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
+)
+from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import artifact_inputs
+from openhcs.core.runtime_object_label_building import (
+    SourceImageObjectLabelBuildRequest,
+)
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelValue,
+    object_label_dense_array,
+)
+from openhcs.interop.cellprofiler.module_artifact_declarations import (
+    InteractiveCellProfilerModule,
+    MeasurementArtifactOutputModule,
+    ObjectArtifactOutputModule,
+)
+from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
+from openhcs.interop.cellprofiler.settings_binder import SettingToKeywordBinding
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,12 +162,15 @@ def identify_objects_manually(
 class IdentifyObjectsManuallyModule(
     MeasurementArtifactOutputModule,
     ObjectArtifactOutputModule,
-    CellProfilerModule,
+    InteractiveCellProfilerModule,
 ):
     module_name = "IdentifyObjectsManually"
-    function_name = "identify_objects_manually"
-    validated = True
-    confidence = 1.0
     image_input_setting = SettingNameFamily("Select the input image")
     object_output_setting = SettingNameFamily("Name the objects to be identified")
-    setting_bindings = (SettingToKeywordBinding.input(image_input_setting, ImageArtifactType),SettingToKeywordBinding.output(object_output_setting, ObjectLabelsArtifactType),)
+    setting_bindings = (
+        SettingToKeywordBinding.input(image_input_setting, ImageArtifactType),
+        SettingToKeywordBinding.output(
+            object_output_setting,
+            ObjectLabelsArtifactType,
+        ),
+    )

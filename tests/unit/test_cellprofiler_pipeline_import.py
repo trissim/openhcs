@@ -28,15 +28,15 @@ from openhcs.core.function_patterns import (
 )
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
 from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
+from openhcs.core.pipeline.artifact_planning import (
+    artifact_producers_for_outputs,
+)
 from openhcs.core.source_bindings import (
     ComponentSelector,
     NamedSourceBinding,
     SourceBindingMatchMethod,
     SourceProjectionRole,
     StepSourceBindingsConfig,
-)
-from openhcs.core.pipeline.artifact_planning import (
-    artifact_producers_for_outputs,
 )
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.vfs_protocol import FileManagerLike
@@ -46,9 +46,9 @@ from openhcs.interop.cellprofiler.module_declarations import (
 from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 from openhcs.interop.cellprofiler.pipeline_import import (
     _ParsedTargetUnit,
-    _SelectedInputBindingOccurrence,
     _public_kwargs_for_target,
     _public_step_source_bindings,
+    _SelectedInputBindingOccurrence,
     import_cellprofiler_pipeline,
 )
 from openhcs.interop.cellprofiler.setting_names import (
@@ -208,6 +208,26 @@ SaveImages:[module_num:3|enabled:True]
         normalize_function_pattern(reconstructed_steps[-1].func).iter_items()
     )
     assert "select_the_image_to_save" not in save_invocation.kwargs_dict
+
+
+def test_direct_import_rejects_interactive_manual_identification() -> None:
+    cppipe_path = Path("pipelines/interactive.cppipe")
+    filemanager = _MemoryFileManager(
+        {
+            cppipe_path: """CellProfiler Pipeline: https://cellprofiler.org
+IdentifyObjectsManually:[module_num:1|enabled:True]
+    Select the input image:DNA
+    Name the objects to be identified:ManualObjects
+"""
+        }
+    )
+
+    with pytest.raises(ValueError, match="requires interactive desktop input"):
+        import_cellprofiler_pipeline(
+            cppipe_path,
+            filemanager=filemanager,
+            backend=Backend.MEMORY,
+        )
 
 
 def test_image_intensity_without_object_mask_lowers_to_image_callable(

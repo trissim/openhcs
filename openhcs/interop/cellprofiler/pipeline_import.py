@@ -9,10 +9,10 @@ from inspect import Parameter, signature
 from pathlib import Path
 
 from objectstate import config_context
-
 from objectstate.lazy_factory import (
     resolve_lazy_configurations_for_serialization,
 )
+
 from openhcs.constants import AllComponents, Backend, GroupBy, VariableComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.artifacts import (
@@ -47,15 +47,15 @@ from openhcs.core.pipeline.artifact_planning import (
 from openhcs.core.source_bindings import (
     SourceBindingsConfig,
     StepSourceBindingsConfig,
+    source_binding_group_keys_for_group_by,
 )
-from openhcs.core.source_bindings import source_binding_group_keys_for_group_by
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.vfs_protocol import FileManagerLike
 from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock
 from openhcs.interop.cellprofiler.settings_binder import (
-    SettingToKeywordBinding,
     SettingsBinder,
+    SettingToKeywordBinding,
 )
 
 
@@ -144,6 +144,7 @@ def _public_pipeline(
         if not module.enabled:
             continue
         module_type = CellProfilerModule.require_module(module.name)
+        module_type.validate_pipeline_import(module)
         if not module_type.emits_function_step():
             continue
         executable_modules.extend(

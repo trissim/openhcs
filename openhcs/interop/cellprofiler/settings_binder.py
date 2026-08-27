@@ -2,8 +2,7 @@
 
 import logging
 import re
-from collections.abc import Callable
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -17,11 +16,6 @@ from openhcs.core.artifacts import (
     ArtifactType,
 )
 from openhcs.core.source_bindings import resolve_source_file
-from openhcs.interop.cellprofiler_setting_normalization import (
-    normalize_cellprofiler_setting_name,
-)
-
-from .parser import ModuleBlock, ModuleSetting
 from openhcs.interop.cellprofiler.cellprofiler_literals import (
     cellprofiler_setting_literal,
 )
@@ -32,6 +26,11 @@ from openhcs.interop.cellprofiler.setting_names import (
     setting_names,
     setting_values,
 )
+from openhcs.interop.cellprofiler_setting_normalization import (
+    normalize_cellprofiler_setting_name,
+)
+
+from .parser import ModuleBlock, ModuleSetting
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +46,7 @@ _ENUM_DOMAIN_SUFFIXES = (
 )
 
 CellProfilerSettingValue = (
-    bool | int | float | str | tuple[int | float, ...] | list[str] | Enum
+    bool | int | float | str | Path | tuple[int | float, ...] | list[str] | Enum
 )
 SettingParser = Callable[[str], CellProfilerSettingValue]
 
@@ -382,6 +381,21 @@ class SettingToKeywordBinding:
             if self.parse is None
             else self.parse(value)
         )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceFileSettingBinding(SettingToKeywordBinding):
+    """Setting binding that resolves a file relative to its pipeline source."""
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        kwargs: dict[str, CellProfilerSettingValue],
+        binder: "SettingsBinder",
+    ) -> None:
+        value = optional_setting_value(module, self.setting_name)
+        if value is not None:
+            kwargs[self.require_parameter_name()] = binder.resolve_source_file(value)
 
 
 @dataclass(frozen=True, slots=True)
