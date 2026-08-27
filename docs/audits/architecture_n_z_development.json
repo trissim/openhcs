@@ -2793,7 +2793,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "7ddc463af18d92fd748df2a3161c6bce22cbb424e4468a6e80b1fffcbb7ac6de",
+    "source_sha256": "3e81c8ea04888fd65389aae117fcb5faebecfddd2b1305ce4fc1cce8642e25de",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2836,18 +2836,28 @@
         "role": "Proves source wheelhouse discovery, build ordering, root-wheel validation, and the build-only command boundary."
       },
       {
+        "path": "scripts/wait_for_pypi_release.py",
+        "sha256": "c98c9fca6b0fa852a245eca10cbe25456c4a05fa150ac97f6c83db99428efd1c",
+        "role": "Validates exact-version PyPI metadata and installer-index propagation, projects hash-pinned wheel requirements, and materializes the published release files only after their declared SHA-256 digests match."
+      },
+      {
+        "path": "tests/unit/test_wait_for_pypi_release.py",
+        "sha256": "cabe65c08b8a9d1c5e081f597fe53bbec95c36650a2919a1992d62368096441b",
+        "role": "Proves exact release selection, installer-index readiness, hash-pinned wheel projection, byte-preserving release materialization, and digest-mismatch rejection."
+      },
+      {
         "path": "tests/unit/test_validate_local_release_floors.py",
         "sha256": "c9016348d86f7585ee08a4e1432e10c8071c612736aaf171dcd7e495efe14ff1",
         "role": "Proves metadata discovery and nominal requirement-to-candidate compatibility across stable and pre-1.0 release series."
       },
       {
         "path": ".github/workflows/publish.yml",
-        "sha256": "b2bd88b326e0797fe4647ab220cf779fa6b229315bc3d8fba322007fcf0e255f",
+        "sha256": "5039b3878de77647a1abf839923ffb0f675478263ffc9a8840139710d00a6ca9",
         "role": "Exact-tag installer, installed-GUI startup, PyPI, GitHub Release, recovery, and MCP Registry workflow consuming the central release requirements."
       },
       {
         "path": "tests/unit/test_mcp_release_workflow.py",
-        "sha256": "dd9ecfc26acb2b39bd6458a25b101acf76f7a7eb65cb52b0612fb1c0845020f4",
+        "sha256": "f826c140fe75ab2e0f101a8f9096662a9fc7da5041e2483afabe8251ce5143a8",
         "role": "Proves immutable tag resolution, exact-SHA checkout, publication ordering, recovery, Registry policy, and publication-independent native candidate ownership."
       },
       {
@@ -2932,7 +2942,7 @@
       },
       {
         "path": "tests/installer/test_installer_signing.py",
-        "sha256": "388fec39bef15d78f11694e642d3a45cc7ed41e9cef2e2c757466807016e49a6",
+        "sha256": "c8f9d050c4337086766e732bb09b39bd7cd61d0f7c4866fd66f6417d99c4ca1b",
         "role": "Regression proof for workflow signing policy and both native signing-helper contracts."
       },
       {
@@ -2969,7 +2979,8 @@
       "The installed-GUI canary constructed the application below the production logging boundary, so a successful endpoint could advertise an empty log; the probe now applies its declared logging configuration and fails unless the exact advertised log contains output.",
       "Native installer acceptance invoked worker mode without proving that either shipping wizard could start or drive installation; each supported lane now activates the shipping wizard and retains its welcome, progress, and completion states.",
       "The Windows installer evidence harness captured its welcome frame when only the top-level handle existed, before child controls painted; capture now requires the real primary control and synchronizes recursive rendering with desktop composition.",
-      "Integration and Documentation workflows allowed superseded commits on the same event and ref to consume the full hosted matrix; their declarations now cancel predecessors while keeping manual dispatches independent."
+      "Integration and Documentation workflows allowed superseded commits on the same event and ref to consume the full hosted matrix; their declarations now cancel predecessors while keeping manual dispatches independent.",
+      "Post-PyPI recovery rebuilt the wheel and source distribution, so GitHub could receive semantically equivalent but byte-distinct archives; recovery now materializes the PyPI-owned files and verifies their declared hashes before attaching them."
     ],
     "disposition": "revise",
     "validation": [
@@ -3025,7 +3036,8 @@
       "On 2026-08-27, re-read the complete release how-to after the Python quality baseline moved from whole-workflow success to the owning code-quality job; revised the CI gate explanation and verified the resolver against live GitHub history plus three focused regressions.",
       "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after exact-head evidence exposed a stale inline resolver assertion and an unpainted Windows welcome capture; the page remains accurate without implementation detail, and 48 focused CI and installer regressions passed.",
       "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after the Website source-validation workflow moved from unpublished PyPI candidates to metadata-resolved submodules; this does not change the documented release-candidate or publication gates, and 25 focused CI-boundary tests passed.",
-      "On 2026-08-27, re-read and revised the complete release how-to against event-and-ref workflow concurrency; cancelled predecessors remain non-evidence, manual dispatches remain separate, and release readiness still requires successful exact-commit push runs."
+      "On 2026-08-27, re-read and revised the complete release how-to against event-and-ref workflow concurrency; cancelled predecessors remain non-evidence, manual dispatches remain separate, and release readiness still requires successful exact-commit push runs.",
+      "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after the 0.8.0 recovery exposed byte-distinct rebuilt archives; 47 focused release-policy tests, 77 installer tests, Ruff, Black, live PyPI materialization, and matching PyPI and GitHub SHA-256 values validate the revised single-artifact-authority path."
     ]
   },
   {
