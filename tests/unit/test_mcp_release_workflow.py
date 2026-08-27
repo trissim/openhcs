@@ -122,6 +122,7 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
         assert installer_checkout["with"]["ref"] == (
             "${{ needs.verify-release-commit.outputs.release_sha }}"
         )
+        assert installer_checkout["with"]["submodules"] == "recursive"
 
     build_job = workflow["jobs"]["build-and-publish"]
     assert build_job["needs"] == [
