@@ -2793,7 +2793,7 @@
   },
   {
     "path": "docs/source/development/mcp_release.rst",
-    "source_sha256": "faddcb3319b689c204ebc792250f80d1f1cffaad84cc1db8ffc3e0bfca07b2fc",
+    "source_sha256": "7ddc463af18d92fd748df2a3161c6bce22cbb424e4468a6e80b1fffcbb7ac6de",
     "audience": [
       "OpenHCS release maintainers"
     ],
@@ -2857,7 +2857,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "7f0932453837b391a8648800f098ff714ff6548baad6480cd1cbf7b7dce74b5a",
+        "sha256": "9358e4d9f11196dc11a4857fae8248063f0e7836a54710d388646246414afd6d",
         "role": "Cross-platform source-candidate and published-dependency readiness, installed-wheel live GUI/MCP operation with retained native screenshots, three-stage native-installer workflow proof, signing-helper parse, and staged-update validation matrix."
       },
       {
@@ -2897,7 +2897,7 @@
       },
       {
         "path": ".github/workflows/docs.yml",
-        "sha256": "536b5742bc00ab8910cbd38fa5d5848c27d21465ee1157dd03b7730a04ce5b4e",
+        "sha256": "b36d0a763034b127e99ba1bdd3061e833e933b861e2c81ec34098db0a17c19c7",
         "role": "Independently validates every workflow with a pinned and checksum-verified context-aware actionlint release before building documentation."
       },
       {
@@ -2968,7 +2968,8 @@
       "Cross-platform GUI canaries proved readiness and MCP actions but discarded the rendered UI, leaving native theming regressions outside retained evidence; candidate and published-package jobs now upload typed, hash-verified window snapshots.",
       "The installed-GUI canary constructed the application below the production logging boundary, so a successful endpoint could advertise an empty log; the probe now applies its declared logging configuration and fails unless the exact advertised log contains output.",
       "Native installer acceptance invoked worker mode without proving that either shipping wizard could start or drive installation; each supported lane now activates the shipping wizard and retains its welcome, progress, and completion states.",
-      "The Windows installer evidence harness captured its welcome frame when only the top-level handle existed, before child controls painted; capture now requires the real primary control and synchronizes recursive rendering with desktop composition."
+      "The Windows installer evidence harness captured its welcome frame when only the top-level handle existed, before child controls painted; capture now requires the real primary control and synchronizes recursive rendering with desktop composition.",
+      "Integration and Documentation workflows allowed superseded commits on the same event and ref to consume the full hosted matrix; their declarations now cancel predecessors while keeping manual dispatches independent."
     ],
     "disposition": "revise",
     "validation": [
@@ -3023,7 +3024,8 @@
       "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after Intel native acceptance exposed an upstream wheel-availability boundary and Windows completion capture raced its action row; the page now records the shared binary-wheel path, and focused native-installer regressions passed.",
       "On 2026-08-27, re-read the complete release how-to after the Python quality baseline moved from whole-workflow success to the owning code-quality job; revised the CI gate explanation and verified the resolver against live GitHub history plus three focused regressions.",
       "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after exact-head evidence exposed a stale inline resolver assertion and an unpainted Windows welcome capture; the page remains accurate without implementation detail, and 48 focused CI and installer regressions passed.",
-      "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after the Website source-validation workflow moved from unpublished PyPI candidates to metadata-resolved submodules; this does not change the documented release-candidate or publication gates, and 25 focused CI-boundary tests passed."
+      "On 2026-08-27, applied the Diataxis release how-to boundary and re-read the complete page after the Website source-validation workflow moved from unpublished PyPI candidates to metadata-resolved submodules; this does not change the documented release-candidate or publication gates, and 25 focused CI-boundary tests passed.",
+      "On 2026-08-27, re-read and revised the complete release how-to against event-and-ref workflow concurrency; cancelled predecessors remain non-evidence, manual dispatches remain separate, and release readiness still requires successful exact-commit push runs."
     ]
   },
   {
@@ -3082,7 +3084,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "7f0932453837b391a8648800f098ff714ff6548baad6480cd1cbf7b7dce74b5a",
+        "sha256": "9358e4d9f11196dc11a4857fae8248063f0e7836a54710d388646246414afd6d",
         "role": "Runs explicitly selected live OMERO variants and preserves component and table-service diagnostics on failure."
       }
     ],
@@ -3124,7 +3126,8 @@
       "On 2026-08-27, rechecked the complete OMERO testing how-to after Windows native acceptance stopped replacing its installed candidate wheel from the checkout; the independent OMERO lane and owner boundaries remain unchanged.",
       "On 2026-08-27, rechecked the complete OMERO testing how-to after strict mode was added to the independent Windows installer acceptance script; OMERO selection, diagnostics, and lifecycle ownership remain unchanged.",
       "On 2026-08-27, rechecked the complete OMERO testing how-to after the independent Windows launcher probe normalized an empty comparison result; OMERO selection and ownership remain unchanged.",
-      "On 2026-08-27, re-read the complete OMERO testing how-to after the shared workflow made the Python quality baseline job-owned; the independent OMERO matrix, diagnostics, and lifecycle ownership remain unchanged."
+      "On 2026-08-27, re-read the complete OMERO testing how-to after the shared workflow made the Python quality baseline job-owned; the independent OMERO matrix, diagnostics, and lifecycle ownership remain unchanged.",
+      "On 2026-08-27, re-read the complete OMERO testing how-to against exact-head workflow concurrency; OMERO selection, diagnostics, and ownership remain unchanged while superseded same-ref runs are retired."
     ]
   },
   {

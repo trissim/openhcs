@@ -58,6 +58,13 @@ and wheel integration. A dedicated source job runs ``tests/pyqt_gui`` with
 offscreen Qt against the exact pinned pyqt-reactive wheel. Dedicated Linux jobs
 run OMERO on supported Python versions with an explicit ZeroC Ice wheel.
 
+Integration and Documentation runs use event-and-ref concurrency. Pushing a
+new commit to the same branch or updating the same pull request cancels its
+superseded run so hosted capacity is spent on the only commit that can become
+current evidence. A manual dispatch remains independent. Diagnose the newest
+exact-commit run; a cancelled predecessor does not prove either success or a
+product defect.
+
 The source, GUI, OMERO, parity, viewer, and wheel-candidate jobs build the
 recursively recorded first-party submodule snapshots and run independently of
 dependency publication. The native installer matrix does the same before

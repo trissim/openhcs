@@ -157,6 +157,13 @@ checks out the resolved commit rather than the workflow-dispatch branch. The
 publish job repeats the installed-wheel smoke before upload and rejects a tag
 whose version differs from the package authority or generated release metadata.
 
+Integration and Documentation runs are concurrent per event and Git ref. A new
+push to the same branch cancels its superseded push run, and an updated pull
+request cancels its earlier pull-request run. Manual dispatches use a separate
+event group and therefore do not displace push evidence. Release readiness still
+accepts only a completed successful push run for the exact release commit; a
+cancelled predecessor is neither a failure to repair nor release evidence.
+
 External workflow actions are pinned to full commit SHAs. The
 ``github-actions`` entry in ``.github/dependabot.yml`` proposes grouped weekly
 updates to those pins. Review each update as release-infrastructure code and

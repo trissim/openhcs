@@ -926,7 +926,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "7f0932453837b391a8648800f098ff714ff6548baad6480cd1cbf7b7dce74b5a",
+        "sha256": "9358e4d9f11196dc11a4857fae8248063f0e7836a54710d388646246414afd6d",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -991,7 +991,8 @@
       "On 2026-08-27, re-read the complete installation how-to after native Windows acceptance removed a stale raw-uv and source-checkout reinstall path; the shipping installer remains the sole environment publisher and the user procedure is unchanged.",
       "On 2026-08-27, rechecked the complete installation how-to after the Windows acceptance harness gained strict variable enforcement; the shipping installer and user procedure are unchanged.",
       "On 2026-08-27, rechecked the complete installation how-to after the Windows launcher probe began treating an empty comparison as an empty collection; installer behavior and user instructions are unchanged.",
-      "On 2026-08-27, applied the Diataxis installation how-to boundary and re-read the complete page against the Intel wheel-backed dependency policy and shared staged-update projection; the user installation and update procedure remains accurate."
+      "On 2026-08-27, applied the Diataxis installation how-to boundary and re-read the complete page against the Intel wheel-backed dependency policy and shared staged-update projection; the user installation and update procedure remains accurate.",
+      "On 2026-08-27, re-read the complete installation how-to against the integration workflow's exact-head concurrency declaration; installation, launch, verification, and update guidance remain unchanged."
     ]
   },
   {
@@ -2110,7 +2111,7 @@
   },
   {
     "path": "docs/source/guides/testing_guide.rst",
-    "source_sha256": "4f79aae4fd336cf08cc482fd95487f73e1f9284695cb30f0249aee598010afaa",
+    "source_sha256": "07b35a304c31b367e802b1a15a49a40e99f8c75e38810bad333af1240aae8b70",
     "audience": [
       "contributors",
       "integration-test operators"
@@ -2130,7 +2131,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "7f0932453837b391a8648800f098ff714ff6548baad6480cd1cbf7b7dce74b5a",
+        "sha256": "9358e4d9f11196dc11a4857fae8248063f0e7836a54710d388646246414afd6d",
         "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, retained application and three-stage installer screenshot artifacts, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
@@ -2165,7 +2166,7 @@
       },
       {
         "path": ".github/workflows/docs.yml",
-        "sha256": "536b5742bc00ab8910cbd38fa5d5848c27d21465ee1157dd03b7730a04ce5b4e",
+        "sha256": "b36d0a763034b127e99ba1bdd3061e833e933b861e2c81ec34098db0a17c19c7",
         "role": "Independently validates every workflow with a pinned and checksum-verified context-aware actionlint release before building documentation."
       },
       {
@@ -2274,7 +2275,8 @@
       "The installed-GUI canary bypassed the production logging setup and therefore could pass while its execution server advertised an empty log; the probe now applies LoggingConfig and verifies readable endpoint output.",
       "Native installer tests exercised worker mode without proving that the visible applications could start or drive installation; each supported lane now activates the shipping wizard and retains its welcome, progress, and completion states.",
       "The Windows installer evidence harness captured its welcome frame when only the top-level handle existed, before child controls painted; capture now requires the real primary control and synchronizes recursive rendering with desktop composition.",
-      "Website validation attempted to install an unpublished first-party dependency from PyPI; it now resolves the required source candidates from the recursively recorded submodules while deployment continues to consume the dependency-free checked-in projection."
+      "Website validation attempted to install an unpublished first-party dependency from PyPI; it now resolves the required source candidates from the recursively recorded submodules while deployment continues to consume the dependency-free checked-in projection.",
+      "Integration and Documentation workflows retained superseded same-ref matrices even though only exact-head evidence can support release readiness; both now declare event-and-ref concurrency."
     ],
     "disposition": "revise",
     "validation": [
@@ -2327,7 +2329,8 @@
       "On 2026-08-27, rechecked the complete testing how-to after strict mode exposed a null comparison in the Windows launcher probe; the array-normalized assertion preserves the documented evidence boundary.",
       "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read and revised the complete guide after Intel native acceptance exposed an upstream wheel-availability boundary and Windows completion capture raced its action row; the documented dual-architecture and retained-evidence gates match the corrected harness.",
       "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read the complete guide after exact-head evidence exposed a stale inline resolver assertion and an unpainted Windows welcome capture; the guide remains task-focused, and 48 focused CI and installer regressions passed.",
-      "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read and revised the complete guide after the Website source-validation lane tried to resolve an unpublished first-party floor from PyPI; the page now distinguishes metadata-resolved source validation from dependency-free deployment, 25 CI-boundary tests passed, and a fresh Bash environment passed the catalogue, 19 website tests, and site build."
+      "On 2026-08-27, applied the Diataxis testing how-to boundary and re-read and revised the complete guide after the Website source-validation lane tried to resolve an unpublished first-party floor from PyPI; the page now distinguishes metadata-resolved source validation from dependency-free deployment, 25 CI-boundary tests passed, and a fresh Bash environment passed the catalogue, 19 website tests, and site build.",
+      "On 2026-08-27, re-read and revised the complete testing how-to against event-and-ref workflow concurrency; the newest exact-commit run remains authoritative and cancelled predecessors are neither success evidence nor product defects."
     ]
   },
   {
