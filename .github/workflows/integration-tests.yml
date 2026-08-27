@@ -1443,15 +1443,19 @@ jobs:
         if: failure() && matrix.platform == 'windows'
         shell: pwsh
         run: |
-          $installerLog = Join-Path `
-            ([Environment]::GetFolderPath("LocalApplicationData")) `
-            "OpenHCS Installer Smoke\installer.log"
-          if (Test-Path -LiteralPath $installerLog -PathType Leaf) {
-            Write-Host "=== Windows installer log ==="
-            Get-Content -LiteralPath $installerLog
-          }
-          else {
-            Write-Host "Windows installer log was not created at '$installerLog'."
+          $localData = [Environment]::GetFolderPath("LocalApplicationData")
+          foreach ($installerLog in @(
+            (Join-Path $localData "OpenHCS Installer Smoke\installer.log"),
+            (Join-Path $localData "OpenHCS\installer.log"),
+            (Join-Path $localData "OpenHCS Installer\bootstrap.log")
+          )) {
+            if (Test-Path -LiteralPath $installerLog -PathType Leaf) {
+              Write-Host "=== Windows installer evidence: $installerLog ==="
+              Get-Content -LiteralPath $installerLog
+            }
+            else {
+              Write-Host "Windows installer evidence was not created at '$installerLog'."
+            }
           }
 
           $installRoot = Join-Path `

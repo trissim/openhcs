@@ -898,7 +898,7 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "b47569cea8b2b6dfe5edc7319bee59fbe22b3062eddd9fe31c660fd68bee9bc2",
+        "sha256": "95a84760e69618c85d7c90266f7764f1d3ad32d8af80aa08003439a0cbea9dc6",
         "role": "Exercises Windows and macOS native installers and their staged-update transition in installed environments."
       },
       {
@@ -953,7 +953,8 @@
       "On 2026-08-26, re-read the complete installation how-to after installed desktop probes gained durable lifecycle evidence and timeout diagnostics; the user-facing install, launch, and log instructions remain accurate.",
       "On 2026-08-27, re-read the complete installation how-to against the uv-owned installer and updater lifecycle, declaration-derived package-index isolation, and direct native logging; revised the relevant user-facing behavior and confirmed the remaining instructions.",
       "On 2026-08-27, rechecked the complete installation how-to after package-source isolation became a serialized detached-worker policy and native CI gained hostile uv configuration coverage; its user-facing behavior remains accurate.",
-      "On 2026-08-27, rechecked the complete installation how-to after Windows acceptance began editing the shipping destination field and projecting background output without an encoded wrapper; its user-facing behavior remains accurate."
+      "On 2026-08-27, rechecked the complete installation how-to after Windows acceptance began editing the shipping destination field and projecting background output without an encoded wrapper; its user-facing behavior remains accurate.",
+      "On 2026-08-27, re-read the complete installation how-to after Windows failure evidence began retaining the wizard state plus custom-root, default-root, and bootstrap logs; its user procedure remains accurate."
     ]
   },
   {
@@ -2075,13 +2076,13 @@
       },
       {
         "path": ".github/workflows/integration-tests.yml",
-        "sha256": "b47569cea8b2b6dfe5edc7319bee59fbe22b3062eddd9fe31c660fd68bee9bc2",
+        "sha256": "95a84760e69618c85d7c90266f7764f1d3ad32d8af80aa08003439a0cbea9dc6",
         "role": "Defines the operating-system integration matrix, dependency setup, installed-wheel live GUI/MCP operation, retained application and three-stage installer screenshot artifacts, pytest commands, and source-gate coverage artifacts used by CI."
       },
       {
         "path": "scripts/smoke_windows_installer_window.ps1",
-        "sha256": "ac300e09e5c14b182a4410a692e299d6ef98a6613bd07cc0642cab09adac3aac",
-        "role": "Drives the shipping Windows installer through its real native controls and retains exact welcome, progress, completion, and durable-log evidence."
+        "sha256": "763e55a3e6155cfd173438228f96a8694fd1964f5a5286e3e50c2fc59838aaf9",
+        "role": "Drives the shipping Windows installer through its real native controls and retains exact welcome, progress, completion, failure, and durable-log evidence."
       },
       {
         "path": "scripts/smoke_macos_installer_window.sh",
@@ -2239,7 +2240,8 @@
       "On 2026-08-27, re-read the complete testing how-to after the installed-GUI harness replaced competing timeout, failure, and success fields with one terminal completion authority; focused regression and forced cold-deadline wheel probes confirmed the documented partial-journal behavior.",
       "On 2026-08-27, re-read the complete testing how-to against the hostile pip and uv source overrides, direct Windows native logging, and retained three-pass installer evidence; revised the relevant test description and confirmed the remaining commands.",
       "On 2026-08-27, rechecked the complete testing how-to after native CI exposed the detached worker's standalone-import contract; focused source tests now prove that boundary and the documented release evidence remains accurate.",
-      "On 2026-08-27, rechecked the complete testing how-to after Windows acceptance began editing the real destination field, exercising spaces, and rejecting encoded background launch; the documented evidence remains accurate."
+      "On 2026-08-27, rechecked the complete testing how-to after Windows acceptance began editing the real destination field, exercising spaces, and rejecting encoded background launch; the documented evidence remains accurate.",
+      "On 2026-08-27, re-read the complete testing how-to after the Windows native lane began retaining its exact failure window and every installer-owned log boundary; the documented behavioral evidence remains accurate."
     ]
   },
   {

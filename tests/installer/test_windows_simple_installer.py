@@ -708,6 +708,8 @@ def test_windows_installer_ci_drives_and_captures_the_shipping_wizard() -> None:
     assert '-ScreenshotName "installer-welcome"' in probe
     assert '"installer-progress"' in probe
     assert '"installer-finished"' in probe
+    assert '"installer-smoke-error.txt"' in probe
+    assert '-ScreenshotName "installer-failure"' in probe
     assert '"SUCCESS: Installation completed."' in probe
     assert '"installer.log"' in probe
     assert "$windowProcess.CloseMainWindow()" in probe
@@ -727,6 +729,7 @@ def test_windows_installer_ci_drives_and_captures_the_shipping_wizard() -> None:
         assert acceptance_pass in smoke_step
     assert "installed-gui-phases.jsonl" in workflow
     assert "native-installer-ui-${{ matrix.platform }}" in workflow
+    assert '"OpenHCS Installer\\bootstrap.log"' in workflow
 
 
 def test_windows_installer_ci_exercises_long_path_update_cleanup() -> None:

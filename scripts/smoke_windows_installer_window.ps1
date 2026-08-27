@@ -408,6 +408,25 @@ try {
         )
     }
 }
+catch {
+    $_ | Out-String | Set-Content -LiteralPath (
+        Join-Path $resolvedEvidenceDirectory "installer-smoke-error.txt"
+    ) -Encoding UTF8
+    if ($null -ne $windowProcess -and -not $windowProcess.HasExited) {
+        try {
+            Save-InstallerWindowEvidence `
+                -EvidenceName "installer-failure" `
+                -ScreenshotName "installer-failure" `
+                -Stage "failure"
+        }
+        catch {
+            $_ | Out-String | Set-Content -LiteralPath (
+                Join-Path $resolvedEvidenceDirectory "installer-capture-error.txt"
+            ) -Encoding UTF8
+        }
+    }
+    throw
+}
 finally {
     if ($null -ne $windowProcess -and -not $windowProcess.HasExited) {
         $windowProcess.Kill()
