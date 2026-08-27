@@ -92,7 +92,9 @@ capture_installer_window() {
 wait_for_installer_log() {
     local expected_line=$1
     local description=$2
-    while (( SECONDS < installation_deadline )); do
+    local deadline=$3
+    local timeout_description=$4
+    while (( SECONDS < deadline )); do
         if ! /bin/kill -0 "$installer_pid" 2>/dev/null; then
             printf 'Native installer exited before %s.\n' "$description" >&2
             /bin/cat "$installer_stdout" >&2
@@ -105,8 +107,8 @@ wait_for_installer_log() {
         fi
         /bin/sleep 0.25
     done
-    printf 'Native installer did not reach %s within 20 minutes.\n' \
-        "$description" >&2
+    printf 'Native installer did not reach %s within %s.\n' \
+        "$description" "$timeout_description" >&2
     exit 1
 }
 
@@ -117,14 +119,23 @@ capture_installer_window installer-window installer-welcome
     press-primary \
     >/dev/null
 
-installation_deadline=$((SECONDS + 1200))
-wait_for_installer_log " Starting " "visible installation progress"
+interaction_timeout_seconds=30
+interaction_deadline=$((SECONDS + interaction_timeout_seconds))
+wait_for_installer_log \
+    " Starting " \
+    "visible installation progress" \
+    "$interaction_deadline" \
+    "$interaction_timeout_seconds seconds"
 /bin/sleep 0.5
 capture_installer_window installer-progress installer-progress
 
+installation_timeout_seconds=1200
+installation_deadline=$((SECONDS + installation_timeout_seconds))
 wait_for_installer_log \
     " Installation completed successfully." \
-    "successful completion"
+    "successful completion" \
+    "$installation_deadline" \
+    "$((installation_timeout_seconds / 60)) minutes"
 /bin/sleep 1
 capture_installer_window installer-finished installer-finished
 

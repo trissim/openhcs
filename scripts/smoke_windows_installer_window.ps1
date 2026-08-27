@@ -237,7 +237,8 @@ function Wait-InstallerLogLine {
     param(
         [Parameter(Mandatory = $true)][string]$ExpectedLine,
         [Parameter(Mandatory = $true)][string]$Description,
-        [Parameter(Mandatory = $true)][DateTime]$Deadline
+        [Parameter(Mandatory = $true)][DateTime]$Deadline,
+        [Parameter(Mandatory = $true)][string]$TimeoutDescription
     )
 
     while ([DateTime]::UtcNow -lt $Deadline) {
@@ -252,7 +253,10 @@ function Wait-InstallerLogLine {
         }
         Start-Sleep -Milliseconds 250
     }
-    throw "The native installer did not reach $Description within 20 minutes."
+    throw (
+        "The native installer did not reach $Description within " +
+        "$TimeoutDescription."
+    )
 }
 
 $launcherProcess = Start-Process -FilePath $resolvedLauncher -PassThru
@@ -299,27 +303,31 @@ try {
         -ScreenshotName "installer-welcome" `
         -Stage "welcome"
 
-    $installationDeadline = [DateTime]::UtcNow.AddMinutes(20)
-    Invoke-InstallerButton -Name "Next >" -Deadline $installationDeadline
+    $interactionDeadline = [DateTime]::UtcNow.AddSeconds(30)
+    Invoke-InstallerButton -Name "Next >" -Deadline $interactionDeadline
     Wait-InstallerVisibleText `
         -Name "Installation options" `
-        -Deadline $installationDeadline
-    Invoke-InstallerButton -Name "Next >" -Deadline $installationDeadline
+        -Deadline $interactionDeadline
+    Invoke-InstallerButton -Name "Next >" -Deadline $interactionDeadline
 
+    $progressDeadline = [DateTime]::UtcNow.AddSeconds(30)
     Wait-InstallerLogLine `
         -ExpectedLine "START:" `
         -Description "visible installation progress" `
-        -Deadline $installationDeadline
+        -Deadline $progressDeadline `
+        -TimeoutDescription "30 seconds"
     Start-Sleep -Milliseconds 500
     Save-InstallerWindowEvidence `
         -EvidenceName "installer-progress" `
         -ScreenshotName "installer-progress" `
         -Stage "progress"
 
+    $installationDeadline = [DateTime]::UtcNow.AddMinutes(20)
     Wait-InstallerLogLine `
         -ExpectedLine "SUCCESS: Installation completed." `
         -Description "successful completion" `
-        -Deadline $installationDeadline
+        -Deadline $installationDeadline `
+        -TimeoutDescription "20 minutes"
     Wait-InstallerVisibleText `
         -Name "Installation complete" `
         -Deadline $installationDeadline

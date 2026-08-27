@@ -321,6 +321,8 @@ def test_macos_installer_ci_drives_and_captures_the_shipping_app() -> None:
     assert '"$installer_executable" >"$installer_stdout"' in smoke
     assert "press-primary" in smoke
     assert "wait_for_installer_log" in smoke
+    assert "interaction_timeout_seconds=30" in smoke
+    assert "installation_timeout_seconds=1200" in smoke
     assert "installer-progress" in smoke
     assert "installer-finished" in smoke
     assert "Installation completed successfully." in smoke

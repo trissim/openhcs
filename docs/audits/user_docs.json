@@ -2067,12 +2067,12 @@
       },
       {
         "path": "scripts/smoke_windows_installer_window.ps1",
-        "sha256": "530dd2e4634f1de9587538c67e8dbd2cd1ed43336b30ce1f711cf26cf608d004",
+        "sha256": "d63aa337d86ea407c06a06bc49394b132039033b22639aedc405bc267c8cc90d",
         "role": "Drives the shipping Windows installer through its real native controls and retains exact welcome, progress, and completion window evidence."
       },
       {
         "path": "scripts/smoke_macos_installer_window.sh",
-        "sha256": "c7cb592b4c628330943fcd4c187cd3ffc1d1f30c318a688fccb12ace7a023884",
+        "sha256": "06324eb010664b641c1357677f693a060f58ce5a3681c9eccb075ea33c9a3682",
         "role": "Drives the shipping macOS installer application through installation and retains exact welcome, progress, and completion window evidence."
       },
       {
