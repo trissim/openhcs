@@ -681,17 +681,12 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             quality_base_sha="$PULL_REQUEST_BASE_SHA"
           else
-            quality_base_sha=$(gh api --method GET \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/integration-tests.yml/runs" \
-              -f branch="$GITHUB_REF_NAME" \
-              -f status=success \
-              -F per_page=1 \
-              --jq '.workflow_runs[0].head_sha // empty')
+            quality_base_sha=$(python scripts/resolve_successful_job_baseline.py)
           fi
           if [[ -z "$quality_base_sha" ]] || \
               ! git cat-file -e "${quality_base_sha}^{commit}" 2>/dev/null || \
               ! git merge-base --is-ancestor "$quality_base_sha" "$GITHUB_SHA"; then
-            printf 'No successful ancestor establishes the Python quality baseline.\n' >&2
+            printf 'No successful job ancestor establishes the Python quality baseline.\n' >&2
             exit 1
           fi
           printf 'Validating Python changes since successful head %s.\n' \
