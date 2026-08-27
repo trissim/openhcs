@@ -69,9 +69,11 @@ the catalogue used by both the selector and local MCP authoring tools. The
 selector remains interactive while the shared request completes and reports an
 endpoint error in its status line if loading fails. Inspect that error and the
 execution-server log rather than repeatedly reopening the selector. A client
-timeout measures an interval with no server or MCP progress, not the catalogue's
-total build time. Closing the server cancels and joins its exact preparation
-process; it does not leave discovery running as an unowned background import.
+request still fails when the endpoint becomes silent. When using the MCP
+development client, standard progress renews ``--timeout-seconds``; that value
+is not a limit on the catalogue's total build time. Closing the server cancels
+and joins its exact preparation process; it does not leave discovery running as
+an unowned background import.
 
 After changing the desktop execution host, port, or transport, restart the MCP
 client so its newly launched local server snapshots the same saved endpoint
