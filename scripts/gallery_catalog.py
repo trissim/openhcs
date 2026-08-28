@@ -1674,9 +1674,9 @@ def documentation_gallery_scenarios() -> tuple[GalleryScenarioABC, ...]:
     return GalleryPublicationTarget.DOCUMENTATION.select(gallery_scenarios())
 
 
-def ui_window_reference_gallery_scenarios() -> tuple[
-    UiWindowReferenceGalleryScenario, ...
-]:
+def ui_window_reference_gallery_scenarios() -> (
+    tuple[UiWindowReferenceGalleryScenario, ...]
+):
     """Return complete stable-window documentation projected from identities."""
 
     return tuple(
@@ -1686,9 +1686,9 @@ def ui_window_reference_gallery_scenarios() -> tuple[
     )
 
 
-def ui_context_reference_gallery_scenarios() -> tuple[
-    UiContextReferenceGalleryScenario, ...
-]:
+def ui_context_reference_gallery_scenarios() -> (
+    tuple[UiContextReferenceGalleryScenario, ...]
+):
     """Return contextual documentation scenarios from the gallery MRO."""
 
     return tuple(

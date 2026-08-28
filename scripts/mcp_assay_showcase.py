@@ -485,11 +485,8 @@ def _segmentation_step_source(
 """
     if stream_to_napari:
         step += _napari_streaming_config_source()
-    return (
-        step
-        + """        ),
+    return step + """        ),
 """
-    )
 
 
 def _pipeline_start_processing_config_source() -> str:
@@ -544,8 +541,7 @@ def _primary_object_source(plate_path: Path, output_path: Path) -> str:
             "from openhcs.constants.constants import VariableComponents"
         ),
         extra_imports=(
-            "from openhcs.processing.backends.analysis.cell_counting_cpu "
-            """import (
+            """from openhcs.processing.backends.analysis.cell_counting_cpu import (
     DetectionMethod,
     count_cells_single_channel,
 )"""
@@ -571,8 +567,7 @@ def _dual_channel_source(plate_path: Path, output_path: Path) -> str:
             "from openhcs.constants.constants import GroupBy, VariableComponents"
         ),
         extra_imports=(
-            "from openhcs.processing.backends.analysis.count_cells_simple "
-            """import (
+            """from openhcs.processing.backends.analysis.count_cells_simple import (
     MetaXpressW2Settings,
     MetaXpressWavelengthSettings,
     StainedArea,
@@ -626,8 +621,7 @@ def _colocalization_source(plate_path: Path, output_path: Path) -> str:
             "from openhcs.constants.constants import GroupBy, VariableComponents"
         ),
         extra_imports=(
-            "from openhcs.processing.backends.cellprofiler.colocalization "
-            """import (
+            """from openhcs.processing.backends.cellprofiler.colocalization import (
     measure_colocalization,
 )
 from openhcs.processing.backends.processors.numpy_processor import (
@@ -704,8 +698,7 @@ def _nuclear_morphology_source(plate_path: Path, output_path: Path) -> str:
         plate_path,
         output_path,
         extra_imports=(
-            "from openhcs.processing.backends.analysis.cell_counting_cpu "
-            """import (
+            """from openhcs.processing.backends.analysis.cell_counting_cpu import (
     DetectionMethod,
     count_cells_single_channel,
 )
@@ -750,8 +743,7 @@ def _spatial_neighbors_source(plate_path: Path, output_path: Path) -> str:
         plate_path,
         output_path,
         extra_imports=(
-            "from openhcs.processing.backends.analysis.cell_counting_cpu "
-            """import (
+            """from openhcs.processing.backends.analysis.cell_counting_cpu import (
     DetectionMethod,
     count_cells_single_channel,
 )
@@ -803,8 +795,7 @@ def _radial_intensity_distribution_source(plate_path: Path, output_path: Path) -
         plate_path,
         output_path,
         extra_imports=(
-            "from openhcs.processing.backends.analysis.cell_counting_cpu "
-            """import (
+            """from openhcs.processing.backends.analysis.cell_counting_cpu import (
     DetectionMethod,
     count_cells_single_channel,
 )

@@ -1326,7 +1326,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
+        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1536,7 +1536,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
+        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1599,7 +1599,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
+        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -2365,7 +2365,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
+        "sha256": "1ec2e0457fb37a93120754b3b8e24adf3f50b8bba9373e5b9ac491c2db8c2f9d",
         "role": "Owns nominal gallery scenario identity, publication targets, representative images, copy, accessibility text, dimensions, contextual and stable-window capture targets, and derivative contracts."
       },
       {
@@ -2410,7 +2410,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
+        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2487,7 +2487,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
+        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2525,7 +2525,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
+        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2573,7 +2573,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
+        "sha256": "1ec2e0457fb37a93120754b3b8e24adf3f50b8bba9373e5b9ac491c2db8c2f9d",
         "role": "Owns the nominal gallery scenario lattice, stable-window and contextual capture targets, publication targets, derivative inventory, source evidence, card rendering, and generated release record."
       },
       {
@@ -3184,7 +3184,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
+        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -3360,7 +3360,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
+        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

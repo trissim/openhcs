@@ -282,9 +282,8 @@ class DualEditorWindow(BaseFormDialog):
         # UI components
         self.tab_widget: ActionTabbedWindowBody | None = None
         self.header_label: QLabel | None = None
-        self.parameter_editors: dict[
-            str, QWidget
-        ] = {}  # Map tab titles to editor widgets
+        # Map tab titles to editor widgets.
+        self.parameter_editors: dict[str, QWidget] = {}
         self.class_hierarchy: list = []  # Store inheritance hierarchy info
 
         # Editors are created during setup_ui(); initialize here so scope styling

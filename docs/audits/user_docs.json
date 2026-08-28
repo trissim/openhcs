@@ -163,7 +163,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
+        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -652,7 +652,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
+        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -841,7 +841,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
+        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1062,7 +1062,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
+        "sha256": "1ec2e0457fb37a93120754b3b8e24adf3f50b8bba9373e5b9ac491c2db8c2f9d",
         "role": "Owns the documentation-enabled Function Selector capture declaration, accessibility text, capture target, and generated visual projection."
       }
     ],
@@ -1156,7 +1156,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
+        "sha256": "1ec2e0457fb37a93120754b3b8e24adf3f50b8bba9373e5b9ac491c2db8c2f9d",
         "role": "Owns the documentation-enabled global, pipeline, step, and nested function configuration capture declarations, accessibility text, capture targets, and generated visual projections."
       }
     ],
@@ -1323,7 +1323,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
+        "sha256": "1ec2e0457fb37a93120754b3b8e24adf3f50b8bba9373e5b9ac491c2db8c2f9d",
         "role": "Owns the documentation-enabled source-image browser capture, caption, accessibility text, dimensions, and source evidence."
       }
     ],
@@ -1388,7 +1388,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
+        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -1506,7 +1506,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
+        "sha256": "1ec2e0457fb37a93120754b3b8e24adf3f50b8bba9373e5b9ac491c2db8c2f9d",
         "role": "Owns the documentation-enabled synthetic generator, plate metadata, and live measurement result capture declarations used by the first-workflow tutorial."
       }
     ],
@@ -2027,7 +2027,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
+        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
         "role": "Includes the complete openhcs/omero deployment and plugin bundle in installed distributions."
       },
       {
@@ -2484,7 +2484,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
+        "sha256": "1ec2e0457fb37a93120754b3b8e24adf3f50b8bba9373e5b9ac491c2db8c2f9d",
         "role": "Owns the landing-page workspace scenario, representative image, caption, description, alt text, dimensions, and release evidence."
       }
     ],
@@ -2511,7 +2511,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
+        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       },
       {
@@ -2837,7 +2837,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
+        "sha256": "1ec2e0457fb37a93120754b3b8e24adf3f50b8bba9373e5b9ac491c2db8c2f9d",
         "role": "Projects every registered stable-window identity into its documentation scenario, capture target, filename, and accessibility text."
       },
       {
@@ -3002,7 +3002,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
+        "sha256": "1ec2e0457fb37a93120754b3b8e24adf3f50b8bba9373e5b9ac491c2db8c2f9d",
         "role": "Owns the lazy-inheritance scenario, representative poster, caption, description, alt text, dimensions, and release evidence."
       }
     ],
@@ -3054,7 +3054,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "86a96f87dc7a6b534eac39ab2dc2348162cd286daf863aacf1e3aff8502ac260",
+        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
         "role": "Declares the package version, Python requirement, dependency extras, scripts, and distribution metadata."
       }
     ],
@@ -3142,7 +3142,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
+        "sha256": "1ec2e0457fb37a93120754b3b8e24adf3f50b8bba9373e5b9ac491c2db8c2f9d",
         "role": "Owns the documentation-enabled Custom Function Manager capture declaration, accessibility text, capture target, and generated visual projection."
       }
     ],
@@ -3416,7 +3416,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
+        "sha256": "1ec2e0457fb37a93120754b3b8e24adf3f50b8bba9373e5b9ac491c2db8c2f9d",
         "role": "Owns the documentation-enabled execution-log capture, caption, accessibility text, dimensions, and source evidence."
       }
     ],
@@ -3485,7 +3485,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
+        "sha256": "1ec2e0457fb37a93120754b3b8e24adf3f50b8bba9373e5b9ac491c2db8c2f9d",
         "role": "Owns the local-MCP endpoint-startup scenario, representative poster, caption, description, alt text, dimensions, and release evidence."
       }
     ],
@@ -3577,7 +3577,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
+        "sha256": "1ec2e0457fb37a93120754b3b8e24adf3f50b8bba9373e5b9ac491c2db8c2f9d",
         "role": "Owns the Napari ROI-navigation and Fiji ROI-review scenarios, representative images, captions, descriptions, alt text, dimensions, and release evidence."
       }
     ],

@@ -8,6 +8,7 @@ from openhcs.pyqt_gui.services.time_travel_navigation import (
 from objectstate.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.pyqt_gui.main import OpenHCSMainWindow
+from openhcs.pyqt_gui.ui_tab_identities import DualEditorTab
 from pyqt_reactive.services.function_navigation import build_function_token_field_path
 from pyqt_reactive.services.window_navigation import (
     NavigationWaitReason,
@@ -22,6 +23,24 @@ from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindowNavigati
 class RuntimeCallable:
     def __call__(self, image, threshold: int = 1):
         return image
+
+
+class _DualEditorTabWidget:
+    """Minimal live-label projection used by dual-editor navigation tests."""
+
+    def __init__(self) -> None:
+        self.indices: list[int] = []
+        self.tab_bar = self
+        self._labels = tuple(tab.label for tab in DualEditorTab)
+
+    def count(self) -> int:
+        return len(self._labels)
+
+    def tabText(self, index: int) -> str:
+        return self._labels[index]
+
+    def setCurrentIndex(self, index: int) -> None:
+        self.indices.append(index)
 
 
 def _reset_registry() -> None:
@@ -336,18 +355,11 @@ def test_dual_editor_navigation_uses_step_editor_readiness_for_step_fields() -> 
         def window_navigation_driver(self):
             return self.driver
 
-    class TabWidget:
-        def __init__(self) -> None:
-            self.indices: list[int] = []
-
-        def setCurrentIndex(self, index: int) -> None:
-            self.indices.append(index)
-
     class Owner:
         def __init__(self, step_driver: StepDriver) -> None:
             self.step_editor = StepEditor(step_driver)
             self.func_editor = None
-            self.tab_widget = TabWidget()
+            self.tab_widget = _DualEditorTabWidget()
 
     step_driver = StepDriver()
     owner = Owner(step_driver)
@@ -401,19 +413,12 @@ def test_dual_editor_function_navigation_does_not_use_step_build_callbacks(
         def select_and_scroll_to_field(self, field_path: str) -> None:
             self.selected.append(field_path)
 
-    class TabWidget:
-        def __init__(self) -> None:
-            self.indices: list[int] = []
-
-        def setCurrentIndex(self, index: int) -> None:
-            self.indices.append(index)
-
     class Owner:
         def __init__(self) -> None:
             self.step_driver = StepDriver()
             self.step_editor = StepEditor(self.step_driver)
             self.func_editor = FunctionEditor()
-            self.tab_widget = TabWidget()
+            self.tab_widget = _DualEditorTabWidget()
 
     owner = Owner()
     driver = DualEditorWindowNavigationDriver(owner)
