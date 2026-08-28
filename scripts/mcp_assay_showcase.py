@@ -20,6 +20,12 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+import openhcs  # noqa: F401  # Activate recorded source dependencies before externals.
+
+# isort: split
+
+from polystore.streaming.identity import StreamProducerIdentity
+
 from openhcs.agent.ui_bridge_actions import PlateManagerAction
 from openhcs.agent.ui_bridge_identities import (
     PlateManagerOrchestratorCodeDocumentIdentity,
@@ -36,7 +42,6 @@ from openhcs.core.steps.function_output_manifest import (
     FunctionStepOutputProducerIdentityRequest,
 )
 from openhcs.mcp.dev_client import McpDevClient
-from polystore.streaming.identity import StreamProducerIdentity
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = os.environ.get("PYTHON_BIN", sys.executable)
@@ -78,6 +83,7 @@ class ScenarioBlueprint:
     presentation_identity: StreamProducerIdentity
     pipeline_source: Callable[[Path, Path], str] = field(repr=False, compare=False)
     supporting_presentation_identities: tuple[StreamProducerIdentity, ...] = ()
+    documentation_fixture: bool = False
 
     def generation_arguments(self, plate_path: Path) -> list[str]:
         """Project this bounded fixture through the public generator CLI."""
@@ -232,6 +238,7 @@ def scenario_blueprints() -> tuple[ScenarioBlueprint, ...]:
                 ObjectLabelsArtifactType.require_value(),
             ),
             pipeline_source=_primary_object_source,
+            documentation_fixture=True,
         ),
         ScenarioBlueprint(
             scenario_id="dual_channel_phenotype",
@@ -358,6 +365,21 @@ def scenario_blueprints() -> tuple[ScenarioBlueprint, ...]:
             pipeline_source=_foreground_skeleton_topology_source,
         ),
     )
+
+
+def documentation_fixture_blueprint() -> ScenarioBlueprint:
+    """Return the one showcase declaration selected for UI documentation."""
+
+    matches = tuple(
+        blueprint
+        for blueprint in scenario_blueprints()
+        if blueprint.documentation_fixture
+    )
+    if len(matches) != 1:
+        raise ShowcaseFailure(
+            "Exactly one assay showcase must declare documentation_fixture=True."
+        )
+    return matches[0]
 
 
 def _common_source_header(

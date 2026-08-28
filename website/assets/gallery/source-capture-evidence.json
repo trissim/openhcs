@@ -179,6 +179,86 @@
         "sha256": "da3c36c12ed3e6ebd3ddeda252260236bb71b99f490d29ce277888c829f5ff51",
         "width": 440
       }
+    },
+    {
+      "scenario_id": "ui-pipeline-configuration",
+      "source": {
+        "duration_seconds": null,
+        "format": "png",
+        "height": 650,
+        "sha256": "3b990613591b77753165e6cad98563945330747497aae11941e775b887c91c14",
+        "width": 650
+      }
+    },
+    {
+      "scenario_id": "ui-step-settings-editor",
+      "source": {
+        "duration_seconds": null,
+        "format": "png",
+        "height": 600,
+        "sha256": "38c3a5fd79dda1766f2c21051bb1bea6461cd698771a62babc6a1a7558868aef",
+        "width": 550
+      }
+    },
+    {
+      "scenario_id": "ui-function-configuration",
+      "source": {
+        "duration_seconds": null,
+        "format": "png",
+        "height": 600,
+        "sha256": "00bf3a3e9cd21222d0607a137aa24d45e005e3aec6cf1b25eabdb3f4c4d4ab4f",
+        "width": 550
+      }
+    },
+    {
+      "scenario_id": "ui-plate-metadata",
+      "source": {
+        "duration_seconds": null,
+        "format": "png",
+        "height": 800,
+        "sha256": "653b2fc7ac41d16bec4060138fa228cd04a11e1ae173fb8b1172a567be435cc1",
+        "width": 1200
+      }
+    },
+    {
+      "scenario_id": "ui-live-measurement-results",
+      "source": {
+        "duration_seconds": null,
+        "format": "png",
+        "height": 700,
+        "sha256": "d5e737d46dcb5bf6e0e81c32017a8ee374ca0956bbf76c4feea06886da2fc1ff",
+        "width": 1200
+      }
+    },
+    {
+      "scenario_id": "ui-function-selector",
+      "source": {
+        "duration_seconds": null,
+        "format": "png",
+        "height": 700,
+        "sha256": "8739f208dfafbc5bfa433db1eec4fffaf9147e81c7b02b94007dfaa14469a12c",
+        "width": 1200
+      }
+    },
+    {
+      "scenario_id": "ui-custom-function-manager",
+      "source": {
+        "duration_seconds": null,
+        "format": "png",
+        "height": 500,
+        "sha256": "b62b497b8aab73002d0b51e30a44429b03dd92b46497f1fdf97167faeb4358f2",
+        "width": 700
+      }
+    },
+    {
+      "scenario_id": "ui-synthetic-plate-generator",
+      "source": {
+        "duration_seconds": null,
+        "format": "png",
+        "height": 700,
+        "sha256": "6f264751a8e3508c09b49a43acc9f5b41ad4435bd09c428b7dc83443843f68ff",
+        "width": 800
+      }
     }
   ],
   "schema_version": 1

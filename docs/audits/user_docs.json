@@ -997,7 +997,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/basic_interface.rst",
-    "source_sha256": "1709c306032f25f65795862eecf77a8f9643e07074acd11392e3057339b33fb4",
+    "source_sha256": "6b6fbd27ee2b99bc8075ef157436e9a3cc4f64ed489af4cf04b7cef2995bb676",
     "audience": [
       "desktop users",
       "MCP-assisted operators"
@@ -1007,7 +1007,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
+        "sha256": "e777e6e76e10637c5dd371825135fa2084e0bf6c35fafd30c9b27c90ab340afa",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -1017,12 +1017,12 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "0e71b5f5d22117e4ec8c6d7bcff0995315b7b4b6e09bc124621eaf06fcc6d1a2",
+        "sha256": "458b6672cbae235d93f82c6237dd85038d64bc338f103a56d8297c895b33a494",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       },
       {
         "path": "openhcs/pyqt_gui/widgets/pipeline_editor.py",
-        "sha256": "14724bd91f6690ac1be92f2c5cd8d19aed7edbb55b2befcf50891a94dba47b27",
+        "sha256": "09f7a631e97fc7540b34ae8d7570a671669fa387ce4bc44bd587074d50c6e37a",
         "role": "Implements step editing, pipeline compilation controls, and declaration feedback in the main UI."
       },
       {
@@ -1059,6 +1059,11 @@
         "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
         "sha256": "41b66744f1f3d8bac87bd54ef03f80070f3f890bfb821f8f95f3feddc7421547",
         "role": "Proves Pipeline Editor code apply leaves the reconciled root, step, and nested function states saved."
+      },
+      {
+        "path": "scripts/gallery_catalog.py",
+        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
+        "role": "Owns the documentation-enabled Function Selector capture declaration, accessibility text, capture target, and generated visual projection."
       }
     ],
     "findings": [
@@ -1085,12 +1090,13 @@
       "On 2026-08-25, re-read the complete interface reference against the shared endpoint catalogue service; a live dark-themed Function Selector remained responsive during loading and resolved the exact selected callable.",
       "On 2026-08-26, re-read the complete interface reference after the UI bridge service default became a projection of its connection declaration; desktop workspace, editing, and navigation guidance remains accurate.",
       "On 2026-08-26, re-read the complete interface reference after PipelineEditorActionTargetMode members took ownership of their target selection; user-visible actions and selection scopes remain unchanged.",
-      "On 2026-08-27, re-read the complete reference against propagated catalogue cancellation; background loading, responsive selection, and exact-reference transfer remain accurate."
+      "On 2026-08-27, re-read the complete reference against propagated catalogue cancellation; background loading, responsive selection, and exact-reference transfer remain accurate.",
+      "On 2026-08-28, re-read the complete reference against the registered stable-window titles and the new declaration-derived Function Selector figure; workspace, editor, catalogue, and agent-navigation claims remain accurate."
     ]
   },
   {
     "path": "docs/source/guide_for_biologists/configuration_reference.rst",
-    "source_sha256": "72869b15d7a8f28c8dbec85ecd42da1f788cbc48c4b7ab37f9bcc836761fce70",
+    "source_sha256": "3a70946f59a595f5ebbdf4a176280d7ba497f630cec92c45cd2710d40a10f6f2",
     "audience": [
       "imaging scientists",
       "pipeline authors"
@@ -1150,8 +1156,8 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "70765cf381ed5e88a89e9262061f52166dbe55a2cc7c9cdbe165159f3e81bbcf",
-        "role": "Owns the documentation-enabled global-configuration capture, caption, accessibility text, dimensions, and source evidence."
+        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
+        "role": "Owns the documentation-enabled global, pipeline, step, and nested function configuration capture declarations, accessibility text, capture targets, and generated visual projections."
       }
     ],
     "findings": [
@@ -1168,7 +1174,8 @@
       "On 2026-08-21, re-read the complete page and exact changed owners; 200 focused UI bridge, field-help, schema, and service tests proved declaration-derived enum values and member-name mutation.",
       "A fresh current-source MCP subprocess queried the live Configure OpenHCS window, reported site, channel, z_index, timepoint, and NONE directly from GroupBy, mutated NONE without confusing its stored null value with a missing value, and restored channel; an actual window capture confirmed the visible site selection.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
-      "On 2026-08-28, re-read the complete explanation and inspected the live Configure OpenHCS capture at full resolution; the declaration-owned figure supports the configuration hierarchy without duplicating field facts."
+      "On 2026-08-28, re-read the complete explanation and inspected the live Configure OpenHCS capture at full resolution; the declaration-owned figure supports the configuration hierarchy without duplicating field facts.",
+      "On 2026-08-28, re-read the complete explanation against the contextual editor capture declarations; the added pipeline, step, and function figures illustrate the existing ObjectState hierarchy without becoming configuration authorities."
     ]
   },
   {
@@ -1316,7 +1323,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "70765cf381ed5e88a89e9262061f52166dbe55a2cc7c9cdbe165159f3e81bbcf",
+        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
         "role": "Owns the documentation-enabled source-image browser capture, caption, accessibility text, dimensions, and source evidence."
       }
     ],
@@ -1331,7 +1338,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-22, re-read the complete how-to and validated its updated selector and component-identity example against source workspace, compiler, runtime, and viewer regressions in the 238-test focused OpenHCS suite.",
-      "On 2026-08-28, re-read the complete how-to and inspected the live Image Browser capture at full resolution; it shows the initialized synthetic plate's 216-file source inventory without adding another source-model authority."
+      "On 2026-08-28, re-read the complete how-to and inspected the live Image Browser capture at full resolution; it shows the initialized synthetic plate's 216-file source inventory without adding another source-model authority.",
+      "On 2026-08-28, re-read the complete how-to after gallery dimensions and source evidence became generated projections; the Image Browser scenario and source-binding procedure remain unchanged and accurate."
     ]
   },
   {
@@ -1345,7 +1353,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
+        "sha256": "e777e6e76e10637c5dd371825135fa2084e0bf6c35fafd30c9b27c90ab340afa",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -1365,7 +1373,8 @@
       "Reviewed docs/source/guide_for_biologists/index.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/pyqt_gui/main.py; openhcs/core/pipeline_document.py; openhcs/microscopes/microscope_interfaces.py.",
       "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guide_for_biologists`: documentation validation passed: 10 files, 2 Python blocks.",
-      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate."
+      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate.",
+      "On 2026-08-28, re-read the complete explanation after desktop window titles moved to registered UI identities; its onboarding route and desktop responsibilities remain accurate."
     ]
   },
   {
@@ -1449,7 +1458,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "0e71b5f5d22117e4ec8c6d7bcff0995315b7b4b6e09bc124621eaf06fcc6d1a2",
+        "sha256": "458b6672cbae235d93f82c6237dd85038d64bc338f103a56d8297c895b33a494",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       }
     ],
@@ -1462,12 +1471,13 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
-      "On 2026-08-27, re-read the complete explanation against the changed registry preparation lifecycle; supported callable discovery remains declaration-derived and no introductory claim changed."
+      "On 2026-08-27, re-read the complete explanation against the changed registry preparation lifecycle; supported callable discovery remains declaration-derived and no introductory claim changed.",
+      "On 2026-08-28, re-read the complete explanation after Plate Manager adopted its registered stable-window title; the introductory source, pipeline, catalogue, and execution model remains accurate."
     ]
   },
   {
     "path": "docs/source/guide_for_biologists/intro_stitching.rst",
-    "source_sha256": "0ee469c58162eddcf99437f5b86e8b434f2f6d0704b109b7ae801a8785fd2e91",
+    "source_sha256": "fde83b50eb661c94d16d4d8986b86f565f6db1bdf7f57668293af7b1612e29d2",
     "audience": [
       "first-time desktop users"
     ],
@@ -1496,8 +1506,8 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "70765cf381ed5e88a89e9262061f52166dbe55a2cc7c9cdbe165159f3e81bbcf",
-        "role": "Owns the documentation-enabled first-workflow capture, caption, accessibility text, dimensions, and source evidence."
+        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
+        "role": "Owns the documentation-enabled synthetic generator, plate metadata, and live measurement result capture declarations used by the first-workflow tutorial."
       }
     ],
     "findings": [
@@ -1511,7 +1521,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "Re-reviewed the typed GUI workflow proof: it covers synthetic plate import, form readiness, configuration inheritance, persistence, reset, and application teardown.",
-      "On 2026-08-28, completed the tutorial in a fresh live desktop session through generation, initialization, and compilation, then inspected its declaration-owned workspace capture at full resolution."
+      "On 2026-08-28, completed the tutorial in a fresh live desktop session through generation, initialization, and compilation, then inspected its declaration-owned workspace capture at full resolution.",
+      "On 2026-08-28, re-read the complete tutorial against the declaration-derived synthetic-generator, metadata, and live-results captures; the single guided generate, initialise, compile, run, and review path remains accurate."
     ]
   },
   {
@@ -1525,7 +1536,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/widgets/plate_manager.py",
-        "sha256": "0e71b5f5d22117e4ec8c6d7bcff0995315b7b4b6e09bc124621eaf06fcc6d1a2",
+        "sha256": "458b6672cbae235d93f82c6237dd85038d64bc338f103a56d8297c895b33a494",
         "role": "Implements plate import, selection, pipeline assignment, and execution controls."
       },
       {
@@ -1555,7 +1566,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
+        "sha256": "e777e6e76e10637c5dd371825135fa2084e0bf6c35fafd30c9b27c90ab340afa",
         "role": "Wires the endpoint compatibility observation to the owning version-restart workflow."
       },
       {
@@ -1655,7 +1666,8 @@
       "On 2026-08-27, re-read the complete troubleshooting page against the changed installed-desktop evidence harness; its selector, endpoint, and log guidance remains accurate.",
       "On 2026-08-27, rechecked the complete troubleshooting page after installed-desktop acceptance exposed and covered the detached-worker import boundary; its diagnosis guidance remains accurate.",
       "On 2026-08-27, re-read the complete troubleshooting page after Windows native acceptance exposed an overlong Numba cache path; the structural path correction requires no new user recovery step, and the existing first-error and log guidance remains accurate.",
-      "On 2026-08-27, applied the Diataxis how-to boundary and re-read the complete guide against the cold-cache rehearsal and cancellation tests; revised selector recovery to distinguish renewable inactivity from total duration and to name exact preparation cleanup."
+      "On 2026-08-27, applied the Diataxis how-to boundary and re-read the complete guide against the cold-cache rehearsal and cancellation tests; revised selector recovery to distinguish renewable inactivity from total duration and to name exact preparation cleanup.",
+      "On 2026-08-28, re-read the complete how-to after Plate Manager and main-window titles moved to registered identities; its startup, catalogue, version-restart, compilation, viewer, and recovery guidance remains accurate."
     ]
   },
   {
@@ -1685,7 +1697,7 @@
       },
       {
         "path": "scripts/master_multi_plate_demo.py",
-        "sha256": "1c3a0865f01f4b91f1ec40a9e4211e668eda862651b1df2e5168a6a9d8560178",
+        "sha256": "8115619d0dd4aeedfd8a4ce1b20f7eabd8f3c1f0ffbdc20e4dc8b2231cff7ffb",
         "role": "Implements the maintained end-to-end multi-plate example referenced by the example guide."
       },
       {
@@ -1700,7 +1712,8 @@
       "Reviewed docs/source/guides/complete_examples.rst in full; the recorded findings and disposition are the resulting page-specific editorial decision.",
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/agent/services/knowledge_base_service.py; openhcs/processing/presets/mfd_specs.py; openhcs/processing/presets/pipelines/loose_operaphenix_neurite_outgrowth.py; scripts/master_multi_plate_demo.py; tests/unit/agent/test_official30_knowledge_examples.py.",
       "Passed `.venv/bin/python scripts/validate_docs.py docs/source/guides`: documentation validation passed: 9 files, 2 Python blocks.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-28, re-read the complete reference after master-demo blueprint projection and workflow sequencing were factored into reusable declaration-owned helpers; the seven built-ins, explicit contributors, ports, and failure-isolation contract remain unchanged."
     ]
   },
   {
@@ -1939,7 +1952,7 @@
   },
   {
     "path": "docs/source/guides/omero_integration.rst",
-    "source_sha256": "84ff3469dbaad9c13b8008db2edf86455074acea007efc9942b8a88b67593794",
+    "source_sha256": "b900bea91d2eaecb90d593786b213830c6fd689b6cbc09c25f9b0c7ab2a6183e",
     "audience": [
       "OMERO integrators",
       "deployment contributors"
@@ -2036,6 +2049,11 @@
         "path": "tests/integration/test_main.py",
         "sha256": "099fdb349009f503d4eb115b871e78b9be5cbd860838d140111ee138074d5cd3",
         "role": "Exercises live OMERO instance and integration behaviour through the packaged OpenHCS boundary."
+      },
+      {
+        "path": "openhcs/agent/ui_bridge_identities.py",
+        "sha256": "5913d14b99340174af87b2a7cafa3cdd080a331553c0cf59392ade7d253f1234",
+        "role": "Declares the complete stable desktop-window family used to verify that the current UI exposes no OMERO management or credential surface."
       }
     ],
     "findings": [
@@ -2073,7 +2091,8 @@
       "On 2026-08-25, re-read the complete explanation against PolyStore 0.2.8, the OpenHCS adapter, and the exact PatternDiscoveryEngine regression; revised the owner boundary for symbolic filename templates.",
       "On 2026-08-25, re-read the complete explanation after a live OMERO cold-start race; clarified that OpenHCS waits for an operator-started daemon but never starts or configures it, and verified that only accepted gateways enter manager state.",
       "On 2026-08-26, re-read and revised the explanation after Python 3.12 CI exposed repository and Tables-0 startup ordering; only a stack started by the manager receives component recovery.",
-      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate."
+      "On 2026-08-27, re-read the complete page after the Intel macOS desktop dependency boundary retained the final cryptography release line with universal2 wheels; the existing product claims and ownership boundaries remain accurate.",
+      "On 2026-08-28, re-read the complete explanation against the registered stable-window inventory; the added statement accurately distinguishes packaged OMERO deployment and testing from the absence of a supported desktop management or credential window."
     ]
   },
   {
@@ -2450,7 +2469,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
+        "sha256": "e777e6e76e10637c5dd371825135fa2084e0bf6c35fafd30c9b27c90ab340afa",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2465,7 +2484,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "70765cf381ed5e88a89e9262061f52166dbe55a2cc7c9cdbe165159f3e81bbcf",
+        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
         "role": "Owns the landing-page workspace scenario, representative image, caption, description, alt text, dimensions, and release evidence."
       }
     ],
@@ -2477,7 +2496,8 @@
       "Passed `.venv/bin/python scripts/validate_docs.py docs/source/index.rst`: documentation validation passed: 1 files, 0 Python blocks.",
       "On 2026-08-24, re-read the complete index after bootstrap delegated stdio channel ownership to its transport; the documentation routing claims remain unchanged.",
       "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate.",
-      "On 2026-08-27, applied the Diataxis landing-page boundary and re-read the complete page after adding the declaration-projected multi-plate workspace figure; the image, caption, description, alt text, and dimensions resolve from the gallery scenario, and desktop plus narrow rendered views were inspected."
+      "On 2026-08-27, applied the Diataxis landing-page boundary and re-read the complete page after adding the declaration-projected multi-plate workspace figure; the image, caption, description, alt text, and dimensions resolve from the gallery scenario, and desktop plus narrow rendered views were inspected.",
+      "On 2026-08-28, re-read the complete landing page after stable desktop titles and gallery evidence became declaration-derived projections; its audience routing and multi-plate overview remain accurate."
     ]
   },
   {
@@ -2750,7 +2770,7 @@
   },
   {
     "path": "docs/source/reference/index.rst",
-    "source_sha256": "f5170cb8c07d507af9266fcadce2b4f9bdaef58bbd7a18ec6cf5029312365b33",
+    "source_sha256": "23988fccd4033006377ea231c93bafcb2455a6257ac242054123577c927c0e3e",
     "audience": [
       "OpenHCS practitioners"
     ],
@@ -2786,7 +2806,64 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-28, re-read the complete reference index after adding the registered desktop-window reference; the navigation remains concise, factual, and separated from task guidance."
+    ]
+  },
+  {
+    "path": "docs/source/reference/ui_windows.rst",
+    "source_sha256": "f6b96b5e67dba0977de53dd8d76292e1a3577cc43fdddf4959f211f605004c11",
+    "audience": [
+      "OpenHCS desktop users",
+      "support and documentation readers"
+    ],
+    "user_need": "Look up registered desktop windows and recognise their current visual surfaces.",
+    "diataxis": "reference",
+    "authority": [
+      {
+        "path": "openhcs/agent/ui_bridge_identities.py",
+        "sha256": "5913d14b99340174af87b2a7cafa3cdd080a331553c0cf59392ade7d253f1234",
+        "role": "Declares the complete registered family of stable public UI window identities and their presentation titles."
+      },
+      {
+        "path": "openhcs/pyqt_gui/main.py",
+        "sha256": "e777e6e76e10637c5dd371825135fa2084e0bf6c35fafd30c9b27c90ab340afa",
+        "role": "Composes the main desktop window and its stable docked surfaces from the registered identities."
+      },
+      {
+        "path": "openhcs/pyqt_gui/services/main_window_workflows.py",
+        "sha256": "923e105b296d2ecf9aea2a88501c7cad603a95e3da076a2d72c7645797a1ff02",
+        "role": "Projects registered window identities into WindowManager specifications for stable task windows."
+      },
+      {
+        "path": "scripts/gallery_catalog.py",
+        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
+        "role": "Projects every registered stable-window identity into its documentation scenario, capture target, filename, and accessibility text."
+      },
+      {
+        "path": "docs/source/_ext/openhcs_gallery.py",
+        "sha256": "825d0e01d331069b93c00469fff157ec44c2febc346b6978b2e556159be7a8e1",
+        "role": "Renders the complete registry-derived stable-window scenario set through the documentation directive."
+      },
+      {
+        "path": "tests/unit/test_build_website.py",
+        "sha256": "e66aba73ff9dc10d04c72017abcb810c04bd775d31c61d822dd8060a6811a4dc",
+        "role": "Proves stable-window scenario identities, titles, filenames, and capture targets derive one-to-one from the identity registry."
+      },
+      {
+        "path": "tests/unit/test_capture_media_gallery.py",
+        "sha256": "a8e99a29774f7d931a37e609cf2525c97616e149e9bd20c0378c4d5245ebf701",
+        "role": "Proves the stable-window capture batch processes every projected scenario and records its source evidence."
+      }
+    ],
+    "findings": [],
+    "disposition": "keep",
+    "validation": [
+      "On 2026-08-28, re-read docs/source/reference/ui_windows.rst in full and challenged its reference boundary, completeness, duplication, navigation, and current desktop claims against the registered identity and projection owners.",
+      "Compared every factual claim directly with the current hash-pinned authorities: openhcs/agent/ui_bridge_identities.py; openhcs/pyqt_gui/main.py; openhcs/pyqt_gui/services/main_window_workflows.py; scripts/gallery_catalog.py; docs/source/_ext/openhcs_gallery.py; tests/unit/test_build_website.py; tests/unit/test_capture_media_gallery.py.",
+      "A current-source projection resolved 10 registered identities one-to-one to 10 scenarios, titles, declaration-derived filenames, and checked-in WebP figures; the registry contains no OMERO management window.",
+      "Passed .venv/bin/python -m pytest -q tests/unit/test_build_website.py tests/unit/test_capture_media_gallery.py tests/unit/test_master_multi_plate_demo.py: 85 passed.",
+      "Passed .venv/bin/python scripts/validate_docs.py docs/source: 156 files, 24 Python blocks, and 155 audited documentation sources."
     ]
   },
   {
@@ -2800,7 +2877,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
+        "sha256": "e777e6e76e10637c5dd371825135fa2084e0bf6c35fafd30c9b27c90ab340afa",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -2834,7 +2911,8 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate."
+      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate.",
+      "On 2026-08-28, re-read the complete how-to after main-window presentation moved to registered identities; the Analysis Consolidation action, input contract, outputs, and post-plate ownership remain accurate."
     ]
   },
   {
@@ -2924,7 +3002,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "70765cf381ed5e88a89e9262061f52166dbe55a2cc7c9cdbe165159f3e81bbcf",
+        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
         "role": "Owns the lazy-inheritance scenario, representative poster, caption, description, alt text, dimensions, and release evidence."
       }
     ],
@@ -2946,7 +3024,8 @@
       "Re-read callable occurrence claims against FunctionStep.same_declaration and the repeated-step history regression.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
       "On 2026-08-26, re-read the complete how-to after the UI bridge default connection stopped repeating its timeout value; code-document editing and state-reconciliation behavior remains unchanged.",
-      "On 2026-08-27, re-read the complete how-to after adding the declaration-projected lazy-inheritance poster at the saved-state and inheritance boundary; the visual and accessibility copy remain owned by its gallery scenario."
+      "On 2026-08-27, re-read the complete how-to after adding the declaration-projected lazy-inheritance poster at the saved-state and inheritance boundary; the visual and accessibility copy remain owned by its gallery scenario.",
+      "On 2026-08-28, re-read the complete how-to after gallery dimensions and capture evidence became generated projections; code-document ownership, reconciliation, commit, revision, and recovery semantics remain unchanged."
     ]
   },
   {
@@ -2999,7 +3078,7 @@
   },
   {
     "path": "docs/source/user_guide/custom_function_management.rst",
-    "source_sha256": "ad370ca5697052941ec01024f7e4f99f2310d83b8917a6266a080fc0b205f687",
+    "source_sha256": "aee67758960cdab990d0f21421d1253a30a3e5d0f720f83f2b34e15b2e17b14d",
     "audience": [
       "desktop callable authors"
     ],
@@ -3033,7 +3112,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
+        "sha256": "e777e6e76e10637c5dd371825135fa2084e0bf6c35fafd30c9b27c90ab340afa",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -3060,6 +3139,11 @@
         "path": "tests/unit/test_custom_function_lifecycle.py",
         "sha256": "7e75b565ad7f4a899f7dc81fb03f04691e709b2bb85efe3b3e28090639409230",
         "role": "Proves transactional create, load, replace, delete, collision, and source-revision behaviour."
+      },
+      {
+        "path": "scripts/gallery_catalog.py",
+        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
+        "role": "Owns the documentation-enabled Custom Function Manager capture declaration, accessibility text, capture target, and generated visual projection."
       }
     ],
     "findings": [
@@ -3082,7 +3166,8 @@
       "On 2026-08-25, re-read the complete custom-function management how-to after formatting its runtime projection authority; no behavior, ownership, or user workflow changed.",
       "On 2026-08-26, re-read and revised the how-to after the domain event stopped owning Qt adapter lifetimes; exact callback identity and the historical CI crash ordering are covered directly.",
       "On 2026-08-26, re-read the complete how-to after function-catalog cancellation and its focused regression coverage changed; the asynchronous invalidation and endpoint-owned catalogue flow remains accurate.",
-      "On 2026-08-27, re-read the complete how-to against exact child-process cancellation during catalogue refresh; custom-function persistence, domain events, and endpoint projection ownership remain accurate."
+      "On 2026-08-27, re-read the complete how-to against exact child-process cancellation during catalogue refresh; custom-function persistence, domain events, and endpoint projection ownership remain accurate.",
+      "On 2026-08-28, re-read the complete how-to against the registered desktop identities and declaration-derived Custom Function Manager capture; persistence, validation, event, runtime-registry, and asynchronous catalogue ownership remain accurate."
     ]
   },
   {
@@ -3206,7 +3291,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
+        "sha256": "e777e6e76e10637c5dd371825135fa2084e0bf6c35fafd30c9b27c90ab340afa",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -3245,7 +3330,8 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate."
+      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate.",
+      "On 2026-08-28, re-read the complete how-to after main-window presentation moved to registered identities; the workbook task, menu action, normalization boundary, and output contract remain accurate."
     ]
   },
   {
@@ -3259,7 +3345,7 @@
     "authority": [
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
+        "sha256": "e777e6e76e10637c5dd371825135fa2084e0bf6c35fafd30c9b27c90ab340afa",
         "role": "Composes the main desktop window, menus, task windows, and registered UI services."
       },
       {
@@ -3290,7 +3376,8 @@
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-24, removed the retired embedded LLM how-to from the task index; MCP client setup remains the supported agent-assisted entry point.",
-      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate."
+      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate.",
+      "On 2026-08-28, re-read the complete task index after desktop presentation moved to registered identities; PyQt remains the supported interactive interface and the declaration-model routing remains accurate."
     ]
   },
   {
@@ -3329,7 +3416,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "70765cf381ed5e88a89e9262061f52166dbe55a2cc7c9cdbe165159f3e81bbcf",
+        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
         "role": "Owns the documentation-enabled execution-log capture, caption, accessibility text, dimensions, and source evidence."
       }
     ],
@@ -3347,7 +3434,8 @@
       "On 2026-08-26, re-read the complete how-to after its checkboxes adopted the shared leaf-owned themed control; discovery, filtering, process identity, and log-selection behaviour remain unchanged.",
       "On 2026-08-26, re-read the complete how-to after the execution client adopted a dedicated submission default; log discovery, process filtering, selection, and connection-state guidance remain unchanged.",
       "On 2026-08-26, re-read the complete log-viewer how-to after catalog endpoint startup joined request cancellation and installed probes retained phase diagnostics; the live log and readiness guidance remains accurate.",
-      "On 2026-08-28, re-read the complete how-to and used the current-source UI bridge to select and capture the active port 7777 execution-server log after compilation; the full-resolution capture contains no private local path."
+      "On 2026-08-28, re-read the complete how-to and used the current-source UI bridge to select and capture the active port 7777 execution-server log after compilation; the full-resolution capture contains no private local path.",
+      "On 2026-08-28, re-read the complete how-to after gallery dimensions and source evidence became generated projections; live discovery, log selection, process identity, and diagnostic guidance remain unchanged."
     ]
   },
   {
@@ -3397,7 +3485,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "70765cf381ed5e88a89e9262061f52166dbe55a2cc7c9cdbe165159f3e81bbcf",
+        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
         "role": "Owns the local-MCP endpoint-startup scenario, representative poster, caption, description, alt text, dimensions, and release evidence."
       }
     ],
@@ -3424,7 +3512,8 @@
       "On 2026-08-26, re-read the complete client how-to after the stdio bootstrap regression isolated its spawned process from pytest-cov instrumentation; installation, registration, reconnect, and GUI attachment guidance remains unchanged.",
       "On 2026-08-26, re-read the complete client how-to against the regenerated 0.8.0 MCPB manifest and the child-process temporary-root regression; installation, path policy, registration, and GUI attachment guidance remain accurate.",
       "On 2026-08-26, re-read the complete client how-to after the shared MCP regression began proving the declaration-owned submission default; installation, registration, reconnect, and GUI attachment guidance remain accurate.",
-      "On 2026-08-27, re-read the complete client how-to after adding the declaration-projected endpoint-startup poster beside the selected-surface procedure; the visual and accessibility copy remain owned by its gallery scenario."
+      "On 2026-08-27, re-read the complete client how-to after adding the declaration-projected endpoint-startup poster beside the selected-surface procedure; the visual and accessibility copy remain owned by its gallery scenario.",
+      "On 2026-08-28, re-read the complete client how-to after gallery dimensions and source evidence became generated projections; installation, capability surfaces, reconnect ownership, path policy, and GUI attachment guidance remain accurate."
     ]
   },
   {
@@ -3488,7 +3577,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "70765cf381ed5e88a89e9262061f52166dbe55a2cc7c9cdbe165159f3e81bbcf",
+        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
         "role": "Owns the Napari ROI-navigation and Fiji ROI-review scenarios, representative images, captions, descriptions, alt text, dimensions, and release evidence."
       }
     ],
@@ -3507,7 +3596,8 @@
       "On 2026-08-22, re-read the complete how-to against the current Napari route-selection regressions; the focused OpenHCS documentation-drift suite passed 238 tests.",
       "On 2026-08-25, re-read the complete how-to against the caller-control, runtime-policy, Napari, agent-service, and regression authorities added for bounded ROI projection and atomic isolation.",
       "The complete 186-test viewer family and 377 agent/MCP tests passed; three isolated real rehearsals returned ROI summaries in 0.063-0.485 seconds and bulk isolation in 0.078-1.078 seconds within the 2-second command budget.",
-      "On 2026-08-27, re-read the complete how-to after adding declaration-projected Napari ROI-navigation and Fiji ROI-review figures at the matching task boundaries; desktop rendering, captions, and alt text were inspected against the accepted media."
+      "On 2026-08-27, re-read the complete how-to after adding declaration-projected Napari ROI-navigation and Fiji ROI-review figures at the matching task boundaries; desktop rendering, captions, and alt text were inspected against the accepted media.",
+      "On 2026-08-28, re-read the complete how-to after gallery dimensions and source evidence became generated projections; compiled streaming, typed artifacts, bounded review, axis projection, and viewer-settlement guidance remain accurate."
     ]
   }
 ]

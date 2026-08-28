@@ -7,23 +7,35 @@ import hashlib
 import json
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from html import escape
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Self
 
+import openhcs  # noqa: F401  # Activate recorded source dependencies before UI imports.
+
+# isort: split
+
+from pyqt_reactive.services.function_navigation import FUNCTION_FIELD_ROOT
+from pyqt_reactive.widgets.function_list_editor import FunctionListEditorAction
+from pyqt_reactive.widgets.system_monitor import SystemMonitorAction
 from python_introspect import dataclass_from_mapping
 
+from openhcs.agent.ui_bridge_actions import PlateManagerAction
 from openhcs.agent.ui_bridge_identities import (
     GlobalConfigWindowIdentity,
     ImageBrowserWindowIdentity,
     LogViewerWindowIdentity,
     MainWindowWidgetIdentity,
     PipelineEditorWidgetIdentity,
+    PlateManagerWidgetIdentity,
     UiStableWindowIdentityDeclaration,
 )
+from openhcs.pyqt_gui.services.step_scope_identity import StepEditorScope
+from openhcs.pyqt_gui.windows.dual_editor_tab_builder import DualEditorTab
+from openhcs.pyqt_gui.windows.plate_viewer_window import PlateViewerTab
 from openhcs.serialization.json import JsonValue, to_jsonable
 
 RELEASE_MEDIA_SCHEMA_VERSION = "openhcs.release-media.v7"
@@ -302,6 +314,152 @@ class UiBridgeWindowCaptureTarget(GalleryCaptureTargetABC):
 
     window_id: str
     create_if_missing: bool = False
+
+
+class UiContextCaptureTargetABC(GalleryCaptureTargetABC, ABC):
+    """Nominal owner of one live contextual UI capture workflow."""
+
+    @abstractmethod
+    def capture_source(
+        self,
+        request: GallerySourceCaptureRequest,
+    ) -> GallerySourceCaptureResult:
+        """Capture this target through its declaration-owned workflow leaf."""
+
+
+class ObjectStateCaptureScopeRole(str, Enum):
+    """ObjectState editor scopes with member-owned discovery semantics."""
+
+    navigation_field_path: str | None
+
+    def __new__(
+        cls,
+        value: str,
+        accepts: Callable[[StepEditorScope], bool],
+        projects: Callable[[StepEditorScope], str],
+        navigation_field_path: str | None,
+    ) -> Self:
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member._accepts = accepts
+        member._projects = projects
+        member.navigation_field_path = navigation_field_path
+        return member
+
+    STEP = (
+        "step",
+        lambda scope: not scope.is_function_scope,
+        lambda scope: scope.step_scope_id,
+        None,
+    )
+    FUNCTION = (
+        "function",
+        lambda scope: scope.is_function_scope,
+        lambda scope: scope.scope_id,
+        FUNCTION_FIELD_ROOT,
+    )
+    PIPELINE = (
+        "pipeline",
+        lambda scope: not scope.is_function_scope,
+        lambda scope: scope.plate_scope,
+        None,
+    )
+
+    @property
+    def requires_nested_navigation(self) -> bool:
+        """Return whether this role declares a target inside its owning window."""
+
+        return self.navigation_field_path is not None
+
+    def resolve(self, scope_ids: Sequence[str]) -> str:
+        """Resolve one unambiguous live scope through this member's leaf rules."""
+
+        parsed_scopes = []
+        for scope_id in scope_ids:
+            try:
+                parsed_scopes.append(StepEditorScope.parse(scope_id))
+            except ValueError:
+                continue
+        matches = tuple(
+            dict.fromkeys(
+                self._projects(scope) for scope in parsed_scopes if self._accepts(scope)
+            )
+        )
+        if len(matches) != 1:
+            raise GalleryCatalogError(
+                f"Expected one live {self.value} editor scope, found {len(matches)}."
+            )
+        return matches[0]
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectStateEditorCaptureTarget(UiContextCaptureTargetABC):
+    """An ObjectState-backed configuration editor resolved from live scopes."""
+
+    scope_role: ObjectStateCaptureScopeRole
+    tab: DualEditorTab | None = None
+
+    def capture_source(
+        self,
+        request: GallerySourceCaptureRequest,
+    ) -> GallerySourceCaptureResult:
+        from scripts.capture_media_gallery import capture_object_state_editor_source
+
+        return capture_object_state_editor_source(self, request)
+
+
+@dataclass(frozen=True, slots=True)
+class PlateManagerActionWindowCaptureTarget(UiContextCaptureTargetABC):
+    """A window spawned by a declared Plate Manager action."""
+
+    action: PlateManagerAction
+    tab: PlateViewerTab | None = None
+    capture_widget_identity: ClassVar[type[PlateManagerWidgetIdentity]] = (
+        PlateManagerWidgetIdentity
+    )
+
+    def capture_source(
+        self,
+        request: GallerySourceCaptureRequest,
+    ) -> GallerySourceCaptureResult:
+        from scripts.capture_media_gallery import capture_plate_manager_action_source
+
+        return capture_plate_manager_action_source(self, request)
+
+
+@dataclass(frozen=True, slots=True)
+class SystemMonitorActionWindowCaptureTarget(UiContextCaptureTargetABC):
+    """A window spawned by a declared generic System Monitor action."""
+
+    action: SystemMonitorAction
+    capture_window_identity: ClassVar[type[MainWindowWidgetIdentity]] = (
+        MainWindowWidgetIdentity
+    )
+
+    def capture_source(
+        self,
+        request: GallerySourceCaptureRequest,
+    ) -> GallerySourceCaptureResult:
+        from scripts.capture_media_gallery import capture_system_monitor_action_source
+
+        return capture_system_monitor_action_source(self, request)
+
+
+@dataclass(frozen=True, slots=True)
+class FunctionSelectorCaptureTarget(UiContextCaptureTargetABC):
+    """The selector spawned from the declared function-editor Add action."""
+
+    action: FunctionListEditorAction = FunctionListEditorAction.ADD
+    editor_scope_role: ObjectStateCaptureScopeRole = ObjectStateCaptureScopeRole.STEP
+    editor_tab: DualEditorTab = DualEditorTab.FUNCTION_PATTERN
+
+    def capture_source(
+        self,
+        request: GallerySourceCaptureRequest,
+    ) -> GallerySourceCaptureResult:
+        from scripts.capture_media_gallery import capture_function_selector_source
+
+        return capture_function_selector_source(self, request)
 
 
 @dataclass(frozen=True, slots=True)
@@ -684,6 +842,213 @@ class StableUiWindowReferenceGalleryDeclaration(GalleryScenarioDeclarationABC):
         return tuple(
             UiWindowReferenceGalleryScenario.from_identity(identity)
             for identity in UiStableWindowIdentityDeclaration.declaration_types()
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UiContextReferenceGalleryScenario(StillGalleryScenarioABC):
+    """Documentation visual for a declaration-derived contextual UI state."""
+
+    capture_target: UiContextCaptureTargetABC
+
+    def capture_source(
+        self,
+        request: GallerySourceCaptureRequest,
+    ) -> GallerySourceCaptureResult:
+        return self.capture_target.capture_source(request)
+
+
+@dataclass(frozen=True, slots=True)
+class ContextualUiReferenceGalleryDeclaration(GalleryScenarioDeclarationABC):
+    """Curated task-state visuals whose mechanics derive from live declarations."""
+
+    def scenarios(self) -> tuple[GalleryScenarioABC, ...]:
+        documentation = frozenset((GalleryPublicationTarget.DOCUMENTATION,))
+        return (
+            UiContextReferenceGalleryScenario(
+                scenario_id="ui-pipeline-configuration",
+                label="Configuration",
+                heading="Pipeline configuration",
+                description=(
+                    "Typed pipeline-wide settings and their inheritance hierarchy."
+                ),
+                proof=(
+                    "The live plate ObjectState scope is derived from the selected "
+                    "step scope and opened through the UI bridge."
+                ),
+                layout_class="gallery-card-wide",
+                alt_text=(
+                    "OpenHCS pipeline configuration editor with typed settings and "
+                    "configuration hierarchy"
+                ),
+                open_aria_label=(
+                    "Open the pipeline configuration editor screenshot at full resolution"
+                ),
+                capture_target=ObjectStateEditorCaptureTarget(
+                    scope_role=ObjectStateCaptureScopeRole.PIPELINE,
+                ),
+                publication_targets=documentation,
+            ),
+            UiContextReferenceGalleryScenario(
+                scenario_id="ui-step-settings-editor",
+                label="Pipeline editing",
+                heading="Step settings",
+                description=(
+                    "Step-local typed settings alongside their resolved inheritance."
+                ),
+                proof=(
+                    "The live step scope and Step Settings tab are resolved from "
+                    "ObjectState and tab declarations."
+                ),
+                layout_class="gallery-card-wide",
+                alt_text=(
+                    "OpenHCS step editor showing typed step settings and inheritance"
+                ),
+                open_aria_label=(
+                    "Open the step settings editor screenshot at full resolution"
+                ),
+                capture_target=ObjectStateEditorCaptureTarget(
+                    scope_role=ObjectStateCaptureScopeRole.STEP,
+                    tab=DualEditorTab.STEP_SETTINGS,
+                ),
+                publication_targets=documentation,
+            ),
+            UiContextReferenceGalleryScenario(
+                scenario_id="ui-function-configuration",
+                label="Pipeline editing",
+                heading="Function configuration",
+                description=(
+                    "Nested callable parameters within the owning pipeline step."
+                ),
+                proof=(
+                    "The callable child scope is discovered from ObjectState and "
+                    "navigated through the shared editor window."
+                ),
+                layout_class="gallery-card-wide",
+                alt_text=(
+                    "OpenHCS step editor showing nested function configuration fields"
+                ),
+                open_aria_label=(
+                    "Open the function configuration screenshot at full resolution"
+                ),
+                capture_target=ObjectStateEditorCaptureTarget(
+                    scope_role=ObjectStateCaptureScopeRole.FUNCTION,
+                    tab=DualEditorTab.FUNCTION_PATTERN,
+                ),
+                publication_targets=documentation,
+            ),
+            UiContextReferenceGalleryScenario(
+                scenario_id="ui-plate-metadata",
+                label="Data review",
+                heading="Plate metadata",
+                description=(
+                    "Detected source format, image inventory, and dimensional metadata."
+                ),
+                proof=(
+                    "The selected plate's Viewer action opens the plate viewer and "
+                    "the declared Metadata tab is selected through the widget bridge."
+                ),
+                layout_class="gallery-card-wide",
+                alt_text=(
+                    "OpenHCS plate viewer showing detected image and axis metadata"
+                ),
+                open_aria_label=(
+                    "Open the plate metadata screenshot at full resolution"
+                ),
+                capture_target=PlateManagerActionWindowCaptureTarget(
+                    action=PlateManagerAction.VIEW_METADATA,
+                    tab=PlateViewerTab.METADATA,
+                ),
+                publication_targets=documentation,
+            ),
+            UiContextReferenceGalleryScenario(
+                scenario_id="ui-live-measurement-results",
+                label="Results",
+                heading="Live measurement results",
+                description=(
+                    "Retained per-object measurements with execution and axis provenance."
+                ),
+                proof=(
+                    "The selected plate's Results action opens the UI view of the "
+                    "same retained measurement state surface."
+                ),
+                layout_class="gallery-card-wide",
+                alt_text=(
+                    "OpenHCS live results window showing cell measurements and provenance"
+                ),
+                open_aria_label=(
+                    "Open the live measurement results screenshot at full resolution"
+                ),
+                capture_target=PlateManagerActionWindowCaptureTarget(
+                    action=PlateManagerAction.VIEW_RESULTS,
+                ),
+                publication_targets=documentation,
+            ),
+            UiContextReferenceGalleryScenario(
+                scenario_id="ui-function-selector",
+                label="Function discovery",
+                heading="Function selector",
+                description=(
+                    "Searchable registered functions with modules, signatures, and types."
+                ),
+                proof=(
+                    "The live step editor selects its declared Function Pattern tab "
+                    "and invokes the declared generic Add action."
+                ),
+                layout_class="gallery-card-wide",
+                alt_text=(
+                    "OpenHCS function selector with searchable registered functions"
+                ),
+                open_aria_label=(
+                    "Open the function selector screenshot at full resolution"
+                ),
+                capture_target=FunctionSelectorCaptureTarget(),
+                publication_targets=documentation,
+            ),
+            UiContextReferenceGalleryScenario(
+                scenario_id="ui-custom-function-manager",
+                label="Custom functions",
+                heading="Custom Function Manager",
+                description=(
+                    "User-authored functions managed through the desktop application."
+                ),
+                proof=(
+                    "The manager is opened through the generic System Monitor action "
+                    "declaration rather than a window-title selector."
+                ),
+                layout_class="gallery-card-wide",
+                alt_text="OpenHCS Custom Function Manager window",
+                open_aria_label=(
+                    "Open the Custom Function Manager screenshot at full resolution"
+                ),
+                capture_target=SystemMonitorActionWindowCaptureTarget(
+                    action=SystemMonitorAction.CUSTOM_FUNCTIONS,
+                ),
+                publication_targets=documentation,
+            ),
+            UiContextReferenceGalleryScenario(
+                scenario_id="ui-synthetic-plate-generator",
+                label="Test data",
+                heading="Synthetic Plate Generator",
+                description=(
+                    "Typed controls for generating a reproducible microscopy test plate."
+                ),
+                proof=(
+                    "The generator is opened through the generic System Monitor Test "
+                    "Plate action declaration."
+                ),
+                layout_class="gallery-card-wide",
+                alt_text=(
+                    "OpenHCS Synthetic Plate Generator with image and plate controls"
+                ),
+                open_aria_label=(
+                    "Open the Synthetic Plate Generator screenshot at full resolution"
+                ),
+                capture_target=SystemMonitorActionWindowCaptureTarget(
+                    action=SystemMonitorAction.TEST_PLATE,
+                ),
+                publication_targets=documentation,
+            ),
         )
 
 
@@ -1132,6 +1497,12 @@ class StableUiWindowReferenceGalleryScenarioCatalog(GalleryScenarioCatalog):
     declaration = StableUiWindowReferenceGalleryDeclaration()
 
 
+class ContextualUiReferenceGalleryScenarioCatalog(GalleryScenarioCatalog):
+    """Add declaration-driven contextual task states to documentation."""
+
+    declaration = ContextualUiReferenceGalleryDeclaration()
+
+
 class OpenHCSGalleryScenarioCatalog(
     MultiPlateOverviewGalleryScenarioCatalog,
     PipelineEditorGalleryScenarioCatalog,
@@ -1144,6 +1515,7 @@ class OpenHCSGalleryScenarioCatalog(
     ZmqStartupCompileGalleryScenarioCatalog,
     NapariRoiNavigationGalleryScenarioCatalog,
     StableUiWindowReferenceGalleryScenarioCatalog,
+    ContextualUiReferenceGalleryScenarioCatalog,
 ):
     """Complete public gallery scenario lattice."""
 
@@ -1297,15 +1669,27 @@ def documentation_gallery_scenarios() -> tuple[GalleryScenarioABC, ...]:
     return GalleryPublicationTarget.DOCUMENTATION.select(gallery_scenarios())
 
 
-def ui_window_reference_gallery_scenarios() -> (
-    tuple[UiWindowReferenceGalleryScenario, ...]
-):
+def ui_window_reference_gallery_scenarios() -> tuple[
+    UiWindowReferenceGalleryScenario, ...
+]:
     """Return complete stable-window documentation projected from identities."""
 
     return tuple(
         scenario
         for scenario in documentation_gallery_scenarios()
         if isinstance(scenario, UiWindowReferenceGalleryScenario)
+    )
+
+
+def ui_context_reference_gallery_scenarios() -> tuple[
+    UiContextReferenceGalleryScenario, ...
+]:
+    """Return contextual documentation scenarios from the gallery MRO."""
+
+    return tuple(
+        scenario
+        for scenario in documentation_gallery_scenarios()
+        if isinstance(scenario, UiContextReferenceGalleryScenario)
     )
 
 

@@ -5,14 +5,14 @@ import shutil
 import subprocess
 from hashlib import sha256
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
+from pyqt_reactive.animation import WindowFlashOverlay
+from pyqt_reactive.animation.flash_overlay_opengl import WindowFlashOverlayGL
 from pyqt_reactive.services.window_snapshot import WindowSnapshotCaptureScope
 
 from openhcs.agent.dto.common import SCHEMA_VERSION, AgentResourceRef
 from openhcs.agent.dto.ui_bridge import UiWindowSnapshotResult
-from openhcs.serialization.json import to_jsonable
 from scripts.capture_media_gallery import (
     CaptureManifest,
     CaptureRecord,
@@ -21,6 +21,7 @@ from scripts.capture_media_gallery import (
     Crop,
     Derivative,
     DerivativeValidationResult,
+    GalleryUiBridgeSession,
     HostTool,
     HostToolDeclaration,
     HostToolStatus,
@@ -46,10 +47,15 @@ from scripts.capture_media_gallery import (
     validate_manifest_outputs,
 )
 from scripts.gallery_catalog import (
+    FunctionSelectorCaptureTarget,
     GallerySourceCaptureRequest,
     GallerySourceCaptureResult,
+    ObjectStateCaptureScopeRole,
+    PlateManagerActionWindowCaptureTarget,
+    SystemMonitorActionWindowCaptureTarget,
     UiBridgeWindowCaptureTarget,
     read_gallery_source_evidence,
+    ui_context_reference_gallery_scenarios,
     ui_window_reference_gallery_scenarios,
 )
 
@@ -153,6 +159,56 @@ def test_declared_ui_still_uses_single_mcp_capture_leaf(
     assert observed[0][1].output == Path("raw/workspace.png")
 
 
+def test_contextual_ui_scenarios_derive_typed_capture_targets() -> None:
+    scenarios = ui_context_reference_gallery_scenarios()
+
+    assert len(scenarios) == 8
+    assert any(
+        isinstance(scenario.capture_target, FunctionSelectorCaptureTarget)
+        for scenario in scenarios
+    )
+    assert any(
+        isinstance(
+            scenario.capture_target,
+            PlateManagerActionWindowCaptureTarget,
+        )
+        for scenario in scenarios
+    )
+    assert any(
+        isinstance(
+            scenario.capture_target,
+            SystemMonitorActionWindowCaptureTarget,
+        )
+        for scenario in scenarios
+    )
+
+
+def test_contextual_object_state_roles_resolve_live_scope_structure() -> None:
+    plate_scope = "/tmp/test-plate"
+    step_scope = f"{plate_scope}::functionstep_0"
+    function_scope = f"{step_scope}::func_0"
+    scope_ids = (plate_scope, step_scope, function_scope)
+
+    assert ObjectStateCaptureScopeRole.PIPELINE.resolve(scope_ids) == plate_scope
+    assert ObjectStateCaptureScopeRole.STEP.resolve(scope_ids) == step_scope
+    assert ObjectStateCaptureScopeRole.FUNCTION.resolve(scope_ids) == function_scope
+
+
+def test_contextual_capture_waits_for_declared_flash_type_lifecycle() -> None:
+    session = object.__new__(GalleryUiBridgeSession)
+    observed = iter(
+        (
+            frozenset({WindowFlashOverlay.__name__}),
+            frozenset({WindowFlashOverlayGL.__name__}),
+            frozenset(),
+        )
+    )
+    session.visible_widget_class_names = lambda _window_id: next(observed)
+    session.control_timeout_ms = 1
+
+    session.wait_for_flash_feedback("scope")
+
+
 def test_still_capture_rejects_motion_and_human_review_scenarios(
     tmp_path: Path,
 ) -> None:
@@ -170,7 +226,7 @@ def test_still_capture_rejects_motion_and_human_review_scenarios(
         )
 
 
-def test_mcp_snapshot_capture_uses_declared_request_and_result_contracts(
+def test_ui_bridge_snapshot_capture_uses_declared_request_and_result_contracts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -181,22 +237,21 @@ def test_mcp_snapshot_capture_uses_declared_request_and_result_contracts(
     snapshot_path.write_bytes(snapshot_bytes)
     expected_sha256 = sha256(snapshot_bytes).hexdigest()
     descriptor_path = tmp_path / "ui-bridge.json"
-    observed_argv = []
+    observed_connections = []
+    observed_requests = []
 
-    class FakeMcpDevClient:
-        def __init__(self, *, surface_profile) -> None:
-            del surface_profile
+    class FakeUiBridgeService:
+        def __init__(self) -> None:
+            pass
 
-        def __enter__(self):
-            return self
+        def connection_from_args(self, **kwargs):
+            observed_connections.append(kwargs)
+            return kwargs
 
-        def __exit__(self, *_args) -> None:
-            return None
-
-        def execute(self, argv, *, timeout_seconds):
-            assert timeout_seconds >= 30.0
-            observed_argv.extend(argv)
-            response = UiWindowSnapshotResult(
+        def snapshot_window(self, request, connection):
+            observed_requests.append(request)
+            assert connection is observed_connections[-1]
+            return UiWindowSnapshotResult(
                 schema_version=SCHEMA_VERSION,
                 window_id="main_window",
                 output_dir_path=str(snapshot_path.parent),
@@ -213,22 +268,10 @@ def test_mcp_snapshot_capture_uses_declared_request_and_result_contracts(
                 width=942,
                 height=900,
             )
-            return SimpleNamespace(
-                returncode=0,
-                payload={
-                    "results": [
-                        {
-                            "tool": "openhcs_ui_snapshot_window",
-                            "mcp_error": False,
-                            "payloads": [to_jsonable(response)],
-                        }
-                    ]
-                },
-            )
 
     monkeypatch.setattr(
-        "openhcs.mcp.dev_client.McpDevClient",
-        FakeMcpDevClient,
+        "scripts.capture_media_gallery.UiBridgeService",
+        FakeUiBridgeService,
     )
 
     result = capture_ui_bridge_window_source(
@@ -243,10 +286,9 @@ def test_mcp_snapshot_capture_uses_declared_request_and_result_contracts(
         ),
     )
 
-    arguments = json.loads(observed_argv[3])
-    assert arguments["window_id"] == "main_window"
-    assert arguments["create_if_missing"] is True
-    assert arguments["connection"]["descriptor_file_path"] == str(descriptor_path)
+    assert observed_requests[0].window_id == "main_window"
+    assert observed_requests[0].open_policy.create_if_missing is True
+    assert observed_connections[0]["descriptor_file_path"] == str(descriptor_path)
     assert result.path == "raw/workspace.png"
     assert result.sha256 == expected_sha256
     assert (result.width, result.height) == (942, 900)

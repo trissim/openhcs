@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
-
-from PyQt6.QtCore import Qt
+from enum import Enum
+from typing import Any, Self
 
 from objectstate.context_manager import config_context
+from PyQt6.QtCore import Qt
+from pyqt_reactive.widgets.function_list_editor import FunctionListEditorWidget
+from pyqt_reactive.widgets.shared import (
+    ActionTabbedWindowBody,
+    ActionTabSpec,
+    TabLabelDeclarationMixin,
+)
+
 from openhcs.pyqt_gui.widgets.artifact_plan_view import (
     ArtifactPlanViewWidget,
 )
@@ -16,8 +24,28 @@ from openhcs.pyqt_gui.windows.dual_editor_session import (
     DualEditorFunctionPatternController,
     DualEditorSession,
 )
-from pyqt_reactive.widgets.function_list_editor import FunctionListEditorWidget
-from pyqt_reactive.widgets.shared import ActionTabSpec, ActionTabbedWindowBody
+
+
+class DualEditorTab(TabLabelDeclarationMixin, str, Enum):
+    """Dual-editor tabs with declaration-owned public labels."""
+
+    def __new__(cls, value: str, label: str) -> Self:
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member.label = label
+        return member
+
+    STEP_SETTINGS = ("step_settings", "Step Settings")
+    FUNCTION_PATTERN = ("function_pattern", "Function Pattern")
+    ARTIFACTS = ("artifacts", "Artifacts")
+
+    def select(self, body: ActionTabbedWindowBody) -> None:
+        """Select this declaration in one live dual-editor body."""
+
+        labels = tuple(
+            body.tab_bar.tabText(index) for index in range(body.tab_bar.count())
+        )
+        body.setCurrentIndex(self.index_in(labels))
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +94,7 @@ class _DualEditorTabBuilder:
         self._wire_step_editor(step_editor)
         tab_body.add_tab(
             ActionTabSpec(
-                label="Step Settings",
+                label=DualEditorTab.STEP_SETTINGS.label,
                 content=step_editor,
                 actions=step_editor.get_action_buttons(),
             )
@@ -77,7 +105,7 @@ class _DualEditorTabBuilder:
         function_pattern_controller = self._wire_function_editor(func_editor)
         tab_body.add_tab(
             ActionTabSpec(
-                label="Function Pattern",
+                label=DualEditorTab.FUNCTION_PATTERN.label,
                 content=func_editor,
                 actions=func_editor.get_action_buttons(),
             )
@@ -89,7 +117,7 @@ class _DualEditorTabBuilder:
         )
         tab_body.add_tab(
             ActionTabSpec(
-                label="Artifacts",
+                label=DualEditorTab.ARTIFACTS.label,
                 content=artifact_plan_view,
             )
         )
@@ -102,22 +130,24 @@ class _DualEditorTabBuilder:
         )
 
     def _build_step_editor(self) -> StepParameterEditorWidget:
-        with config_context(self.context.orchestrator.pipeline_config):
-            with config_context(self.context.editing_step):
-                return StepParameterEditorWidget(
-                    self.context.editing_step,
-                    service_adapter=None,
-                    color_scheme=self.context.color_scheme,
-                    pipeline_config=self.context.orchestrator.pipeline_config,
-                    scope_id=self.context.scope_id,
-                    step_index=self.context.step_index,
-                    scope_accent_color=self.context.scope_accent_color,
-                    render_header=False,
-                    button_style="compact",
-                    source_bindings=self.context.source_bindings,
-                    source_binding_context=self.context.source_binding_context,
-                    before_mutation=self.context.before_mutation,
-                )
+        with (
+            config_context(self.context.orchestrator.pipeline_config),
+            config_context(self.context.editing_step),
+        ):
+            return StepParameterEditorWidget(
+                self.context.editing_step,
+                service_adapter=None,
+                color_scheme=self.context.color_scheme,
+                pipeline_config=self.context.orchestrator.pipeline_config,
+                scope_id=self.context.scope_id,
+                step_index=self.context.step_index,
+                scope_accent_color=self.context.scope_accent_color,
+                render_header=False,
+                button_style="compact",
+                source_bindings=self.context.source_bindings,
+                source_binding_context=self.context.source_binding_context,
+                before_mutation=self.context.before_mutation,
+            )
 
     def _wire_step_editor(self, step_editor: StepParameterEditorWidget) -> None:
         step_editor.form_manager.parameter_changed.connect(

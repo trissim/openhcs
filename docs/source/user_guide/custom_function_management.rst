@@ -8,6 +8,8 @@ shared endpoint projection and requests the updated catalogue asynchronously,
 so the Function Selector remains responsive while the execution server exposes
 the new declaration.
 
+.. openhcs-gallery:: ui-custom-function-manager
+
 ``CustomFunctionManager`` owns persisted source and coordinates create, load,
 replace, and delete transactions. It stores source under the platform-specific
 OpenHCS data directory, validates code before execution, requires a supported

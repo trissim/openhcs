@@ -271,6 +271,17 @@ def test_showcase_keeps_one_blueprint_and_execution_harness_authority() -> None:
     assert not any("registry" in name.casefold() for name in classes + functions)
 
 
+def test_documentation_fixture_is_selected_by_the_showcase_declaration() -> None:
+    selected = showcase.documentation_fixture_blueprint()
+
+    assert selected.documentation_fixture is True
+    assert tuple(
+        blueprint
+        for blueprint in showcase.scenario_blueprints()
+        if blueprint.documentation_fixture
+    ) == (selected,)
+
+
 def test_artifact_contracts_derive_outputs_from_compiled_plan():
     result = showcase.artifact_contracts(
         {

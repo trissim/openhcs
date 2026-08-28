@@ -16,11 +16,15 @@ import os
 import sys
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
+
+import openhcs  # noqa: F401  # Activate recorded source dependencies before externals.
+
+# isort: split
 
 from polystore.streaming.identity import StreamProducerIdentity, StreamProducerOrigin
 from zmqruntime import TransportMode
@@ -54,11 +58,13 @@ from openhcs.ui.shared.plate_manager_code_document import (
     PlateManagerCodeDocumentAuthority,
 )
 from scripts.mcp_assay_showcase import (
+    ScenarioBlueprint,
     ShowcaseFailure,
     artifact_contracts,
     artifact_plan_source,
     complete_human_results_table_action,
     discover_live_measurement_surface_id,
+    documentation_fixture_blueprint,
     live_measurement_evidence,
     scenario_blueprints,
 )
@@ -260,7 +266,7 @@ class FinalResultPresentation:
         cls,
         state: Mapping[str, Any],
         contract: CompiledPresentationContract,
-    ) -> "FinalResultPresentation":
+    ) -> FinalResultPresentation:
         """Resolve the exact declaration-owned producer from viewer state."""
 
         target = contract.visual_identity
@@ -402,34 +408,50 @@ class MasterDemoOperations(ABC):
 def built_in_demo_definitions(session_root: Path) -> tuple[MasterDemoDefinition, ...]:
     """Project every existing showcase blueprint into normalized demo content."""
 
-    definitions: list[MasterDemoDefinition] = []
-    for blueprint in scenario_blueprints():
-        plate_path = (
-            session_root / "plates" / demo_plate_directory_name(blueprint.title)
-        )
-        output_path = session_root / "outputs" / blueprint.scenario_id
-        payload = PlateManagerCodeDocumentAuthority.from_source(
-            blueprint.pipeline_source(plate_path, output_path)
-        )
-        plate_scope_id = payload.plate_paths[0]
-        definitions.append(
-            MasterDemoDefinition(
-                contribution=PipelineDemoContribution(
-                    demo_id=blueprint.scenario_id,
-                    title=blueprint.title,
-                    biological_question=blueprint.biological_question,
-                    plate_path=Path(plate_scope_id),
-                    pipeline_config=payload.per_plate_configs[plate_scope_id],
-                    pipeline_steps=tuple(payload.pipeline_data[plate_scope_id]),
-                    presentation_identity=blueprint.presentation_identity,
-                    supporting_presentation_identities=(
-                        blueprint.supporting_presentation_identities
-                    ),
-                ),
-                preparation_argv=tuple(blueprint.generation_arguments(plate_path)),
-            )
-        )
-    return tuple(definitions)
+    return tuple(
+        demo_definition_from_blueprint(blueprint, session_root)
+        for blueprint in scenario_blueprints()
+    )
+
+
+def demo_definition_from_blueprint(
+    blueprint: ScenarioBlueprint,
+    session_root: Path,
+) -> MasterDemoDefinition:
+    """Project one showcase declaration into normalized master-demo content."""
+
+    plate_path = session_root / "plates" / demo_plate_directory_name(blueprint.title)
+    output_path = session_root / "outputs" / blueprint.scenario_id
+    payload = PlateManagerCodeDocumentAuthority.from_source(
+        blueprint.pipeline_source(plate_path, output_path)
+    )
+    plate_scope_id = payload.plate_paths[0]
+    return MasterDemoDefinition(
+        contribution=PipelineDemoContribution(
+            demo_id=blueprint.scenario_id,
+            title=blueprint.title,
+            biological_question=blueprint.biological_question,
+            plate_path=Path(plate_scope_id),
+            pipeline_config=payload.per_plate_configs[plate_scope_id],
+            pipeline_steps=tuple(payload.pipeline_data[plate_scope_id]),
+            presentation_identity=blueprint.presentation_identity,
+            supporting_presentation_identities=(
+                blueprint.supporting_presentation_identities
+            ),
+        ),
+        preparation_argv=tuple(blueprint.generation_arguments(plate_path)),
+    )
+
+
+def documentation_fixture_demo_definition(
+    session_root: Path,
+) -> MasterDemoDefinition:
+    """Project the declaration-selected UI documentation fixture."""
+
+    return demo_definition_from_blueprint(
+        documentation_fixture_blueprint(),
+        session_root,
+    )
 
 
 def demo_definitions_with_contributions(
@@ -639,12 +661,16 @@ def run_demo_schedule(
         measurements: MeasurementPresentation | None = None
         stage = "port_check"
         try:
-            operations.assert_port_available(item)
-            stage = "select"
-            operations.select_plate(item)
-            for workflow in UiSelectedPlateWorkflowKind:
-                stage = workflow.name.casefold()
-                operations.run_workflow(item, workflow)
+
+            def observe_stage(stage_name: str) -> None:
+                nonlocal stage
+                stage = stage_name
+
+            run_scheduled_workflows(
+                item,
+                operations,
+                stage_observer=observe_stage,
+            )
             stage = "viewer_ready"
             operations.wait_for_viewer(item)
             stage = "present_measurements"
@@ -654,7 +680,7 @@ def run_demo_schedule(
             status = "completed"
         except MasterDemoSessionInvalidated:
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - isolate one failed demo and continue.
             status = "failed"
             failed_stage = stage
             error = str(exc)
@@ -724,6 +750,27 @@ def run_demo_schedule(
         elapsed_seconds=time.perf_counter() - started,
         results=tuple(results),
     )
+
+
+def _ignore_workflow_stage(_stage_name: str) -> None:
+    """Default stage observer for callers that only need execution."""
+
+
+def run_scheduled_workflows(
+    item: ScheduledDemo,
+    operations: MasterDemoOperations,
+    *,
+    stage_observer: Callable[[str], None] = _ignore_workflow_stage,
+) -> None:
+    """Execute the declaration-owned UI workflow sequence for one scheduled demo."""
+
+    stage_observer("port_check")
+    operations.assert_port_available(item)
+    stage_observer("select")
+    operations.select_plate(item)
+    for workflow in UiSelectedPlateWorkflowKind:
+        stage_observer(workflow.name.casefold())
+        operations.run_workflow(item, workflow)
 
 
 class McpMasterDemoOperations(MasterDemoOperations):

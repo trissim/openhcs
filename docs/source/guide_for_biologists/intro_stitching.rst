@@ -28,6 +28,8 @@ Editor shows the supplied eight-step workflow. The first step is **Image
 Enhancement Processing** and the final step is **Cell Counting**. These visible
 changes confirm that both the data and its pipeline were created.
 
+.. openhcs-gallery:: ui-synthetic-plate-generator
+
 Initialise the source data
 --------------------------
 
@@ -38,6 +40,8 @@ Initialise the source data
 When initialisation succeeds, **Compile** becomes available. Open the metadata
 viewer if you want to confirm the discovered wells, sites, channels, and Z
 planes before continuing.
+
+.. openhcs-gallery:: ui-plate-metadata
 
 Inspect the supplied pipeline
 -----------------------------
@@ -70,6 +74,8 @@ Run and inspect the result
 4. Inspect the streamed cell-count result in Napari.
 5. Back in OpenHCS, select **Results** to inspect the available measurement
    snapshot.
+
+.. openhcs-gallery:: ui-live-measurement-results
 
 You have now completed the same lifecycle used for real data: add a source,
 initialise it, inspect its pipeline, compile, run, and review the result.

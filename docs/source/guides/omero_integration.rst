@@ -53,6 +53,11 @@ declaration, restarts that component within the packaged Compose stack, and
 rechecks table readiness. Explicitly configured external stacks are never
 restarted by this recovery path.
 
+The current desktop alpha does not expose a supported OMERO management or
+credential-entry window. The UI reference therefore records no OMERO desktop
+surface. Configure and validate OMERO through the packaged instance manager and
+the deployment and testing workflows documented here.
+
 Durable artifact materialization
 --------------------------------
 

@@ -34,7 +34,7 @@ Run the capability report before a capture session:
 The report includes executable paths and versions so the exact toolchain can be preserved with the capture report.
 
 - Building and validating media requires FFmpeg and FFprobe.
-- ``capture-scenario-still`` additionally requires a live UI bridge descriptor and the local MCP dependencies.
+- ``capture-scenario-still`` additionally requires a live UI bridge descriptor and the local UI-bridge transport dependencies.
 - ``capture-still`` additionally requires ImageMagick.
 - ``record-window`` additionally requires ``xdotool`` and an X11 display.
 
@@ -72,6 +72,53 @@ release-media record. Adding a stable window identity therefore extends the
 capture and documentation inventory without editing this command or a screenshot
 list. ``--force`` replaces only the generated WebP derivatives; existing lossless
 sources remain immutable.
+
+Contextual task states use a second declaration-selected batch. Run it against
+a newly launched desktop with isolated XDG cache, configuration, and data roots:
+
+.. code:: bash
+
+   env \
+     XDG_CACHE_HOME=/absolute/private/ui-session/cache \
+     XDG_CONFIG_HOME=/absolute/private/ui-session/config \
+     XDG_DATA_HOME=/absolute/private/ui-session/data \
+     OPENHCS_ENABLE_UI_BRIDGE=true \
+     OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR=/absolute/private/ui-session/descriptors \
+     openhcs
+
+Use the descriptor written into that session's descriptor directory:
+
+.. code:: bash
+
+   python -m scripts.capture_media_gallery capture-ui-context-references \
+     --fixture-root /absolute/private/ui-context-fixture \
+     --source-root /absolute/private/ui-context-captures \
+     --output-root website/assets/gallery \
+     --descriptor-file-path /absolute/path/to/ui-bridge-descriptor.json \
+     --force
+
+The command selects the one assay blueprint marked as the documentation fixture,
+projects its existing master-demo definition, allocates an available declared
+IPC endpoint pair, generates the plate, applies the Plate Manager document, and
+runs init, compile, and execution through the existing MCP workflow operations.
+It then discovers the live ObjectState scopes, tabs, actions, and transient
+window identities required by every contextual gallery declaration. No plate
+name, callable, tab index, widget path, or screenshot list is copied into the
+capture runner.
+
+The batch waits for each semantic UI postcondition, including completion of the
+navigation flash before a nested function form is captured. Its evidence record
+includes the selected fixture declaration, plate path, private session root, and
+viewer port. The fixture and source roots are immutable: use new roots for a new
+capture attempt. ``--force`` still applies only to generated public derivatives.
+
+Stable-window and contextual batches serve different documentation needs. The
+stable batch provides complete registered-window reference coverage. The
+contextual batch provides selected task states whose mechanics cannot be shown
+by an empty window alone. Message-only updater and error dialogs remain
+transient feedback rather than a screenshot inventory; document their message
+and recovery at the owning task instead. The current OMERO alpha has no
+supported desktop management window to capture.
 
 For a human-reviewed native window that does not expose a trusted snapshot leaf, list visible X11 windows and note the ID of the intended window:
 

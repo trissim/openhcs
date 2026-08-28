@@ -694,6 +694,253 @@
           "sha256": "00a701ee47c35da96788e1dfcf63ef161fa8d92ead27f47b5302e8997fe251f8"
         }
       ]
+    },
+    {
+      "id": "ui-pipeline-configuration",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The live plate ObjectState scope is derived from the selected step scope and opened through the UI bridge.",
+      "capture_target": {
+        "kind": "object_state_editor",
+        "human_review_required": false,
+        "parameters": {
+          "scope_role": "pipeline",
+          "tab": null
+        }
+      },
+      "source": {
+        "sha256": "3b990613591b77753165e6cad98563945330747497aae11941e775b887c91c14",
+        "width": 650,
+        "height": 650,
+        "duration_seconds": null,
+        "format": "png"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "ui-pipeline-configuration.webp",
+          "sha256": "1ca2eb172ca33a2cd9ba3f74d1aaae81f448f5c48c85bd9b6f51642e9b1fa570"
+        }
+      ]
+    },
+    {
+      "id": "ui-step-settings-editor",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The live step scope and Step Settings tab are resolved from ObjectState and tab declarations.",
+      "capture_target": {
+        "kind": "object_state_editor",
+        "human_review_required": false,
+        "parameters": {
+          "scope_role": "step",
+          "tab": "step_settings"
+        }
+      },
+      "source": {
+        "sha256": "38c3a5fd79dda1766f2c21051bb1bea6461cd698771a62babc6a1a7558868aef",
+        "width": 550,
+        "height": 600,
+        "duration_seconds": null,
+        "format": "png"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "ui-step-settings-editor.webp",
+          "sha256": "df440ca834f62e34f8da792320c4159424b05848bada8fc2cb8ea502da741c4a"
+        }
+      ]
+    },
+    {
+      "id": "ui-function-configuration",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The callable child scope is discovered from ObjectState and navigated through the shared editor window.",
+      "capture_target": {
+        "kind": "object_state_editor",
+        "human_review_required": false,
+        "parameters": {
+          "scope_role": "function",
+          "tab": "function_pattern"
+        }
+      },
+      "source": {
+        "sha256": "00bf3a3e9cd21222d0607a137aa24d45e005e3aec6cf1b25eabdb3f4c4d4ab4f",
+        "width": 550,
+        "height": 600,
+        "duration_seconds": null,
+        "format": "png"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "ui-function-configuration.webp",
+          "sha256": "003c0278077d2d239b90308958715808e3a1a99d767a7abfca3dd65ba6be1bd9"
+        }
+      ]
+    },
+    {
+      "id": "ui-plate-metadata",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The selected plate's Viewer action opens the plate viewer and the declared Metadata tab is selected through the widget bridge.",
+      "capture_target": {
+        "kind": "plate_manager_action_window",
+        "human_review_required": false,
+        "parameters": {
+          "action": "view_metadata",
+          "tab": "metadata"
+        }
+      },
+      "source": {
+        "sha256": "653b2fc7ac41d16bec4060138fa228cd04a11e1ae173fb8b1172a567be435cc1",
+        "width": 1200,
+        "height": 800,
+        "duration_seconds": null,
+        "format": "png"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "ui-plate-metadata.webp",
+          "sha256": "061b1f5d32b64427c0ef06ef1c82664eac09a7e06aac797b1a25bb73c3cd15e1"
+        }
+      ]
+    },
+    {
+      "id": "ui-live-measurement-results",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The selected plate's Results action opens the UI view of the same retained measurement state surface.",
+      "capture_target": {
+        "kind": "plate_manager_action_window",
+        "human_review_required": false,
+        "parameters": {
+          "action": "view_results",
+          "tab": null
+        }
+      },
+      "source": {
+        "sha256": "d5e737d46dcb5bf6e0e81c32017a8ee374ca0956bbf76c4feea06886da2fc1ff",
+        "width": 1200,
+        "height": 700,
+        "duration_seconds": null,
+        "format": "png"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "ui-live-measurement-results.webp",
+          "sha256": "b39a8ed25ca440cfb799a73f5b54c23d030dd7eed92c57c1fa8ac0f5c8a8565b"
+        }
+      ]
+    },
+    {
+      "id": "ui-function-selector",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The live step editor selects its declared Function Pattern tab and invokes the declared generic Add action.",
+      "capture_target": {
+        "kind": "function_selector",
+        "human_review_required": false,
+        "parameters": {
+          "action": "add",
+          "editor_scope_role": "step",
+          "editor_tab": "function_pattern"
+        }
+      },
+      "source": {
+        "sha256": "8739f208dfafbc5bfa433db1eec4fffaf9147e81c7b02b94007dfaa14469a12c",
+        "width": 1200,
+        "height": 700,
+        "duration_seconds": null,
+        "format": "png"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "ui-function-selector.webp",
+          "sha256": "4bff760ae10c02e41e8a6f5754438021cb92ae7985ad4ec6e8183e43a92fd8bd"
+        }
+      ]
+    },
+    {
+      "id": "ui-custom-function-manager",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The manager is opened through the generic System Monitor action declaration rather than a window-title selector.",
+      "capture_target": {
+        "kind": "system_monitor_action_window",
+        "human_review_required": false,
+        "parameters": {
+          "action": "custom_functions"
+        }
+      },
+      "source": {
+        "sha256": "b62b497b8aab73002d0b51e30a44429b03dd92b46497f1fdf97167faeb4358f2",
+        "width": 700,
+        "height": 500,
+        "duration_seconds": null,
+        "format": "png"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "ui-custom-function-manager.webp",
+          "sha256": "10e8e32bdb175ea13e0861479f843ae1ef9f18746a7548ec75d2148a060ef144"
+        }
+      ]
+    },
+    {
+      "id": "ui-synthetic-plate-generator",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The generator is opened through the generic System Monitor Test Plate action declaration.",
+      "capture_target": {
+        "kind": "system_monitor_action_window",
+        "human_review_required": false,
+        "parameters": {
+          "action": "test_plate"
+        }
+      },
+      "source": {
+        "sha256": "6f264751a8e3508c09b49a43acc9f5b41ad4435bd09c428b7dc83443843f68ff",
+        "width": 800,
+        "height": 700,
+        "duration_seconds": null,
+        "format": "png"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "ui-synthetic-plate-generator.webp",
+          "sha256": "e175587baba4afdd7826f168a99308b66e1287e5286e17ae72e73bd4d86675ff"
+        }
+      ]
     }
   ]
 }

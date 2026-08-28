@@ -84,6 +84,20 @@ def test_master_composes_every_declared_showcase_without_copying_pipelines(tmp_p
         }
 
 
+def test_documentation_fixture_projects_the_marked_showcase_definition(tmp_path):
+    blueprint = showcase.documentation_fixture_blueprint()
+    definition = master.documentation_fixture_demo_definition(tmp_path)
+
+    assert definition.contribution.demo_id == blueprint.scenario_id
+    assert definition.contribution.title == blueprint.title
+    assert definition.contribution.plate_path == (
+        tmp_path / "plates" / master.demo_plate_directory_name(blueprint.title)
+    )
+    assert definition.preparation_argv == tuple(
+        blueprint.generation_arguments(definition.contribution.plate_path)
+    )
+
+
 def test_master_excludes_only_explicit_known_demo_ids(tmp_path):
     definitions = master.built_in_demo_definitions(tmp_path)
 

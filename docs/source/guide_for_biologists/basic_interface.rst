@@ -71,6 +71,8 @@ browser remains responsive and displays the request state until the shared
 catalogue is ready. Selecting a function transfers only its exact callable
 reference to the authoring process; it does not rebuild the catalogue there.
 
+.. openhcs-gallery:: ui-function-selector
+
 Image and metadata browsing
 ---------------------------
 

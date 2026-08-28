@@ -5,6 +5,8 @@ Combines image browsing and metadata viewing in a single window with tabs.
 """
 
 import logging
+from enum import Enum
+from typing import Self
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
@@ -21,12 +23,25 @@ from pyqt_reactive.forms.object_form_document_renderer import (
     ObjectFormRenderContext,
 )
 from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.widgets.shared import BaseFormDialog
+from pyqt_reactive.widgets.shared import BaseFormDialog, TabLabelDeclarationMixin
 
 from openhcs.pyqt_gui.config import ProgressUIConfig
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 
 logger = logging.getLogger(__name__)
+
+
+class PlateViewerTab(TabLabelDeclarationMixin, str, Enum):
+    """Plate-viewer tabs with declaration-owned public labels."""
+
+    def __new__(cls, value: str, label: str) -> Self:
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member.label = label
+        return member
+
+    IMAGE_BROWSER = ("image_browser", "Image Browser")
+    METADATA = ("metadata", "Metadata")
 
 
 class PlateViewerWindow(BaseFormDialog):
@@ -211,13 +226,17 @@ class PlateViewerWindow(BaseFormDialog):
 
         # Tab 1: Image Browser
         self.image_browser_tab = self._create_image_browser_tab()
-        self.tab_widget.addTab(self.image_browser_tab, "Image Browser")
+        self.tab_widget.addTab(
+            self.image_browser_tab,
+            PlateViewerTab.IMAGE_BROWSER.label,
+        )
 
         # Tab 2: Metadata Viewer (lazy-loaded to avoid slow startup)
         self.metadata_viewer_tab = self._create_metadata_placeholder_tab()
         self._metadata_viewer_loaded = False
         self._metadata_tab_index = self.tab_widget.addTab(
-            self.metadata_viewer_tab, "Metadata"
+            self.metadata_viewer_tab,
+            PlateViewerTab.METADATA.label,
         )
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
 
@@ -279,7 +298,11 @@ class PlateViewerWindow(BaseFormDialog):
         metadata_viewer = self._create_metadata_viewer_tab()
         with QSignalBlocker(self.tab_widget):
             self.tab_widget.removeTab(index)
-            self.tab_widget.insertTab(index, metadata_viewer, "Metadata")
+            self.tab_widget.insertTab(
+                index,
+                metadata_viewer,
+                PlateViewerTab.METADATA.label,
+            )
             self.tab_widget.setCurrentIndex(index)
         self.metadata_viewer_tab = metadata_viewer
 
@@ -313,9 +336,9 @@ class PlateViewerWindow(BaseFormDialog):
                 )
             ).render(layout, document)
 
-        except Exception as e:
-            logger.error(f"Failed to load metadata: {e}", exc_info=True)
-            error_label = QLabel(f"<b>Error loading metadata:</b><br>{str(e)}")
+        except Exception as error:
+            logger.exception("Failed to load metadata")
+            error_label = QLabel(f"<b>Error loading metadata:</b><br>{error!s}")
             error_label.setWordWrap(True)
             error_label.setStyleSheet("color: red; padding: 10px;")
             layout.addWidget(error_label)
@@ -409,12 +432,12 @@ class PlateViewerWindow(BaseFormDialog):
                     + "\n".join(f"  ✗ {d}: {e}" for d, e in failed_dirs),
                 )
 
-        except Exception as e:
-            logger.error(f"Failed to consolidate results: {e}", exc_info=True)
+        except Exception as error:
+            logger.exception("Failed to consolidate results")
             QMessageBox.critical(
                 self,
                 "Consolidation Failed",
-                f"Failed to consolidate results:\n\n{str(e)}",
+                f"Failed to consolidate results:\n\n{error!s}",
             )
 
     def cleanup(self):

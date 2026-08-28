@@ -6,52 +6,25 @@ Uses hybrid approach: extracted business logic + clean PyQt6 UI.
 """
 
 import logging
+from collections.abc import Callable
 from functools import cache
-from typing import Optional, Callable, Dict, List
 
-from PyQt6.QtWidgets import (
-    QVBoxLayout,
-    QPushButton,
-    QLabel,
-    QWidget,
-    QMessageBox,
-)
-from PyQt6.QtCore import pyqtSignal, QTimer
-from PyQt6.QtGui import QShowEvent
-
-from openhcs.core.steps.function_step import FunctionSpec, FunctionStep
-from openhcs.pyqt_gui.windows.dual_editor_session import (
-    DualEditorSession,
-)
-from openhcs.pyqt_gui.windows.dual_editor_tab_builder import (
-    _DualEditorTabBuildContext,
-    _DualEditorTabBuilder,
-)
-from openhcs.core.config import PipelineConfig
-from openhcs.core.artifact_inspection import CompiledArtifactInspection
-from openhcs.core.source_binding_context import SourceBindingContext
-from openhcs.core.source_bindings import SourceBindingsConfig
 from objectstate import is_global_config_instance
 from objectstate.global_config import get_current_global_config
-from openhcs.core.steps.abstract import AbstractStep
-from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
-    PlateCompiledState,
+from objectstate.object_state import ObjectStateRegistry
+from PyQt6.QtCore import QTimer, pyqtSignal
+from PyQt6.QtGui import QShowEvent
+from PyQt6.QtWidgets import (
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
-from openhcs.pyqt_gui.widgets.shared.services.runtime_artifact_progress_service import (
-    RuntimeArtifactAvailableNotification,
-)
-from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
-    DebugSnapshotAvailableNotification,
-)
-from openhcs.ui.shared.pattern_data_manager import PatternDataManager
-from openhcs.pyqt_gui.services.step_scope_identity import (
-    StepEditorScope,
-    build_step_scope_id,
-)
-
-from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.services.scope_token_service import ScopeTokenService
+from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.services.function_navigation import is_function_field_path
+from pyqt_reactive.services.scope_token_service import ScopeTokenService
+from pyqt_reactive.services.window_code_document import WindowCodeDocumentDriver
 from pyqt_reactive.services.window_navigation import (
     FieldWindowNavigationDriver,
     NavigationWaitReason,
@@ -59,8 +32,7 @@ from pyqt_reactive.services.window_navigation import (
     RegisteredWindowNavigationRequest,
     WindowNavigationDriver,
 )
-from pyqt_reactive.services.window_code_document import WindowCodeDocumentDriver
-from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
+from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.widgets.shared import (
     ActionTabbedWindowBody,
     BaseFormDialog,
@@ -70,8 +42,36 @@ from pyqt_reactive.widgets.shared import (
     HeaderActionGroup,
     ManagedWindowActionCapabilities,
 )
-from objectstate.object_state import ObjectStateRegistry
+
+from openhcs.core.artifact_inspection import CompiledArtifactInspection
+from openhcs.core.config import PipelineConfig
+from openhcs.core.source_binding_context import SourceBindingContext
+from openhcs.core.source_bindings import SourceBindingsConfig
+from openhcs.core.steps.abstract import AbstractStep
+from openhcs.core.steps.function_step import FunctionSpec, FunctionStep
 from openhcs.introspection import SignatureAnalyzer
+from openhcs.pyqt_gui.services.step_scope_identity import (
+    StepEditorScope,
+    build_step_scope_id,
+)
+from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
+    PlateCompiledState,
+)
+from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
+    DebugSnapshotAvailableNotification,
+)
+from openhcs.pyqt_gui.widgets.shared.services.runtime_artifact_progress_service import (
+    RuntimeArtifactAvailableNotification,
+)
+from openhcs.pyqt_gui.windows.dual_editor_session import (
+    DualEditorSession,
+)
+from openhcs.pyqt_gui.windows.dual_editor_tab_builder import (
+    DualEditorTab,
+    _DualEditorTabBuildContext,
+    _DualEditorTabBuilder,
+)
+from openhcs.ui.shared.pattern_data_manager import PatternDataManager
 
 logger = logging.getLogger(__name__)
 
@@ -179,9 +179,9 @@ class DualEditorWindowNavigationDriver(WindowNavigationDriver):
         if tab_widget is None or field_path is None:
             return
         if is_function_field_path(field_path):
-            tab_widget.setCurrentIndex(1)
+            DualEditorTab.FUNCTION_PATTERN.select(tab_widget)
         else:
-            tab_widget.setCurrentIndex(0)
+            DualEditorTab.STEP_SETTINGS.select(tab_widget)
 
 
 class DualEditorWindow(BaseFormDialog):
@@ -202,21 +202,21 @@ class DualEditorWindow(BaseFormDialog):
 
     def __init__(
         self,
-        step_data: Optional[FunctionStep] = None,
+        step_data: FunctionStep | None = None,
         is_new: bool = False,
-        on_save_callback: Optional[Callable] = None,
-        color_scheme: Optional[ColorScheme] = None,
+        on_save_callback: Callable | None = None,
+        color_scheme: ColorScheme | None = None,
         orchestrator=None,
         parent=None,
         service_adapter=None,
-        step_index: Optional[int] = None,
+        step_index: int | None = None,
         *,
         plate_scope: str,
         source_bindings: SourceBindingsConfig | None = None,
         source_binding_context: SourceBindingContext | None = None,
-        function_invocation_badge_provider: Optional[
-            Callable[[str, int, Callable], Optional[str]]
-        ] = None,
+        function_invocation_badge_provider: (
+            Callable[[str, int, Callable], str | None] | None
+        ) = None,
         compiled_artifact_inspection_provider: (
             Callable[[str], CompiledArtifactInspection | None] | None
         ) = None,
@@ -280,12 +280,12 @@ class DualEditorWindow(BaseFormDialog):
         self.current_tab = "step"
 
         # UI components
-        self.tab_widget: Optional[ActionTabbedWindowBody] = None
-        self.header_label: Optional[QLabel] = None
-        self.parameter_editors: Dict[str, QWidget] = (
-            {}
-        )  # Map tab titles to editor widgets
-        self.class_hierarchy: List = []  # Store inheritance hierarchy info
+        self.tab_widget: ActionTabbedWindowBody | None = None
+        self.header_label: QLabel | None = None
+        self.parameter_editors: dict[
+            str, QWidget
+        ] = {}  # Map tab titles to editor widgets
+        self.class_hierarchy: list = []  # Store inheritance hierarchy info
 
         # Editors are created during setup_ui(); initialize here so scope styling
         # hooks can run during init_scope_border() without attribute errors.
@@ -416,7 +416,6 @@ class DualEditorWindow(BaseFormDialog):
         """Set the original step for change detection. Must be called within proper context."""
         # Original step is already set in __init__ when working on a copy
         # This method is kept for compatibility but no longer needed
-        pass
 
     def setup_ui(self):
         """Setup the user interface."""
@@ -1099,7 +1098,7 @@ class DualEditorWindow(BaseFormDialog):
         form_manager.context_obj = new_context_obj
 
         # Recursively update all nested managers
-        for nested_name, nested_manager in form_manager.nested_managers.items():
+        for nested_manager in form_manager.nested_managers.values():
             self._update_context_obj_recursively(nested_manager, new_context_obj)
 
     def _normalized_form_change_path(self, param_name: str) -> tuple[str, ...]:
@@ -1215,9 +1214,13 @@ class DualEditorWindow(BaseFormDialog):
 
             self.finish_managed_save(close_window=close_window)
 
-        except Exception as e:
-            logger.error(f"Failed to save step: {e}")
-            QMessageBox.critical(self, "Save Error", f"Failed to save step:\n{e}")
+        except Exception as error:
+            logger.exception("Failed to save step")
+            QMessageBox.critical(
+                self,
+                "Save Error",
+                f"Failed to save step:\n{error}",
+            )
 
     def select_and_scroll_to_field(self, field_path: str) -> None:
         logger.debug(f"[SCROLL] select_and_scroll_to_field called with: {field_path!r}")
@@ -1242,19 +1245,19 @@ class DualEditorWindow(BaseFormDialog):
             if self.func_editor is None:
                 return
             if self.tab_widget:
-                self.tab_widget.setCurrentIndex(1)
+                DualEditorTab.FUNCTION_PATTERN.select(self.tab_widget)
             self.func_editor.select_and_scroll_to_field(field_path)
             return
 
         if is_step and self.step_editor:
             if self.tab_widget:
-                self.tab_widget.setCurrentIndex(0)
+                DualEditorTab.STEP_SETTINGS.select(self.tab_widget)
             self.step_editor.select_and_scroll_to_field(field_path)
             return
 
         if self.func_editor:
             if self.tab_widget:
-                self.tab_widget.setCurrentIndex(1)
+                DualEditorTab.FUNCTION_PATTERN.select(self.tab_widget)
             self.func_editor.select_and_scroll_to_field(field_path)
 
     def window_navigation_driver(self) -> WindowNavigationDriver:

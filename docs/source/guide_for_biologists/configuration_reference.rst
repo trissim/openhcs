@@ -29,6 +29,8 @@ There are three declaration scopes, followed by one resolution boundary:
               v
    immutable step snapshots and typed compiled plans
 
+.. openhcs-gallery:: ui-pipeline-configuration
+
 ``None`` in a lazy field normally means *inherit*, not *disable*. Enableable
 configs have a separate ``enabled`` field; resetting a lazy field returns it to
 inheritance. Compilation resolves the hierarchy once. Runtime workers consume
@@ -159,6 +161,14 @@ Viewers
   scopes and override ``enabled=True`` only on that step's selected viewer
   config, optionally with a bounded ``well_filter`` and ``persistent=True``;
   then compile again.
+
+.. openhcs-gallery:: ui-step-settings-editor
+
+The **Function Pattern** tab reveals the selected callable's typed parameters
+within the owning step. Nested function values participate in the same
+ObjectState inheritance and saved-state workflow as the surrounding step.
+
+.. openhcs-gallery:: ui-function-configuration
 
 Post-run analysis and metadata
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

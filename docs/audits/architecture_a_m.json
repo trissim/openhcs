@@ -265,7 +265,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
+        "sha256": "e777e6e76e10637c5dd371825135fa2084e0bf6c35fafd30c9b27c90ab340afa",
         "role": "Coordinates post-paint endpoint preparation, projects the browser-owned endpoint snapshot into both status-bar surfaces, and routes endpoint termination to the client lifecycle owner."
       },
       {
@@ -314,7 +314,9 @@
       "On 2026-08-25, re-read the complete explanation against the shared endpoint catalogue service and its single revision/projection state; focused unit tests and a live Function Selector probe confirmed non-blocking preparation and exact selected-reference resolution.",
       "On 2026-08-26, re-read the complete page after ZMQRuntime allowed the catalog preparation owner to carry one cancellation authority through endpoint startup and request polling; the documented GUI cleanup and prewarm lifecycle remains accurate.",
       "On 2026-08-27, re-read the complete explanation and endpoint observation owner after startup rows began projecting each typed lifecycle phase through its nominal declaration; the page already describes the snapshot as the single status and browser-row input, so its ownership claims remain accurate.",
-      "On 2026-08-27, re-read the complete explanation against cancellation propagation through the endpoint catalogue projection; the documented asynchronous prewarm and unconditional cleanup ownership remain accurate."
+      "On 2026-08-27, re-read the complete explanation against cancellation propagation through the endpoint catalogue projection; the documented asynchronous prewarm and unconditional cleanup ownership remain accurate.",
+      "On 2026-08-28, re-read the complete explanation against the current desktop composition after dock identities and titles began descending from nominal window declarations; the batch, endpoint snapshot, asynchronous catalogue, and cleanup ownership claims remain accurate.",
+      "Focused batch compilation, endpoint routing, and experimental-analysis tests passed: 53 tests."
     ]
   },
   {
@@ -917,13 +919,18 @@
       },
       {
         "path": "openhcs/agent/ui_bridge_identities.py",
-        "sha256": "b744d5d2142c31f599bd0c66cfe9dbed522475d447a57f38fcd2405fbb6979f5",
-        "role": "Owns the nominal declarations for stable OpenHCS widget and window identities."
+        "sha256": "5913d14b99340174af87b2a7cafa3cdd080a331553c0cf59392ade7d253f1234",
+        "role": "Owns the nominal declarations for stable OpenHCS widget and window identities, presentation titles, and complete stable-window family projection."
       },
       {
         "path": "openhcs/pyqt_gui/services/ui_window_ids.py",
         "sha256": "f58482c524d445b8297eb3116ec79ccb22403eb2f12dd9ecf6e27e154aa028c1",
         "role": "Projects the stable identity declarations into the desktop window-id and manager-scope interface."
+      },
+      {
+        "path": "tests/unit/test_build_website.py",
+        "sha256": "e66aba73ff9dc10d04c72017abcb810c04bd775d31c61d822dd8060a6811a4dc",
+        "role": "Verifies that the stable UI window reference derives its identities and titles from the nominal registry."
       }
     ],
     "findings": [
@@ -933,7 +940,9 @@
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
       "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
-      "On 2026-08-28, re-read the complete redirect after stable window strings moved to nominal identity declarations; OpenHCS still owns product identities while pyqt-reactive owns generic lifecycle."
+      "On 2026-08-28, re-read the complete redirect after stable window strings moved to nominal identity declarations; OpenHCS still owns product identities while pyqt-reactive owns generic lifecycle.",
+      "On 2026-08-28, re-read the complete reference redirect after stable window titles and family projection moved onto the nominal identity declarations; the documented OpenHCS and pyqt-reactive ownership boundary remains accurate.",
+      "Focused stable-window registry projection test passed: 1 test."
     ]
   },
   {
@@ -1024,7 +1033,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "5ca7d09d2d55732392ce980aa36563fecbc5f177748b25569204d405d6b54ada",
+        "sha256": "e777e6e76e10637c5dd371825135fa2084e0bf6c35fafd30c9b27c90ab340afa",
         "role": "Routes the desktop analysis action through ExperimentalAnalysisEngine rather than the deprecated wrapper."
       },
       {
@@ -1044,7 +1053,9 @@
       "Focused feature-lattice QA passed 65 tests covering framework resolution, execution scope, callable contracts, compiled execution, validation, and worker policy.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate."
+      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate.",
+      "On 2026-08-28, re-read the complete explanation and current desktop action after unrelated dock titles began descending from nominal identity declarations; the action still constructs ExperimentalAnalysisConfig and calls ExperimentalAnalysisEngine.run_directory without restating filename values.",
+      "Focused batch compilation, endpoint routing, and experimental-analysis tests passed: 53 tests."
     ]
   },
   {

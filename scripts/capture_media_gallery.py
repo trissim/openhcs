@@ -18,29 +18,65 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import openhcs  # noqa: F401  # Activate recorded source dependencies before UI imports.
+
+# isort: split
+
+from pyqt_reactive.animation import WindowFlashOverlay
+from pyqt_reactive.animation.flash_overlay_opengl import WindowFlashOverlayGL
+from pyqt_reactive.services.widget_tree_projection import WidgetActionKind
+from pyqt_reactive.widgets.shared import TabLabelDeclarationMixin
 from python_introspect import dataclass_from_mapping
 
+from openhcs.agent.dto.ui_bridge import (
+    UiActionCatalog,
+    UiActionInvokeRequest,
+    UiActionInvokeResult,
+    UiObjectStateScopeCatalog,
+    UiObjectStateScopeListRequest,
+    UiWidgetActionInvokeRequest,
+    UiWidgetActionInvokeResult,
+    UiWidgetActionSummary,
+    UiWidgetTreeNode,
+    UiWidgetTreeRequest,
+    UiWidgetTreeResult,
+    UiWindowCatalog,
+    UiWindowCloseRequest,
+    UiWindowNavigateRequest,
+    UiWindowNavigateResult,
+    UiWindowSnapshotRequest,
+)
+from openhcs.agent.services.ui_bridge_service import UiBridgeService
+from openhcs.mcp.control_timeout import McpUiBridgeTimeoutPolicy
 from openhcs.serialization.json import to_jsonable
 from scripts.gallery_catalog import (
     SOURCE_CAPTURE_EVIDENCE_RECORD_NAME,
+    FunctionSelectorCaptureTarget,
     GalleryCatalogError,
     GalleryScenarioCatalogRecord,
     GallerySourceCaptureRequest,
     GallerySourceCaptureResult,
     GallerySourceEvidenceEntry,
+    ObjectStateCaptureScopeRole,
+    ObjectStateEditorCaptureTarget,
     OpenHCSGalleryScenarioCatalog,
+    PlateManagerActionWindowCaptureTarget,
+    StillGalleryScenarioABC,
+    SystemMonitorActionWindowCaptureTarget,
     UiBridgeWindowCaptureTarget,
     UiWindowReferenceGalleryScenario,
     gallery_scenarios,
     read_gallery_source_evidence,
     synchronize_gallery_release_record_for_asset_root,
+    ui_context_reference_gallery_scenarios,
 )
 
 CAPTURE_MANIFEST_SCHEMA_VERSION = 2
@@ -730,6 +766,17 @@ class UiWindowReferenceCaptureResult:
     manifest_path: str
     evidence_path: str
     captures: tuple[CaptureValidationResult, ...]
+    fixture: UiContextFixturePreparationResult | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UiContextFixturePreparationResult:
+    """Declaration-selected live fixture prepared for contextual UI capture."""
+
+    demo_id: str
+    session_root: str
+    plate_path: str
+    viewer_port: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -742,7 +789,7 @@ class UiWindowReferenceDerivativePolicy:
 
     def derivative_for(
         self,
-        scenario: UiWindowReferenceGalleryScenario,
+        scenario: StillGalleryScenarioABC,
     ) -> Derivative:
         """Project one scenario's declared image path into bounded output policy."""
 
@@ -764,110 +811,448 @@ class WindowRecordingCaptureResult(GallerySourceCaptureResult):
     mouse_visible: bool
 
 
+class GalleryUiBridgeSession:
+    """One typed UI-bridge session for deterministic gallery preparation and capture."""
+
+    def __init__(self, request: GallerySourceCaptureRequest) -> None:
+        self.request = request
+        self.control_timeout_ms = McpUiBridgeTimeoutPolicy.resolve(request.timeout_ms)
+        self._service = UiBridgeService()
+        self.connection = self._service.connection_from_args(
+            descriptor_file_path=(
+                None
+                if request.descriptor_file_path is None
+                else str(request.descriptor_file_path)
+            ),
+            timeout_ms=self.control_timeout_ms,
+        )
+
+    def windows(self) -> UiWindowCatalog:
+        result = self._service.list_windows(self.connection)
+        if result.errors:
+            raise MediaGalleryError(f"UI window catalogue failed: {result.errors!r}")
+        return result
+
+    def visible_window_ids(self) -> frozenset[str]:
+        return frozenset(
+            window.window_id for window in self.windows().windows if window.visible
+        )
+
+    def object_state_scopes(self) -> UiObjectStateScopeCatalog:
+        request = UiObjectStateScopeListRequest.from_fields()
+        result = self._service.list_object_state_scopes(request, self.connection)
+        if result.errors:
+            raise MediaGalleryError(
+                f"ObjectState scope catalogue failed: {result.errors!r}"
+            )
+        return result
+
+    def navigate_scope(
+        self,
+        window_id: str,
+        role: ObjectStateCaptureScopeRole,
+    ) -> UiWindowNavigateResult:
+        request = UiWindowNavigateRequest.from_fields(
+            window_id=window_id,
+            field_path=role.navigation_field_path,
+            create_if_missing=True,
+        )
+        result = self._service.navigate_window(request, self.connection)
+        if (
+            result.errors
+            or not result.focused
+            or (role.requires_nested_navigation and not result.navigated)
+        ):
+            raise MediaGalleryError(
+                f"Could not navigate to UI scope {window_id!r}: {result!r}"
+            )
+        return result
+
+    def action_catalog(self) -> UiActionCatalog:
+        result = self._service.list_actions(self.connection)
+        if result.errors:
+            raise MediaGalleryError(f"UI action catalogue failed: {result.errors!r}")
+        return result
+
+    def invoke_plate_manager_action(
+        self,
+        target: PlateManagerActionWindowCaptureTarget,
+    ) -> UiActionInvokeResult:
+        matches = tuple(
+            action
+            for action in self.action_catalog().actions
+            if action.identity.widget_id
+            == target.capture_widget_identity.require_value()
+            and action.identity.action_id == target.action.value
+        )
+        if len(matches) != 1:
+            raise MediaGalleryError(
+                f"Expected one declared {target.action.value!r} action, "
+                f"found {len(matches)}."
+            )
+        summary = matches[0]
+        request = UiActionInvokeRequest.from_fields(
+            widget_id=summary.identity.widget_id,
+            action_id=summary.identity.action_id,
+            target_scope_ids=list(summary.target_scope_ids),
+            observed_selection_revision_token=summary.selection_revision_token,
+            require_confirmation=False,
+        )
+        result = self._service.invoke_action(request, self.connection)
+        if result.errors or not result.receipt.accepted:
+            raise MediaGalleryError(
+                f"UI action {target.action.value!r} was rejected: {result!r}"
+            )
+        return result
+
+    def widget_tree(
+        self,
+        window_id: str,
+        *,
+        actionable_only: bool = True,
+        include_tree: bool = False,
+    ) -> UiWidgetTreeResult:
+        request = UiWidgetTreeRequest.from_fields(
+            window_id=window_id,
+            actionable_only=actionable_only,
+            include_tree=include_tree,
+            max_depth=None,
+            max_nodes=2000,
+        )
+        result = self._service.widget_tree(request, self.connection)
+        if result.errors or not result.projected:
+            raise MediaGalleryError(
+                f"Widget-tree projection failed for {window_id!r}: {result!r}"
+            )
+        return result
+
+    @staticmethod
+    def _widget_nodes(root: UiWidgetTreeNode | None) -> tuple[UiWidgetTreeNode, ...]:
+        if root is None:
+            return ()
+        return (
+            root,
+            *(
+                descendant
+                for child in root.children
+                for descendant in GalleryUiBridgeSession._widget_nodes(child)
+            ),
+        )
+
+    def visible_widget_class_names(self, window_id: str) -> frozenset[str]:
+        """Return concrete visible widget types from the live full-tree projection."""
+
+        tree = self.widget_tree(
+            window_id,
+            actionable_only=False,
+            include_tree=True,
+        )
+        return frozenset(
+            node.class_name for node in self._widget_nodes(tree.root) if node.visible
+        )
+
+    def wait_for_flash_feedback(self, window_id: str) -> None:
+        """Wait for the type-derived navigation flash lifecycle to complete."""
+
+        overlay_types = frozenset(
+            (WindowFlashOverlay.__name__, WindowFlashOverlayGL.__name__)
+        )
+        self._poll_until(
+            lambda: (
+                not overlay_types.isdisjoint(self.visible_widget_class_names(window_id))
+            ),
+            f"navigation feedback to appear in {window_id!r}",
+        )
+        self._poll_until(
+            lambda: overlay_types.isdisjoint(
+                self.visible_widget_class_names(window_id)
+            ),
+            f"navigation feedback to finish in {window_id!r}",
+        )
+
+    def invoke_widget_action(
+        self,
+        window_id: str,
+        summary: UiWidgetActionSummary,
+        *,
+        action_kind: WidgetActionKind,
+        target_index: int | None = None,
+    ) -> UiWidgetActionInvokeResult:
+        request = UiWidgetActionInvokeRequest.from_fields(
+            window_id=window_id,
+            path_id=summary.path_id,
+            action_kind=action_kind.value,
+            target_index=target_index,
+        )
+        result = self._service.invoke_widget_action(request, self.connection)
+        if result.errors or not result.receipt.accepted:
+            raise MediaGalleryError(
+                f"Widget action {summary.path_id!r} was rejected: {result!r}"
+            )
+        return result
+
+    def select_tab(
+        self,
+        window_id: str,
+        tab: TabLabelDeclarationMixin,
+    ) -> None:
+        def matching_actions() -> tuple[UiWidgetActionSummary, ...]:
+            return tuple(
+                action
+                for action in self.widget_tree(window_id).actionable_widgets
+                if WidgetActionKind.TAB_SELECTOR.value in action.action_kinds
+                and tab.label in action.item_texts
+            )
+
+        matches = matching_actions()
+        if len(matches) != 1:
+            raise MediaGalleryError(
+                f"Expected one tab selector containing {tab.label!r}, "
+                f"found {len(matches)}."
+            )
+        target_index = tab.index_in(matches[0].item_texts)
+        self.invoke_widget_action(
+            window_id,
+            matches[0],
+            action_kind=WidgetActionKind.TAB_SELECTOR,
+            target_index=target_index,
+        )
+        self._poll_until(
+            lambda: any(
+                action.current_index == target_index for action in matching_actions()
+            ),
+            f"tab {tab.label!r} to become active in {window_id!r}",
+        )
+
+    def spawn_from_plate_manager_action(
+        self,
+        target: PlateManagerActionWindowCaptureTarget,
+    ) -> str:
+        before = self.visible_window_ids()
+        self.invoke_plate_manager_action(target)
+        return self._wait_for_new_window(before)
+
+    def spawn_from_system_monitor_action(
+        self,
+        target: SystemMonitorActionWindowCaptureTarget,
+    ) -> str:
+        main_window_id = target.capture_window_identity.require_value()
+        matches = tuple(
+            action
+            for action in self.widget_tree(main_window_id).actionable_widgets
+            if action.label == target.action.label
+            and WidgetActionKind.BUTTON.value in action.action_kinds
+        )
+        return self._spawn_from_widget_action(main_window_id, matches)
+
+    def spawn_function_selector(
+        self,
+        window_id: str,
+        target: FunctionSelectorCaptureTarget,
+    ) -> str:
+        matches = tuple(
+            action
+            for action in self.widget_tree(window_id).actionable_widgets
+            if action.object_name == target.action.object_name
+            and WidgetActionKind.BUTTON.value in action.action_kinds
+        )
+        return self._spawn_from_widget_action(window_id, matches)
+
+    def _spawn_from_widget_action(
+        self,
+        window_id: str,
+        matches: tuple[UiWidgetActionSummary, ...],
+    ) -> str:
+        if len(matches) != 1:
+            raise MediaGalleryError(
+                f"Expected one declared widget action in {window_id!r}, "
+                f"found {len(matches)}."
+            )
+        before = self.visible_window_ids()
+        self.invoke_widget_action(
+            window_id,
+            matches[0],
+            action_kind=WidgetActionKind.BUTTON,
+        )
+        return self._wait_for_new_window(before)
+
+    def _wait_for_new_window(self, before: frozenset[str]) -> str:
+        created: frozenset[str] = frozenset()
+
+        def exactly_one_created() -> bool:
+            nonlocal created
+            created = self.visible_window_ids() - before
+            return len(created) == 1
+
+        self._poll_until(exactly_one_created, "one new visible UI window")
+        return next(iter(created))
+
+    def _poll_until(self, condition: Callable[[], bool], description: str) -> None:
+        deadline = time.monotonic() + max(
+            5.0,
+            self.control_timeout_ms / 1000.0,
+        )
+        while time.monotonic() < deadline:
+            if condition():
+                return
+            time.sleep(0.1)
+        raise MediaGalleryError(f"Timed out waiting for {description}.")
+
+    def close_window(self, window_id: str) -> None:
+        request = UiWindowCloseRequest.from_fields(window_id=window_id)
+        result = self._service.close_window(request, self.connection)
+        if result.errors or not result.closed:
+            raise MediaGalleryError(
+                f"Could not close UI window {window_id!r}: {result!r}"
+            )
+
+    def capture_window(
+        self,
+        window_id: str,
+        *,
+        create_if_missing: bool = False,
+    ) -> GallerySourceCaptureResult:
+        target_path = _capture_target(
+            self.request.source_root,
+            self.request.output,
+            ".png",
+        )
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_request = UiWindowSnapshotRequest.from_fields(
+            window_id=window_id,
+            output_dir_path=str(target_path.parent),
+            create_if_missing=create_if_missing,
+        )
+        response = self._service.snapshot_window(snapshot_request, self.connection)
+        if not response.captured or response.errors:
+            raise MediaGalleryError(f"UI window snapshot failed: {response!r}")
+        if response.resource is None or response.resource.path is None:
+            raise MediaGalleryError("UI snapshot response contains no local resource.")
+        if response.resource.sha256 is None:
+            raise MediaGalleryError("UI snapshot resource contains no SHA-256.")
+        if response.width is None or response.width <= 0:
+            raise MediaGalleryError("UI snapshot response contains no valid width.")
+        if response.height is None or response.height <= 0:
+            raise MediaGalleryError("UI snapshot response contains no valid height.")
+        snapshot_path = Path(response.resource.path).resolve()
+        if snapshot_path.parent != target_path.parent.resolve():
+            raise MediaGalleryError(
+                "UI snapshot resource escaped the requested capture directory: "
+                f"{snapshot_path}"
+            )
+        if snapshot_path.suffix.lower() != ".png":
+            raise MediaGalleryError(
+                f"UI snapshot resource is not a lossless PNG: {snapshot_path}"
+            )
+        if not snapshot_path.is_file():
+            raise MediaGalleryError(
+                f"UI snapshot resource does not exist: {snapshot_path}"
+            )
+        actual_sha256 = sha256_file(snapshot_path)
+        if actual_sha256 != response.resource.sha256:
+            raise MediaGalleryError(
+                "UI snapshot resource changed before gallery ingestion."
+            )
+        os.replace(snapshot_path, target_path)
+        return GallerySourceCaptureResult(
+            path=str(self.request.output),
+            sha256=actual_sha256,
+            width=response.width,
+            height=response.height,
+            format="PNG",
+        )
+
+
 def capture_ui_bridge_window_source(
     target: UiBridgeWindowCaptureTarget,
     request: GallerySourceCaptureRequest,
 ) -> GallerySourceCaptureResult:
-    """Capture one declared UI-bridge window through the existing MCP capability."""
+    """Capture one declared window through the existing typed UI bridge."""
 
-    from openhcs.agent.capabilities import (
-        DesktopLocalCapabilitySurfaceProfile,
-        UiSnapshotWindowCapability,
-    )
-    from openhcs.agent.dto.ui_bridge import (
-        UiWindowSnapshotRequest,
-        UiWindowSnapshotResult,
-    )
-    from openhcs.mcp.control_timeout import McpUiBridgeTimeoutPolicy
-    from openhcs.mcp.dev_client import McpDevClient
-    from openhcs.mcp.dev_client_core import UiConnectionArguments
-    from openhcs.mcp.dev_client_rendering import McpDevPayloadProjection
-
-    target_path = _capture_target(request.source_root, request.output, ".png")
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    control_timeout_ms = McpUiBridgeTimeoutPolicy.resolve(request.timeout_ms)
-    snapshot_request = UiWindowSnapshotRequest.from_fields(
-        window_id=target.window_id,
-        output_dir_path=str(target_path.parent),
+    session = GalleryUiBridgeSession(request)
+    return session.capture_window(
+        target.window_id,
         create_if_missing=target.create_if_missing,
     )
-    connection = UiConnectionArguments(
-        host=None,
-        port=None,
-        transport_mode=None,
-        auth_token=None,
-        descriptor_file_path=(
-            None
-            if request.descriptor_file_path is None
-            else str(request.descriptor_file_path)
-        ),
-        bridge_instance_id=None,
-        timeout_ms=control_timeout_ms,
+
+
+def capture_object_state_editor_source(
+    target: ObjectStateEditorCaptureTarget,
+    request: GallerySourceCaptureRequest,
+) -> GallerySourceCaptureResult:
+    """Capture one live ObjectState editor resolved from the active fixture."""
+
+    session = GalleryUiBridgeSession(request)
+    scope_id = target.scope_role.resolve(
+        tuple(
+            scope.identity.object_state_scope_id
+            for scope in session.object_state_scopes().scopes
+        )
     )
-    arguments = snapshot_request.as_tool_arguments()
-    arguments["connection"] = connection.as_tool_arguments()
-    timeout_seconds = max(30.0, control_timeout_ms / 1000.0 + 10.0)
-    with McpDevClient(surface_profile=DesktopLocalCapabilitySurfaceProfile()) as client:
-        execution = client.execute(
-            (
-                "call",
-                UiSnapshotWindowCapability.name,
-                "--arguments",
-                json.dumps(arguments),
-            ),
-            timeout_seconds=timeout_seconds,
+    session.navigate_scope(scope_id, target.scope_role)
+    try:
+        if target.tab is not None:
+            session.select_tab(scope_id, target.tab)
+        if target.scope_role.requires_nested_navigation:
+            session.wait_for_flash_feedback(scope_id)
+        return session.capture_window(scope_id)
+    finally:
+        session.close_window(scope_id)
+
+
+def capture_plate_manager_action_source(
+    target: PlateManagerActionWindowCaptureTarget,
+    request: GallerySourceCaptureRequest,
+) -> GallerySourceCaptureResult:
+    """Capture a window spawned by one declared Plate Manager action."""
+
+    session = GalleryUiBridgeSession(request)
+    window_id = session.spawn_from_plate_manager_action(target)
+    try:
+        if target.tab is not None:
+            session.select_tab(window_id, target.tab)
+        return session.capture_window(window_id)
+    finally:
+        session.close_window(window_id)
+
+
+def capture_system_monitor_action_source(
+    target: SystemMonitorActionWindowCaptureTarget,
+    request: GallerySourceCaptureRequest,
+) -> GallerySourceCaptureResult:
+    """Capture a window spawned by one declared System Monitor action."""
+
+    session = GalleryUiBridgeSession(request)
+    window_id = session.spawn_from_system_monitor_action(target)
+    try:
+        return session.capture_window(window_id)
+    finally:
+        session.close_window(window_id)
+
+
+def capture_function_selector_source(
+    target: FunctionSelectorCaptureTarget,
+    request: GallerySourceCaptureRequest,
+) -> GallerySourceCaptureResult:
+    """Capture the selector reached through declared editor tabs and actions."""
+
+    session = GalleryUiBridgeSession(request)
+    editor_scope = target.editor_scope_role.resolve(
+        tuple(
+            scope.identity.object_state_scope_id
+            for scope in session.object_state_scopes().scopes
         )
-    if execution.returncode != 0:
-        raise MediaGalleryError(
-            "MCP window snapshot command failed: "
-            f"{json.dumps(execution.payload, sort_keys=True)}"
-        )
-    response_payload = McpDevPayloadProjection.tool_payload(
-        execution.payload,
-        UiSnapshotWindowCapability.name,
     )
-    if response_payload is None:
-        raise MediaGalleryError("MCP snapshot response contains no tool payload.")
-    response = dataclass_from_mapping(UiWindowSnapshotResult, response_payload)
-    if not response.captured or response.errors:
-        raise MediaGalleryError(f"MCP window snapshot failed: {response!r}")
-    if response.resource is None:
-        raise MediaGalleryError("MCP snapshot response contains no resource.")
-    if response.resource.path is None:
-        raise MediaGalleryError("MCP snapshot resource contains no local path.")
-    if response.resource.sha256 is None:
-        raise MediaGalleryError("MCP snapshot resource contains no SHA-256.")
-    if response.width is None or response.width <= 0:
-        raise MediaGalleryError("MCP snapshot response contains no valid width.")
-    if response.height is None or response.height <= 0:
-        raise MediaGalleryError("MCP snapshot response contains no valid height.")
-    snapshot_path = Path(response.resource.path).resolve()
-    if snapshot_path.parent != target_path.parent.resolve():
-        raise MediaGalleryError(
-            "MCP snapshot resource escaped the requested capture directory: "
-            f"{snapshot_path}"
-        )
-    if snapshot_path.suffix.lower() != ".png":
-        raise MediaGalleryError(
-            f"MCP snapshot resource is not a lossless PNG: {snapshot_path}"
-        )
-    if not snapshot_path.is_file():
-        raise MediaGalleryError(
-            f"MCP snapshot resource does not exist: {snapshot_path}"
-        )
-    actual_sha256 = sha256_file(snapshot_path)
-    if actual_sha256 != response.resource.sha256:
-        raise MediaGalleryError(
-            "MCP snapshot resource changed before gallery ingestion."
-        )
-    os.replace(snapshot_path, target_path)
-    return GallerySourceCaptureResult(
-        path=str(request.output),
-        sha256=actual_sha256,
-        width=response.width,
-        height=response.height,
-        format="PNG",
-    )
+    session.navigate_scope(editor_scope, target.editor_scope_role)
+    try:
+        session.select_tab(editor_scope, target.editor_tab)
+        selector_window_id = session.spawn_function_selector(editor_scope, target)
+        try:
+            return session.capture_window(selector_window_id)
+        finally:
+            session.close_window(selector_window_id)
+    finally:
+        session.close_window(editor_scope)
 
 
 def _expect_object(value: Any, context: str) -> Mapping[str, Any]:
@@ -1679,23 +2064,21 @@ def _write_json_file(path: Path, value: object) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def capture_ui_window_reference_stills(
+def _capture_ui_reference_stills(
+    scenarios: Sequence[StillGalleryScenarioABC],
     source_root: Path,
     output_root: Path,
     *,
+    record_stem: str,
     descriptor_file_path: Path | None = None,
     timeout_ms: int | None = None,
     force: bool = False,
+    fixture: UiContextFixturePreparationResult | None = None,
 ) -> UiWindowReferenceCaptureResult:
-    """Capture and publish every registry-derived stable UI-window reference."""
+    """Capture and publish one declaration-selected UI reference family."""
 
-    scenarios = tuple(
-        scenario
-        for scenario in gallery_scenarios()
-        if isinstance(scenario, UiWindowReferenceGalleryScenario)
-    )
     if not scenarios:
-        raise MediaGalleryError("No stable UI-window reference scenarios are declared.")
+        raise MediaGalleryError("No UI reference scenarios are declared.")
 
     records = []
     for scenario in scenarios:
@@ -1719,7 +2102,7 @@ def capture_ui_window_reference_stills(
         )
 
     manifest = CaptureManifest(captures=tuple(records))
-    manifest_path = source_root / "ui-window-reference-manifest.json"
+    manifest_path = source_root / f"{record_stem}-manifest.json"
     _write_json_file(manifest_path, manifest)
     captures = build_manifest(
         manifest,
@@ -1741,14 +2124,130 @@ def capture_ui_window_reference_stills(
         source_evidence,
     )
     synchronize_gallery_release_record_for_asset_root(output_root, check=False)
-    evidence_path = source_root / "ui-window-reference-evidence.json"
+    evidence_path = source_root / f"{record_stem}-evidence.json"
     result = UiWindowReferenceCaptureResult(
         manifest_path=str(manifest_path.resolve()),
         evidence_path=str(evidence_path.resolve()),
         captures=captures,
+        fixture=fixture,
     )
     _write_json_file(evidence_path, result)
     return result
+
+
+def capture_ui_window_reference_stills(
+    source_root: Path,
+    output_root: Path,
+    *,
+    descriptor_file_path: Path | None = None,
+    timeout_ms: int | None = None,
+    force: bool = False,
+) -> UiWindowReferenceCaptureResult:
+    """Capture every registry-derived stable UI-window reference."""
+
+    scenarios = tuple(
+        scenario
+        for scenario in gallery_scenarios()
+        if isinstance(scenario, UiWindowReferenceGalleryScenario)
+    )
+    return _capture_ui_reference_stills(
+        scenarios,
+        source_root,
+        output_root,
+        record_stem="ui-window-reference",
+        descriptor_file_path=descriptor_file_path,
+        timeout_ms=timeout_ms,
+        force=force,
+    )
+
+
+def capture_ui_context_reference_stills(
+    source_root: Path,
+    output_root: Path,
+    *,
+    fixture_root: Path,
+    descriptor_file_path: Path,
+    timeout_ms: int | None = None,
+    workflow_timeout_seconds: float = 180.0,
+    force: bool = False,
+) -> UiWindowReferenceCaptureResult:
+    """Capture every curated contextual reference through live declarations."""
+
+    fixture = prepare_ui_context_reference_fixture(
+        fixture_root,
+        descriptor_file_path,
+        workflow_timeout_seconds=workflow_timeout_seconds,
+    )
+    return _capture_ui_reference_stills(
+        ui_context_reference_gallery_scenarios(),
+        source_root,
+        output_root,
+        record_stem="ui-context-reference",
+        descriptor_file_path=descriptor_file_path,
+        timeout_ms=timeout_ms,
+        force=force,
+        fixture=fixture,
+    )
+
+
+def prepare_ui_context_reference_fixture(
+    fixture_root: Path,
+    descriptor_file_path: Path,
+    *,
+    workflow_timeout_seconds: float,
+) -> UiContextFixturePreparationResult:
+    """Prepare the scenario-declared plate through existing master-demo operations."""
+
+    from zmqruntime import DataControlPortPairAuthority, TransportMode
+
+    from openhcs.mcp.dev_client import McpDevClient
+    from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
+    from scripts.master_multi_plate_demo import (
+        McpMasterDemoOperations,
+        build_demo_schedule,
+        documentation_fixture_demo_definition,
+        run_scheduled_workflows,
+    )
+
+    if workflow_timeout_seconds <= 0:
+        raise MediaGalleryError("Fixture workflow timeout must be positive.")
+    resolved_root = fixture_root.expanduser().resolve()
+    if resolved_root.exists():
+        raise MediaGalleryError(
+            f"Refusing to replace UI context fixture root: {resolved_root}"
+        )
+    resolved_root.mkdir(parents=True)
+    definition = documentation_fixture_demo_definition(resolved_root)
+    endpoint = DataControlPortPairAuthority.acquire(
+        OPENHCS_ZMQ_CONFIG,
+        transport_mode=TransportMode.IPC,
+    )
+    item = build_demo_schedule(
+        (definition,),
+        base_port=endpoint.data_port,
+    )[0]
+    with McpDevClient(sys.executable) as client:
+        operations = McpMasterDemoOperations(
+            client=client,
+            descriptor_path=descriptor_file_path.expanduser().resolve(),
+            session_root=resolved_root,
+            workflow_timeout_seconds=workflow_timeout_seconds,
+            presentation_dwell_seconds=0.0,
+        )
+        operations.prepare_all((item,))
+        scope_colors = operations.register_all((item,))
+        plate_path = str(item.definition.contribution.plate_path)
+        if set(scope_colors) != {plate_path}:
+            raise MediaGalleryError(
+                "UI documentation fixture did not become the sole Plate Manager scope."
+            )
+        run_scheduled_workflows(item, operations)
+    return UiContextFixturePreparationResult(
+        demo_id=item.definition.contribution.demo_id,
+        session_root=str(resolved_root),
+        plate_path=plate_path,
+        viewer_port=item.port,
+    )
 
 
 def doctor() -> CaptureToolDoctorReport:
@@ -1843,6 +2342,42 @@ def _capture_ui_window_references_operation(
     )
 
 
+def _capture_ui_context_references_operation(
+    arguments: argparse.Namespace,
+) -> UiWindowReferenceCaptureResult:
+    return capture_ui_context_reference_stills(
+        arguments.source_root,
+        arguments.output_root,
+        fixture_root=arguments.fixture_root,
+        descriptor_file_path=arguments.descriptor_file_path,
+        timeout_ms=arguments.timeout_ms,
+        workflow_timeout_seconds=arguments.workflow_timeout_seconds,
+        force=arguments.force,
+    )
+
+
+def _ui_reference_capture_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    descriptor_required: bool = False,
+) -> None:
+    """Add the shared arguments for a declaration-selected UI reference batch."""
+
+    parser.add_argument("--source-root", type=Path, required=True)
+    parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument(
+        "--descriptor-file-path",
+        type=Path,
+        required=descriptor_required,
+    )
+    parser.add_argument("--timeout-ms", type=int)
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Atomically replace existing derivatives, never source captures.",
+    )
+
+
 def _record_window_operation(
     arguments: argparse.Namespace,
 ) -> WindowRecordingCaptureResult:
@@ -1928,16 +2463,38 @@ def build_parser() -> argparse.ArgumentParser:
             "registered identities."
         ),
     )
-    ui_reference_parser.add_argument("--source-root", type=Path, required=True)
-    ui_reference_parser.add_argument("--output-root", type=Path, required=True)
-    ui_reference_parser.add_argument("--descriptor-file-path", type=Path)
-    ui_reference_parser.add_argument("--timeout-ms", type=int)
-    ui_reference_parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Atomically replace existing derivatives, never source captures.",
-    )
+    _ui_reference_capture_arguments(ui_reference_parser)
     ui_reference_parser.set_defaults(operation=_capture_ui_window_references_operation)
+
+    ui_context_reference_parser = subparsers.add_parser(
+        "capture-ui-context-references",
+        help=(
+            "Capture and publish contextual task-state references through live "
+            "ObjectState, action, and tab declarations."
+        ),
+    )
+    _ui_reference_capture_arguments(
+        ui_context_reference_parser,
+        descriptor_required=True,
+    )
+    ui_context_reference_parser.add_argument(
+        "--fixture-root",
+        type=Path,
+        required=True,
+        help=(
+            "New private session root for the scenario-declared plate and MCP "
+            "preparation evidence."
+        ),
+    )
+    ui_context_reference_parser.add_argument(
+        "--workflow-timeout-seconds",
+        type=float,
+        default=180.0,
+        help="Maximum wait for each fixture init, compile, or run workflow.",
+    )
+    ui_context_reference_parser.set_defaults(
+        operation=_capture_ui_context_references_operation
+    )
 
     record_parser = subparsers.add_parser(
         "record-window",
