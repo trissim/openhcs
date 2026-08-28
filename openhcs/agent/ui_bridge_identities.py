@@ -20,7 +20,9 @@ class UiBridgeIdentityDeclaration(ABC, metaclass=AutoRegisterMeta):
     @classmethod
     def require_value(cls) -> str:
         if cls.value is None:
-            raise ValueError(f"{cls.__name__} does not declare a bridge identity value.")
+            raise ValueError(
+                f"{cls.__name__} does not declare a bridge identity value."
+            )
         return cls.value
 
 
@@ -31,6 +33,10 @@ class UiWidgetIdentityDeclaration(UiBridgeIdentityDeclaration):
     def action_provider_id(cls) -> str:
         """Return the stable action-provider id for this widget."""
         return f"{cls.require_value()}.actions"
+
+
+class UiStableWindowIdentityDeclaration(UiBridgeIdentityDeclaration):
+    """Registered identity for a stable agent-addressable UI window."""
 
 
 class UiOwnedByWidgetIdentityDeclaration(UiBridgeIdentityDeclaration):
@@ -81,13 +87,43 @@ class ManagedWindowWidgetIdentity(UiWidgetIdentityDeclaration):
     enum_member_name = "MANAGED_WINDOW"
 
 
+class SystemMonitorWindowIdentity(UiStableWindowIdentityDeclaration):
+    value = "system_monitor"
+
+
+class ZmqServerManagerWindowIdentity(UiStableWindowIdentityDeclaration):
+    value = "zmq_server_manager"
+
+
+class ImageBrowserWindowIdentity(UiStableWindowIdentityDeclaration):
+    value = "image_browser"
+
+
+class LogViewerWindowIdentity(UiStableWindowIdentityDeclaration):
+    value = "log_viewer"
+
+
+class GlobalConfigWindowIdentity(UiStableWindowIdentityDeclaration):
+    value = "global_config"
+
+
+class KnowledgeBaseWindowIdentity(UiStableWindowIdentityDeclaration):
+    value = "knowledge_base"
+
+
+class AboutOpenHCSWindowIdentity(UiStableWindowIdentityDeclaration):
+    value = "about_openhcs"
+
+
 class PlateManagerOrchestratorCodeDocumentIdentity(UiCodeDocumentIdentityDeclaration):
     value = "plate_manager.orchestrator_config"
     enum_member_name = "PLATE_MANAGER_ORCHESTRATOR"
     widget_identity = PlateManagerWidgetIdentity
 
 
-class PlateManagerStateSurfaceIdentityDeclaration(UiStateSurfaceIdentityDeclarationBase):
+class PlateManagerStateSurfaceIdentityDeclaration(
+    UiStateSurfaceIdentityDeclarationBase
+):
     value = "plate_manager.state"
     enum_member_name = "PLATE_MANAGER"
 

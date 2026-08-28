@@ -916,9 +916,14 @@
         "role": "Implements generic scope-keyed window construction and navigation."
       },
       {
+        "path": "openhcs/agent/ui_bridge_identities.py",
+        "sha256": "b744d5d2142c31f599bd0c66cfe9dbed522475d447a57f38fcd2405fbb6979f5",
+        "role": "Owns the nominal declarations for stable OpenHCS widget and window identities."
+      },
+      {
         "path": "openhcs/pyqt_gui/services/ui_window_ids.py",
-        "sha256": "ec63b1337f4379b89cbf6d7c58f2a0e90ff3f60b93dde82631bab0e454b22ca9",
-        "role": "Declares stable OpenHCS product window identities."
+        "sha256": "f58482c524d445b8297eb3116ec79ccb22403eb2f12dd9ecf6e27e154aa028c1",
+        "role": "Projects the stable identity declarations into the desktop window-id and manager-scope interface."
       }
     ],
     "findings": [
@@ -927,7 +932,8 @@
     "disposition": "redirect",
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
-      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "On 2026-08-28, re-read the complete redirect after stable window strings moved to nominal identity declarations; OpenHCS still owns product identities while pyqt-reactive owns generic lifecycle."
     ]
   },
   {

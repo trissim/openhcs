@@ -1090,7 +1090,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/configuration_reference.rst",
-    "source_sha256": "bce6f5c24fa0dbdf5f64be3765ef12c87fdf335ae5cce5e2c10968e606f7c23e",
+    "source_sha256": "72869b15d7a8f28c8dbec85ecd42da1f788cbc48c4b7ab37f9bcc836761fce70",
     "audience": [
       "imaging scientists",
       "pipeline authors"
@@ -1147,6 +1147,11 @@
         "path": "tests/unit/test_pipeline_document.py",
         "sha256": "bc0f4dbfb11882f717c4f79481f3bc662b0f7c3997856a20ac4eb43f1dee109b",
         "role": "Proves the default-config compatibility rule and the remaining source-document validation constraints."
+      },
+      {
+        "path": "scripts/gallery_catalog.py",
+        "sha256": "70765cf381ed5e88a89e9262061f52166dbe55a2cc7c9cdbe165159f3e81bbcf",
+        "role": "Owns the documentation-enabled global-configuration capture, caption, accessibility text, dimensions, and source evidence."
       }
     ],
     "findings": [
@@ -1162,7 +1167,8 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-21, re-read the complete page and exact changed owners; 200 focused UI bridge, field-help, schema, and service tests proved declaration-derived enum values and member-name mutation.",
       "A fresh current-source MCP subprocess queried the live Configure OpenHCS window, reported site, channel, z_index, timepoint, and NONE directly from GroupBy, mutated NONE without confusing its stored null value with a missing value, and restored channel; an actual window capture confirmed the visible site selection.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-28, re-read the complete explanation and inspected the live Configure OpenHCS capture at full resolution; the declaration-owned figure supports the configuration hierarchy without duplicating field facts."
     ]
   },
   {
@@ -1260,7 +1266,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/image_sources.rst",
-    "source_sha256": "0d39db62dd85c52976b7b2570a1795f3f8507ccfe39abea36e6087b95e1abcdc",
+    "source_sha256": "b9260ecc032dd06cbbfaa9c36cf3040a62981c297ff0da0ce976659cbbc14ab7",
     "audience": [
       "imaging scientists",
       "source-integration operators"
@@ -1307,6 +1313,11 @@
         "path": "tests/unit/test_source_binding_workspace.py",
         "sha256": "bf999da07d6fade41bd72267d7785c78f7f2de79f96d90ae002d23553fe903f0",
         "role": "Proves raw selector coordinates are retained as original metadata while the projected address uses semantic component identity."
+      },
+      {
+        "path": "scripts/gallery_catalog.py",
+        "sha256": "70765cf381ed5e88a89e9262061f52166dbe55a2cc7c9cdbe165159f3e81bbcf",
+        "role": "Owns the documentation-enabled source-image browser capture, caption, accessibility text, dimensions, and source evidence."
       }
     ],
     "findings": [
@@ -1319,7 +1330,8 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "On 2026-08-22, re-read the complete how-to and validated its updated selector and component-identity example against source workspace, compiler, runtime, and viewer regressions in the 238-test focused OpenHCS suite."
+      "On 2026-08-22, re-read the complete how-to and validated its updated selector and component-identity example against source workspace, compiler, runtime, and viewer regressions in the 238-test focused OpenHCS suite.",
+      "On 2026-08-28, re-read the complete how-to and inspected the live Image Browser capture at full resolution; it shows the initialized synthetic plate's 216-file source inventory without adding another source-model authority."
     ]
   },
   {
@@ -1455,7 +1467,7 @@
   },
   {
     "path": "docs/source/guide_for_biologists/intro_stitching.rst",
-    "source_sha256": "4643ac4f4a7a60596200f85e41c82919dde7d7ac984cdd3710e8b114275d18d2",
+    "source_sha256": "0ee469c58162eddcf99437f5b86e8b434f2f6d0704b109b7ae801a8785fd2e91",
     "audience": [
       "first-time desktop users"
     ],
@@ -1481,6 +1493,11 @@
         "path": "tests/pyqt_gui/integration/test_end_to_end_workflow_foundation.py",
         "sha256": "db2f98b9878565df935d78aaf8d8365cdac5fe160cd4fcee2d6246502dc355d5",
         "role": "Proves synthetic plate import and the desktop configuration lifecycle, including form readiness, inheritance, persistence, reset, and teardown."
+      },
+      {
+        "path": "scripts/gallery_catalog.py",
+        "sha256": "70765cf381ed5e88a89e9262061f52166dbe55a2cc7c9cdbe165159f3e81bbcf",
+        "role": "Owns the documentation-enabled first-workflow capture, caption, accessibility text, dimensions, and source evidence."
       }
     ],
     "findings": [
@@ -1493,7 +1510,8 @@
       "Focused cross-lattice QA passed 179 tests spanning callable contracts, framework-device scope, custom functions, catalogue discovery, installer/update policy, MCP release, and packaged OMERO deployment.",
       "Passed ./.venv/bin/python scripts/validate_docs.py docs/source: 154 files, 23 Python blocks, and 153 audited RST pages.",
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
-      "Re-reviewed the typed GUI workflow proof: it covers synthetic plate import, form readiness, configuration inheritance, persistence, reset, and application teardown."
+      "Re-reviewed the typed GUI workflow proof: it covers synthetic plate import, form readiness, configuration inheritance, persistence, reset, and application teardown.",
+      "On 2026-08-28, completed the tutorial in a fresh live desktop session through generation, initialization, and compilation, then inspected its declaration-owned workspace capture at full resolution."
     ]
   },
   {
@@ -2447,7 +2465,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "22614708146ee65339f146bfe2cb96f728cae743eb26b91abce5527ac9cc78d2",
+        "sha256": "70765cf381ed5e88a89e9262061f52166dbe55a2cc7c9cdbe165159f3e81bbcf",
         "role": "Owns the landing-page workspace scenario, representative image, caption, description, alt text, dimensions, and release evidence."
       }
     ],
@@ -2906,7 +2924,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "22614708146ee65339f146bfe2cb96f728cae743eb26b91abce5527ac9cc78d2",
+        "sha256": "70765cf381ed5e88a89e9262061f52166dbe55a2cc7c9cdbe165159f3e81bbcf",
         "role": "Owns the lazy-inheritance scenario, representative poster, caption, description, alt text, dimensions, and release evidence."
       }
     ],
@@ -3277,7 +3295,7 @@
   },
   {
     "path": "docs/source/user_guide/log_viewer.rst",
-    "source_sha256": "7e864d429fe978be69f0577aeec4acf6e151ae7f3d9cb1613d8c433389a8117f",
+    "source_sha256": "fc2c9f40387305d8b2eed47c066d578b99a930a682e7c585319615d539bdfd32",
     "audience": [
       "desktop operators diagnosing failures"
     ],
@@ -3308,6 +3326,11 @@
         "path": "openhcs/runtime/zmq_execution_client.py",
         "sha256": "559c2e4a899ab2da3c7bf230aeb34bef45307185b058c71208d2bd2021f75bbe",
         "role": "Implements execution-server connection, request submission, progress consumption, and connection-state reporting."
+      },
+      {
+        "path": "scripts/gallery_catalog.py",
+        "sha256": "70765cf381ed5e88a89e9262061f52166dbe55a2cc7c9cdbe165159f3e81bbcf",
+        "role": "Owns the documentation-enabled execution-log capture, caption, accessibility text, dimensions, and source evidence."
       }
     ],
     "findings": [
@@ -3323,7 +3346,8 @@
       "On 2026-08-25, re-read the complete page against metaclass-registry 0.2.1, ArrayBridge 0.3.3, the public native-catalogue projection, declaration-derived child environments, and the updated package floors; revised the page where those semantics are user-relevant and confirmed its remaining claims against current source and tests.",
       "On 2026-08-26, re-read the complete how-to after its checkboxes adopted the shared leaf-owned themed control; discovery, filtering, process identity, and log-selection behaviour remain unchanged.",
       "On 2026-08-26, re-read the complete how-to after the execution client adopted a dedicated submission default; log discovery, process filtering, selection, and connection-state guidance remain unchanged.",
-      "On 2026-08-26, re-read the complete log-viewer how-to after catalog endpoint startup joined request cancellation and installed probes retained phase diagnostics; the live log and readiness guidance remains accurate."
+      "On 2026-08-26, re-read the complete log-viewer how-to after catalog endpoint startup joined request cancellation and installed probes retained phase diagnostics; the live log and readiness guidance remains accurate.",
+      "On 2026-08-28, re-read the complete how-to and used the current-source UI bridge to select and capture the active port 7777 execution-server log after compilation; the full-resolution capture contains no private local path."
     ]
   },
   {
@@ -3373,7 +3397,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "22614708146ee65339f146bfe2cb96f728cae743eb26b91abce5527ac9cc78d2",
+        "sha256": "70765cf381ed5e88a89e9262061f52166dbe55a2cc7c9cdbe165159f3e81bbcf",
         "role": "Owns the local-MCP endpoint-startup scenario, representative poster, caption, description, alt text, dimensions, and release evidence."
       }
     ],
@@ -3464,7 +3488,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "22614708146ee65339f146bfe2cb96f728cae743eb26b91abce5527ac9cc78d2",
+        "sha256": "70765cf381ed5e88a89e9262061f52166dbe55a2cc7c9cdbe165159f3e81bbcf",
         "role": "Owns the Napari ROI-navigation and Fiji ROI-review scenarios, representative images, captions, descriptions, alt text, dimensions, and release evidence."
       }
     ],

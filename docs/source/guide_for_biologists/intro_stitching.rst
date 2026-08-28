@@ -59,6 +59,8 @@ steps before processing begins. A successful compile enables **Run**. If an
 error is reported, fix the first error before continuing rather than running a
 partially valid workflow.
 
+.. openhcs-gallery:: first-plate-workflow
+
 Run and inspect the result
 --------------------------
 

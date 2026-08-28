@@ -9,6 +9,8 @@ separate decisions are involved:
 2. source bindings optionally **select and name** those planes for pipeline
    inputs.
 
+.. openhcs-gallery:: source-image-browser
+
 For a recognized HCS layout, OpenHCS keeps the native microscope handler. CZI,
 OME-TIFF, and other supported rich containers are decoded by the Bio-Formats
 store handler using their embedded metadata. Add the containing directory to

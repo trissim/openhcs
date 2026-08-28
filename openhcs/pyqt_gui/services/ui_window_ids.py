@@ -7,9 +7,16 @@ from types import MappingProxyType
 from typing import ClassVar
 
 from openhcs.agent.ui_bridge_identities import (
+    AboutOpenHCSWindowIdentity,
+    GlobalConfigWindowIdentity,
+    ImageBrowserWindowIdentity,
+    KnowledgeBaseWindowIdentity,
+    LogViewerWindowIdentity,
     MainWindowWidgetIdentity,
     PipelineEditorWidgetIdentity,
     PlateManagerWidgetIdentity,
+    SystemMonitorWindowIdentity,
+    ZmqServerManagerWindowIdentity,
 )
 
 
@@ -19,13 +26,13 @@ class OpenHCSUiWindowId:
     main_window: ClassVar[str] = MainWindowWidgetIdentity.require_value()
     plate_manager: ClassVar[str] = PlateManagerWidgetIdentity.require_value()
     pipeline_editor: ClassVar[str] = PipelineEditorWidgetIdentity.require_value()
-    system_monitor: ClassVar[str] = "system_monitor"
-    zmq_server_manager: ClassVar[str] = "zmq_server_manager"
-    image_browser: ClassVar[str] = "image_browser"
-    log_viewer: ClassVar[str] = "log_viewer"
-    global_config: ClassVar[str] = "global_config"
-    knowledge_base: ClassVar[str] = "knowledge_base"
-    about: ClassVar[str] = "about_openhcs"
+    system_monitor: ClassVar[str] = SystemMonitorWindowIdentity.require_value()
+    zmq_server_manager: ClassVar[str] = ZmqServerManagerWindowIdentity.require_value()
+    image_browser: ClassVar[str] = ImageBrowserWindowIdentity.require_value()
+    log_viewer: ClassVar[str] = LogViewerWindowIdentity.require_value()
+    global_config: ClassVar[str] = GlobalConfigWindowIdentity.require_value()
+    knowledge_base: ClassVar[str] = KnowledgeBaseWindowIdentity.require_value()
+    about: ClassVar[str] = AboutOpenHCSWindowIdentity.require_value()
 
     manager_scope_aliases: ClassVar[Mapping[str, str]] = MappingProxyType(
         {

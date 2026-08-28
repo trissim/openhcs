@@ -6,6 +6,8 @@ plate/pipeline, and step-level nested configurations can override the relevant
 parts again. The desktop forms show the same ObjectState-backed declarations
 used by generated Python code.
 
+.. openhcs-gallery:: global-configuration-editor
+
 The mental model
 ----------------
 

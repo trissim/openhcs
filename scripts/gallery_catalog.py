@@ -15,12 +15,15 @@ from pathlib import Path
 from typing import ClassVar
 
 from openhcs.agent.ui_bridge_identities import (
+    GlobalConfigWindowIdentity,
+    ImageBrowserWindowIdentity,
+    LogViewerWindowIdentity,
     MainWindowWidgetIdentity,
     PipelineEditorWidgetIdentity,
 )
 from openhcs.serialization.json import JsonValue, to_jsonable
 
-RELEASE_MEDIA_SCHEMA_VERSION = "openhcs.release-media.v5"
+RELEASE_MEDIA_SCHEMA_VERSION = "openhcs.release-media.v6"
 RELEASE_MEDIA_RECORD_NAME = "release-media-record.json"
 GALLERY_REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 GALLERY_ASSET_RELATIVE_ROOT = Path("website/assets/gallery")
@@ -71,6 +74,51 @@ class GalleryPointerVisibility(Enum):
     HIDDEN = "hidden"
     VISIBLE = "visible"
     MIXED = "mixed"
+
+
+class GalleryPublicationTarget(Enum):
+    """Public projection that may consume a declared media scenario."""
+
+    WEBSITE = "website"
+    DOCUMENTATION = "documentation"
+
+    def select(
+        self,
+        scenarios: Sequence[GalleryScenarioABC],
+    ) -> tuple[GalleryScenarioABC, ...]:
+        """Select scenarios published to this target in declaration order."""
+
+        return tuple(
+            scenario for scenario in scenarios if self in scenario.publication_targets
+        )
+
+    def for_id(
+        self,
+        scenarios: Sequence[GalleryScenarioABC],
+        scenario_id: str,
+    ) -> GalleryScenarioABC:
+        """Resolve one scenario published to this target."""
+
+        matches = tuple(
+            scenario
+            for scenario in self.select(scenarios)
+            if scenario.scenario_id == scenario_id
+        )
+        if len(matches) != 1:
+            raise GalleryCatalogError(
+                f"Expected one {self.value} gallery scenario for {scenario_id!r}; "
+                f"found {len(matches)}."
+            )
+        return matches[0]
+
+    @classmethod
+    def ordered_values(
+        cls,
+        targets: frozenset[GalleryPublicationTarget],
+    ) -> tuple[str, ...]:
+        """Serialize a target set in declaration order."""
+
+        return tuple(target.value for target in cls if target in targets)
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,7 +275,7 @@ class GalleryScenarioReleaseRecord:
     """Release evidence projected from one scenario declaration."""
 
     id: str
-    website_card_html: str
+    publication_targets: tuple[str, ...]
     proof: str
     capture_target: GalleryCaptureTargetReleaseRecord
     source: GallerySourceEvidence | None
@@ -236,10 +284,19 @@ class GalleryScenarioReleaseRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class GalleryWebsiteCardReleaseRecord:
+    """Website card projected from one publication-enabled scenario."""
+
+    id: str
+    rendered_html: str
+
+
+@dataclass(frozen=True, slots=True)
 class GalleryScenarioCatalogRecord:
     """Declaration-derived capture catalog entry for maintainer tooling."""
 
     scenario_id: str
+    publication_targets: tuple[str, ...]
     published_paths: tuple[str, ...]
     capture_target: GalleryCaptureTargetReleaseRecord
     proof: str
@@ -259,6 +316,7 @@ class GalleryScenarioABC(ABC):
     width: int
     height: int
     capture_target: GalleryCaptureTargetABC
+    publication_targets: frozenset[GalleryPublicationTarget]
     source_evidence: GallerySourceEvidence | None = None
     scientific_evidence: GalleryScientificEvidenceABC | None = None
     media_card_class: ClassVar[str | None] = None
@@ -327,6 +385,9 @@ class GalleryScenarioABC(ABC):
 
         return GalleryScenarioCatalogRecord(
             scenario_id=self.scenario_id,
+            publication_targets=GalleryPublicationTarget.ordered_values(
+                self.publication_targets
+            ),
             published_paths=self.published_paths(),
             capture_target=self.capture_target.release_record(),
             proof=self.proof,
@@ -352,7 +413,9 @@ class GalleryScenarioABC(ABC):
 
         return GalleryScenarioReleaseRecord(
             id=self.scenario_id,
-            website_card_html=self.render_card(),
+            publication_targets=GalleryPublicationTarget.ordered_values(
+                self.publication_targets
+            ),
             proof=self.proof,
             capture_target=self.capture_target.release_record(),
             source=self.source_evidence,
@@ -368,6 +431,14 @@ class GalleryScenarioABC(ABC):
                 )
                 for derivative in self.derivative_expectations()
             ),
+        )
+
+    def website_card_release_record(self) -> GalleryWebsiteCardReleaseRecord:
+        """Project the declaration-owned website card."""
+
+        return GalleryWebsiteCardReleaseRecord(
+            id=self.scenario_id,
+            rendered_html=self.render_card(),
         )
 
 
@@ -588,6 +659,7 @@ class MultiPlateOverviewGalleryScenarioCatalog(GalleryScenarioCatalog):
         capture_target=UiBridgeWindowCaptureTarget(
             window_id=MainWindowWidgetIdentity.require_value()
         ),
+        publication_targets=frozenset(GalleryPublicationTarget),
     )
 
 
@@ -615,6 +687,155 @@ class PipelineEditorGalleryScenarioCatalog(GalleryScenarioCatalog):
         open_aria_label="Open the pipeline editor screenshot at full resolution",
         capture_target=UiBridgeWindowCaptureTarget(
             window_id=PipelineEditorWidgetIdentity.require_value()
+        ),
+        publication_targets=frozenset((GalleryPublicationTarget.WEBSITE,)),
+    )
+
+
+class FirstPlateWorkflowGalleryScenarioCatalog(GalleryScenarioCatalog):
+    """Add the first-plate workflow scenario to documentation media."""
+
+    scenario = UiBridgeStillGalleryScenario(
+        scenario_id="first-plate-workflow",
+        label="First workflow",
+        heading="Start with a complete synthetic plate and pipeline",
+        description=(
+            "The generated plate is selected in Plate Manager, while Pipeline "
+            "Editor keeps the eight supplied steps together after initialisation and "
+            "compilation."
+        ),
+        proof=(
+            "One compiled synthetic plate and its complete eight-step pipeline are "
+            "visible in the live workspace."
+        ),
+        layout_class="gallery-card-wide",
+        width=1024,
+        height=768,
+        alt_text=(
+            "OpenHCS main window with one synthetic plate selected and its eight "
+            "pipeline steps visible"
+        ),
+        open_aria_label="Open the first plate workflow screenshot at full resolution",
+        capture_target=UiBridgeWindowCaptureTarget(
+            window_id=MainWindowWidgetIdentity.require_value()
+        ),
+        publication_targets=frozenset((GalleryPublicationTarget.DOCUMENTATION,)),
+        source_evidence=GallerySourceEvidence(
+            sha256=("18a8d6588b371b1ef81e95dd0dd5d2b0e31847d9aaa4ee2dddd6cbeba75979e3"),
+            width=1024,
+            height=768,
+            format="PNG",
+        ),
+    )
+
+
+class SourceImageBrowserGalleryScenarioCatalog(GalleryScenarioCatalog):
+    """Add the source-image browser scenario to documentation media."""
+
+    scenario = UiBridgeStillGalleryScenario(
+        scenario_id="source-image-browser",
+        label="Source images",
+        heading="Browse the resolved source-image inventory",
+        description=(
+            "The generated plate exposes 216 source files in the table, with viewer "
+            "configuration and live viewer instances beside the inventory."
+        ),
+        proof=(
+            "The live Image Browser reports 216 loaded source files for the generated "
+            "plate and exposes the configured Fiji viewer."
+        ),
+        layout_class="gallery-card-wide",
+        width=900,
+        height=600,
+        alt_text=(
+            "OpenHCS Image Browser listing 216 synthetic source images beside Fiji "
+            "viewer configuration"
+        ),
+        open_aria_label="Open the source image browser screenshot at full resolution",
+        capture_target=UiBridgeWindowCaptureTarget(
+            window_id=ImageBrowserWindowIdentity.require_value()
+        ),
+        publication_targets=frozenset((GalleryPublicationTarget.DOCUMENTATION,)),
+        source_evidence=GallerySourceEvidence(
+            sha256=("45d8f8ffea4da99453604ad8ab06de3e16c533451bf223275847a0f108110651"),
+            width=900,
+            height=600,
+            format="PNG",
+        ),
+    )
+
+
+class GlobalConfigurationGalleryScenarioCatalog(GalleryScenarioCatalog):
+    """Add the global-configuration scenario to documentation media."""
+
+    scenario = UiBridgeStillGalleryScenario(
+        scenario_id="global-configuration-editor",
+        label="Configuration",
+        heading="Edit typed configuration with contextual field help",
+        description=(
+            "GlobalPipelineConfig and UIConfig share the editor, where typed fields, "
+            "field-level help controls, provenance feedback, and reset controls "
+            "remain together."
+        ),
+        proof=(
+            "The live global configuration editor exposes both configuration roots "
+            "with typed values, field-level help, and reset controls."
+        ),
+        layout_class="gallery-card-compact",
+        width=650,
+        height=650,
+        alt_text=(
+            "OpenHCS global configuration editor showing configuration tabs, typed "
+            "fields, help controls, and reset controls"
+        ),
+        open_aria_label=(
+            "Open the global configuration editor screenshot at full resolution"
+        ),
+        capture_target=UiBridgeWindowCaptureTarget(
+            window_id=GlobalConfigWindowIdentity.require_value()
+        ),
+        publication_targets=frozenset((GalleryPublicationTarget.DOCUMENTATION,)),
+        source_evidence=GallerySourceEvidence(
+            sha256=("41a350116331ad9cff2409efc54d0cf8f77eb674ee42b4841607748064783016"),
+            width=650,
+            height=650,
+            format="PNG",
+        ),
+    )
+
+
+class ExecutionLogViewerGalleryScenarioCatalog(GalleryScenarioCatalog):
+    """Add the execution-log viewer scenario to documentation media."""
+
+    scenario = UiBridgeStillGalleryScenario(
+        scenario_id="execution-log-viewer",
+        label="Logs",
+        heading="Inspect the log for the active execution endpoint",
+        description=(
+            "The log selector is on the ZMQ execution server, with compilation and "
+            "progress records presented using source and level colours."
+        ),
+        proof=(
+            "The live Log Viewer is bound to the active ZMQ execution server and "
+            "shows its compilation records."
+        ),
+        layout_class="gallery-card-wide",
+        width=900,
+        height=700,
+        alt_text=(
+            "OpenHCS Log Viewer showing the active ZMQ execution server log, "
+            "compilation records, and log controls"
+        ),
+        open_aria_label="Open the execution log viewer screenshot at full resolution",
+        capture_target=UiBridgeWindowCaptureTarget(
+            window_id=LogViewerWindowIdentity.require_value()
+        ),
+        publication_targets=frozenset((GalleryPublicationTarget.DOCUMENTATION,)),
+        source_evidence=GallerySourceEvidence(
+            sha256=("57f265b07312c0c7d8530d0938f5bc3fefb1a91f7815fa36d013718b83693afb"),
+            width=900,
+            height=700,
+            format="PNG",
         ),
     )
 
@@ -650,6 +871,7 @@ class LazyInheritanceGalleryScenarioCatalog(GalleryScenarioCatalog):
         capture_target=ApplicationSceneCaptureTarget(
             window_roles=("main_window", "pipeline_config", "step_editor"),
         ),
+        publication_targets=frozenset(GalleryPublicationTarget),
         source_evidence=GallerySourceEvidence(
             sha256=("4057415aed2d48a6a923a063a5fcc5114f89b1fa9886ff491f5e32bd3503d0c5"),
             width=1600,
@@ -685,6 +907,7 @@ class FijiReviewGalleryScenarioCatalog(GalleryScenarioCatalog):
         ),
         open_aria_label="Open the Fiji integration screenshot at full resolution",
         capture_target=FijiViewerWindowCaptureTarget(),
+        publication_targets=frozenset(GalleryPublicationTarget),
         source_evidence=GallerySourceEvidence(
             sha256=("1fc686a80f78189d0abc6efbc1b9d10865a17812f94b0a63274af1551a6a44bd"),
             width=1310,
@@ -734,6 +957,7 @@ class ZmqStartupCompileGalleryScenarioCatalog(GalleryScenarioCatalog):
         capture_target=UiBridgeWindowCaptureTarget(
             window_id=MainWindowWidgetIdentity.require_value()
         ),
+        publication_targets=frozenset(GalleryPublicationTarget),
         source_evidence=GallerySourceEvidence(
             sha256=("721ecde56c99716656e188c00b3b57fe5c48a7708700de5572b4098fbabb9147"),
             width=1600,
@@ -769,6 +993,7 @@ class NapariRoiNavigationGalleryScenarioCatalog(GalleryScenarioCatalog):
         download_label="Download the Napari ROI-navigation recording.",
         open_aria_label=("Open the Napari ROI-navigation poster at full resolution"),
         capture_target=NapariViewerWindowCaptureTarget(),
+        publication_targets=frozenset(GalleryPublicationTarget),
         source_evidence=GallerySourceEvidence(
             sha256=("b8d8154e89474de1b8ff51d1ec099e83fba725068f2a1d0612b9882596954249"),
             width=2304,
@@ -781,6 +1006,10 @@ class NapariRoiNavigationGalleryScenarioCatalog(GalleryScenarioCatalog):
 class OpenHCSGalleryScenarioCatalog(
     MultiPlateOverviewGalleryScenarioCatalog,
     PipelineEditorGalleryScenarioCatalog,
+    FirstPlateWorkflowGalleryScenarioCatalog,
+    SourceImageBrowserGalleryScenarioCatalog,
+    GlobalConfigurationGalleryScenarioCatalog,
+    ExecutionLogViewerGalleryScenarioCatalog,
     LazyInheritanceGalleryScenarioCatalog,
     FijiReviewGalleryScenarioCatalog,
     ZmqStartupCompileGalleryScenarioCatalog,
@@ -840,14 +1069,19 @@ class GalleryReleaseDeclaration(GalleryReleaseContext):
     def project_record(self, asset_root: Path) -> GalleryReleaseRecord:
         """Project this release and every registered scenario into one record."""
 
+        scenarios = gallery_scenarios()
         return GalleryReleaseRecord(
             schema_version=RELEASE_MEDIA_SCHEMA_VERSION,
             captured_at=self.captured_at,
             capture_contract=self.capture_contract,
             dataset_attribution=self.dataset_attribution,
             website_provenance_html=self.dataset_attribution.render_provenance(),
+            website_cards=tuple(
+                scenario.website_card_release_record()
+                for scenario in GalleryPublicationTarget.WEBSITE.select(scenarios)
+            ),
             captures=tuple(
-                scenario.release_record(asset_root) for scenario in gallery_scenarios()
+                scenario.release_record(asset_root) for scenario in scenarios
             ),
         )
 
@@ -859,6 +1093,7 @@ class GalleryReleaseRecord(GalleryReleaseContext):
     schema_version: str
     dataset_attribution: GalleryDatasetAttribution
     website_provenance_html: str
+    website_cards: tuple[GalleryWebsiteCardReleaseRecord, ...]
     captures: tuple[GalleryScenarioReleaseRecord, ...]
 
 
@@ -907,7 +1142,31 @@ def gallery_scenarios() -> tuple[GalleryScenarioABC, ...]:
             raise GalleryCatalogError(
                 f"Gallery scenario {scenario_id!r} has invalid dimensions."
             )
+        if not scenario.publication_targets:
+            raise GalleryCatalogError(
+                f"Gallery scenario {scenario_id!r} has no publication target."
+            )
     return scenarios
+
+
+def website_gallery_scenarios() -> tuple[GalleryScenarioABC, ...]:
+    """Return scenarios declared for the public website projection."""
+
+    return GalleryPublicationTarget.WEBSITE.select(gallery_scenarios())
+
+
+def documentation_gallery_scenarios() -> tuple[GalleryScenarioABC, ...]:
+    """Return scenarios declared for the documentation projection."""
+
+    return GalleryPublicationTarget.DOCUMENTATION.select(gallery_scenarios())
+
+
+def documentation_gallery_scenario_for_id(scenario_id: str) -> GalleryScenarioABC:
+    """Resolve one declaration available to the documentation projection."""
+
+    return GalleryPublicationTarget.DOCUMENTATION.for_id(
+        gallery_scenarios(), scenario_id
+    )
 
 
 def gallery_published_paths() -> tuple[str, ...]:

@@ -2,7 +2,7 @@ Capture and publish gallery media
 =================================
 
 This guide shows OpenHCS maintainers how to capture declared UI surfaces or
-real X11 application windows and derive bounded website media from immutable
+real X11 application windows and derive bounded public media from immutable
 source captures with ``scripts.capture_media_gallery``. The workflow does not
 draw, blur, replace, synthesise, or otherwise fabricate application content.
 Make changes to visible UI state in the application before capture.
@@ -11,7 +11,7 @@ The workflow keeps four concerns separate:
 
 1. OpenHCS and its integrations create the real session.
 2. A lossless PNG or FFV1 Matroska file records that session.
-3. Nominal gallery scenario declarations own stable IDs, capture targets, published filenames, copy, layout, and evidence.
+3. Nominal gallery scenario declarations own stable IDs, capture targets, publication targets, published filenames, copy, layout, and evidence.
 4. One typed JSON manifest owns each capture-specific crop, trim, resolution bound, size bound, frame rate, and poster timestamp. Its output inventory must match the selected scenario declaration.
 
 The website cards, RTD workflow figures, and public checksum record are generated
@@ -232,12 +232,13 @@ These records are capture provenance, not a second registry of OpenHCS scenarios
 
    python -m scripts.capture_media_gallery catalog
 
-The checked-in release record is also the zero-dependency website projection.
-Each scenario leaf supplies its card copy, accessibility text, representative
-static image, layout, capture target, derivative contract, and release evidence.
-The website builder reads the generated projection without importing OpenHCS,
-while the Sphinx directive reads the same nominal scenario declarations. Neither
-deployment surface acquires a second gallery inventory.
+The checked-in release record contains the complete capture and asset inventory,
+plus the derived website-card projection. Each scenario leaf supplies its copy,
+accessibility text, representative static image, layout, capture target,
+publication targets, derivative contract, and release evidence. The website
+builder reads its generated card projection without importing OpenHCS, while the
+Sphinx directive resolves documentation-enabled scenarios from the same nominal
+declarations. Neither deployment surface acquires a second gallery inventory.
 
 After a declaration or accepted asset changes, regenerate the checked-in projection and verify it exactly:
 

@@ -9,17 +9,46 @@
       "PNG"
     ]
   },
-  "schema_version": "openhcs.release-media.v5",
+  "schema_version": "openhcs.release-media.v6",
   "dataset_attribution": {
     "dataset_note": "CellProfiler ExampleCometAssay and ExampleWoundHealing are shown under BSD-3-Clause. Comet fluorescence images were contributed by Scott Floyd and Michael Pacold.",
     "attribution_url": "https://github.com/CellProfiler/examples/tree/4972b59e670a4ae96c3d453803c92eeff378d054",
     "attribution_label": "Source and attribution"
   },
   "website_provenance_html": "        <aside class=\"gallery-provenance\" aria-label=\"Gallery dataset provenance\">\n          <span>Dataset note</span>\n          <p>\n            CellProfiler ExampleCometAssay and ExampleWoundHealing are shown under BSD-3-Clause. Comet fluorescence images were contributed by Scott Floyd and Michael Pacold.\n            <a href=\"https://github.com/CellProfiler/examples/tree/4972b59e670a4ae96c3d453803c92eeff378d054\">Source and attribution</a>.\n            The gallery media have a\n            <a href=\"assets/gallery/release-media-record.json\">capture and checksum record</a>.\n          </p>\n        </aside>",
+  "website_cards": [
+    {
+      "id": "multi-plate-overview",
+      "rendered_html": "          <figure class=\"gallery-card gallery-card-wide\">\n            <a\n              class=\"gallery-media-link\"\n              href=\"assets/gallery/multi-plate-overview.webp\"\n              aria-label=\"Open the multi-plate workspace screenshot at full resolution\"\n            >\n              <img\n                src=\"assets/gallery/multi-plate-overview.webp\"\n                width=\"1600\"\n                height=\"958\"\n                loading=\"lazy\"\n                decoding=\"async\"\n                alt=\"OpenHCS Plate Manager with seven assay plates loaded, including CellProfiler Comet Assay and Wound Healing examples\"\n              >\n            </a>\n            <figcaption>\n              <span class=\"gallery-label\">Workspace</span>\n              <h3>Seven assay plates, one workspace</h3>\n              <p>Five deterministic examples and two imported CellProfiler workflows retain independent state in one session.</p>\n            </figcaption>\n          </figure>"
+    },
+    {
+      "id": "pipeline-editor",
+      "rendered_html": "          <figure class=\"gallery-card gallery-card-compact\">\n            <a\n              class=\"gallery-media-link\"\n              href=\"assets/gallery/pipeline-editor.webp\"\n              aria-label=\"Open the pipeline editor screenshot at full resolution\"\n            >\n              <img\n                src=\"assets/gallery/pipeline-editor.webp\"\n                width=\"942\"\n                height=\"900\"\n                loading=\"lazy\"\n                decoding=\"async\"\n                alt=\"OpenHCS Pipeline Editor showing the 12 imported steps of the CellProfiler Comet Assay\"\n              >\n            </a>\n            <figcaption>\n              <span class=\"gallery-label\">Authoring</span>\n              <h3>CellProfiler steps in the same pipeline model</h3>\n              <p>The 12-step Comet Assay uses OpenHCS compilation, configuration, viewers, and results.</p>\n            </figcaption>\n          </figure>"
+    },
+    {
+      "id": "lazy-inheritance",
+      "rendered_html": "          <figure class=\"gallery-card gallery-card-motion gallery-card-wide\">\n            <div class=\"gallery-motion\">\n              <video\n                controls\n                muted\n                loop\n                playsinline\n                preload=\"metadata\"\n                poster=\"assets/gallery/lazy-inheritance-poster.webp\"\n                aria-describedby=\"lazy-inheritance-caption\"\n              >\n                <source src=\"assets/gallery/lazy-inheritance.webm\" type=\"video/webm\">\n                <source src=\"assets/gallery/lazy-inheritance.mp4\" type=\"video/mp4\">\n                <a href=\"assets/gallery/lazy-inheritance.mp4\">Download the lazy-inheritance demonstration.</a>\n              </video>\n              <a\n                class=\"gallery-motion-fallback gallery-media-link\"\n                href=\"assets/gallery/lazy-inheritance-poster.webp\"\n                aria-label=\"Open the lazy-inheritance demonstration poster at full resolution\"\n              >\n                <img\n                  src=\"assets/gallery/lazy-inheritance-poster.webp\"\n                  width=\"1600\"\n                  height=\"1000\"\n                  loading=\"lazy\"\n                  decoding=\"async\"\n                  alt=\"OpenHCS workspace beside pipeline and step settings showing Well Filter Image30 at pipeline scope and inherited by the step\"\n                >\n                <span>Static view shown because reduced motion is enabled</span>\n              </a>\n            </div>\n            <figcaption id=\"lazy-inheritance-caption\">\n              <span class=\"gallery-label\">Configuration</span>\n              <h3>See configuration provenance in both directions</h3>\n              <p>Well Filter changes to Image30 in PipelineConfig, then the inherited step field flashes as the update arrives. Clicking that step label flashes the owning PipelineConfig field, making the provenance link explicit in both directions.</p>\n            </figcaption>\n          </figure>"
+    },
+    {
+      "id": "fiji-review",
+      "rendered_html": "          <figure class=\"gallery-card gallery-card-compact\">\n            <a\n              class=\"gallery-media-link\"\n              href=\"assets/gallery/fiji-review.webp\"\n              aria-label=\"Open the Fiji integration screenshot at full resolution\"\n            >\n              <img\n                src=\"assets/gallery/fiji-review.webp\"\n                width=\"1310\"\n                height=\"930\"\n                loading=\"lazy\"\n                decoding=\"async\"\n                alt=\"Fiji ImageJ showing one NeuronCyto II Field 1 nuclear plane with its nine native segmentation ROI entries\"\n              >\n            </a>\n            <figcaption>\n              <span class=\"gallery-label\">Fiji</span>\n              <h3>Review matching ROIs in Fiji</h3>\n              <p>OpenHCS streams one bound Field 1 nuclear plane and its nine segmentation ROIs together. The native outlines follow the displayed nuclei.</p>\n            </figcaption>\n          </figure>"
+    },
+    {
+      "id": "zmq-startup-compile",
+      "rendered_html": "          <figure class=\"gallery-card gallery-card-motion gallery-card-feature\">\n            <div class=\"gallery-motion\">\n              <video\n                controls\n                muted\n                loop\n                playsinline\n                preload=\"metadata\"\n                poster=\"assets/gallery/zmq-startup-compile-poster.webp\"\n                aria-describedby=\"zmq-startup-compile-caption\"\n              >\n                <source src=\"assets/gallery/zmq-startup-compile.webm\" type=\"video/webm\">\n                <source src=\"assets/gallery/zmq-startup-compile.mp4\" type=\"video/mp4\">\n                <a href=\"assets/gallery/zmq-startup-compile.mp4\">Download the endpoint-startup recording.</a>\n              </video>\n              <a\n                class=\"gallery-motion-fallback gallery-media-link\"\n                href=\"assets/gallery/zmq-startup-compile-poster.webp\"\n                aria-label=\"Open the execution-endpoint startup poster at full resolution\"\n              >\n                <img\n                  src=\"assets/gallery/zmq-startup-compile-poster.webp\"\n                  width=\"1600\"\n                  height=\"1000\"\n                  loading=\"lazy\"\n                  decoding=\"async\"\n                  alt=\"OpenHCS showing an execution endpoint preparing its function catalog while a pipeline compiles\"\n                >\n                <span>Static view shown because reduced motion is enabled</span>\n              </a>\n            </div>\n            <figcaption id=\"zmq-startup-compile-caption\">\n              <span class=\"gallery-label\">Local MCP</span>\n              <h3>See endpoint startup while the request is running</h3>\n              <p>A pointer-free MCP compile request immediately adds the execution endpoint, streams catalog-preparation phases into the browser and status bar, and settles connected.</p>\n            </figcaption>\n          </figure>"
+    },
+    {
+      "id": "napari-roi-navigation",
+      "rendered_html": "          <figure class=\"gallery-card gallery-card-motion gallery-card-feature\">\n            <div class=\"gallery-motion\">\n              <video\n                controls\n                muted\n                loop\n                playsinline\n                preload=\"metadata\"\n                poster=\"assets/gallery/napari-roi-navigation-poster.webp\"\n                aria-describedby=\"napari-roi-navigation-caption\"\n              >\n                <source src=\"assets/gallery/napari-roi-navigation.webm\" type=\"video/webm\">\n                <source src=\"assets/gallery/napari-roi-navigation.mp4\" type=\"video/mp4\">\n                <a href=\"assets/gallery/napari-roi-navigation.mp4\">Download the Napari ROI-navigation recording.</a>\n              </video>\n              <a\n                class=\"gallery-motion-fallback gallery-media-link\"\n                href=\"assets/gallery/napari-roi-navigation-poster.webp\"\n                aria-label=\"Open the Napari ROI-navigation poster at full resolution\"\n              >\n                <img\n                  src=\"assets/gallery/napari-roi-navigation-poster.webp\"\n                  width=\"1600\"\n                  height=\"896\"\n                  loading=\"lazy\"\n                  decoding=\"async\"\n                  alt=\"Napari showing segmented nuclei, a selected native ROI, its measurement row, and the current Z plane\"\n                >\n                <span>Static view shown because reduced motion is enabled</span>\n              </a>\n            </div>\n            <figcaption id=\"napari-roi-navigation-caption\">\n              <span class=\"gallery-label\">Napari</span>\n              <h3>ROI selection navigates the Z stack</h3>\n              <p>A pointer-free MCP sequence selects measurement rows across a three-plane result. Napari scrolls the table, highlights the native ROI, and moves from Z 3/3 to Z 1/3 and back.</p>\n            </figcaption>\n          </figure>"
+    }
+  ],
   "captures": [
     {
       "id": "multi-plate-overview",
-      "website_card_html": "          <figure class=\"gallery-card gallery-card-wide\">\n            <a\n              class=\"gallery-media-link\"\n              href=\"assets/gallery/multi-plate-overview.webp\"\n              aria-label=\"Open the multi-plate workspace screenshot at full resolution\"\n            >\n              <img\n                src=\"assets/gallery/multi-plate-overview.webp\"\n                width=\"1600\"\n                height=\"958\"\n                loading=\"lazy\"\n                decoding=\"async\"\n                alt=\"OpenHCS Plate Manager with seven assay plates loaded, including CellProfiler Comet Assay and Wound Healing examples\"\n              >\n            </a>\n            <figcaption>\n              <span class=\"gallery-label\">Workspace</span>\n              <h3>Seven assay plates, one workspace</h3>\n              <p>Five deterministic examples and two imported CellProfiler workflows retain independent state in one session.</p>\n            </figcaption>\n          </figure>",
+      "publication_targets": [
+        "website",
+        "documentation"
+      ],
       "proof": "Seven independently configured assay plates are visible in one workspace.",
       "capture_target": {
         "kind": "ui_bridge_window",
@@ -41,7 +70,9 @@
     },
     {
       "id": "pipeline-editor",
-      "website_card_html": "          <figure class=\"gallery-card gallery-card-compact\">\n            <a\n              class=\"gallery-media-link\"\n              href=\"assets/gallery/pipeline-editor.webp\"\n              aria-label=\"Open the pipeline editor screenshot at full resolution\"\n            >\n              <img\n                src=\"assets/gallery/pipeline-editor.webp\"\n                width=\"942\"\n                height=\"900\"\n                loading=\"lazy\"\n                decoding=\"async\"\n                alt=\"OpenHCS Pipeline Editor showing the 12 imported steps of the CellProfiler Comet Assay\"\n              >\n            </a>\n            <figcaption>\n              <span class=\"gallery-label\">Authoring</span>\n              <h3>CellProfiler steps in the same pipeline model</h3>\n              <p>The 12-step Comet Assay uses OpenHCS compilation, configuration, viewers, and results.</p>\n            </figcaption>\n          </figure>",
+      "publication_targets": [
+        "website"
+      ],
       "proof": "The imported CellProfiler Comet Assay is visible as twelve pipeline steps.",
       "capture_target": {
         "kind": "ui_bridge_window",
@@ -62,8 +93,131 @@
       ]
     },
     {
+      "id": "first-plate-workflow",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "One compiled synthetic plate and its complete eight-step pipeline are visible in the live workspace.",
+      "capture_target": {
+        "kind": "ui_bridge_window",
+        "human_review_required": false,
+        "parameters": {
+          "window_id": "main_window"
+        }
+      },
+      "source": {
+        "sha256": "18a8d6588b371b1ef81e95dd0dd5d2b0e31847d9aaa4ee2dddd6cbeba75979e3",
+        "width": 1024,
+        "height": 768,
+        "duration_seconds": null,
+        "format": "PNG"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "first-plate-workflow.webp",
+          "sha256": "991de0cb39524792a41c1d47bf1078d31fcdbd5b2dc55c81daf064a74a3a18a5"
+        }
+      ]
+    },
+    {
+      "id": "source-image-browser",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The live Image Browser reports 216 loaded source files for the generated plate and exposes the configured Fiji viewer.",
+      "capture_target": {
+        "kind": "ui_bridge_window",
+        "human_review_required": false,
+        "parameters": {
+          "window_id": "image_browser"
+        }
+      },
+      "source": {
+        "sha256": "45d8f8ffea4da99453604ad8ab06de3e16c533451bf223275847a0f108110651",
+        "width": 900,
+        "height": 600,
+        "duration_seconds": null,
+        "format": "PNG"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "source-image-browser.webp",
+          "sha256": "cf9631e3b61b22772eec772c3b7acc9f761c1bc46a0528de19107a86d7419d1c"
+        }
+      ]
+    },
+    {
+      "id": "global-configuration-editor",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The live global configuration editor exposes both configuration roots with typed values, field-level help, and reset controls.",
+      "capture_target": {
+        "kind": "ui_bridge_window",
+        "human_review_required": false,
+        "parameters": {
+          "window_id": "global_config"
+        }
+      },
+      "source": {
+        "sha256": "41a350116331ad9cff2409efc54d0cf8f77eb674ee42b4841607748064783016",
+        "width": 650,
+        "height": 650,
+        "duration_seconds": null,
+        "format": "PNG"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "global-configuration-editor.webp",
+          "sha256": "b4b69cd74899639c12c9f7014449501f9fafe91a2cd65533631583e2f5ec48e9"
+        }
+      ]
+    },
+    {
+      "id": "execution-log-viewer",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The live Log Viewer is bound to the active ZMQ execution server and shows its compilation records.",
+      "capture_target": {
+        "kind": "ui_bridge_window",
+        "human_review_required": false,
+        "parameters": {
+          "window_id": "log_viewer"
+        }
+      },
+      "source": {
+        "sha256": "57f265b07312c0c7d8530d0938f5bc3fefb1a91f7815fa36d013718b83693afb",
+        "width": 900,
+        "height": 700,
+        "duration_seconds": null,
+        "format": "PNG"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "execution-log-viewer.webp",
+          "sha256": "ac0476352392fe6135fca60bdcf37c40c91a21f00384eb4fef3be023b9165eab"
+        }
+      ]
+    },
+    {
       "id": "lazy-inheritance",
-      "website_card_html": "          <figure class=\"gallery-card gallery-card-motion gallery-card-wide\">\n            <div class=\"gallery-motion\">\n              <video\n                controls\n                muted\n                loop\n                playsinline\n                preload=\"metadata\"\n                poster=\"assets/gallery/lazy-inheritance-poster.webp\"\n                aria-describedby=\"lazy-inheritance-caption\"\n              >\n                <source src=\"assets/gallery/lazy-inheritance.webm\" type=\"video/webm\">\n                <source src=\"assets/gallery/lazy-inheritance.mp4\" type=\"video/mp4\">\n                <a href=\"assets/gallery/lazy-inheritance.mp4\">Download the lazy-inheritance demonstration.</a>\n              </video>\n              <a\n                class=\"gallery-motion-fallback gallery-media-link\"\n                href=\"assets/gallery/lazy-inheritance-poster.webp\"\n                aria-label=\"Open the lazy-inheritance demonstration poster at full resolution\"\n              >\n                <img\n                  src=\"assets/gallery/lazy-inheritance-poster.webp\"\n                  width=\"1600\"\n                  height=\"1000\"\n                  loading=\"lazy\"\n                  decoding=\"async\"\n                  alt=\"OpenHCS workspace beside pipeline and step settings showing Well Filter Image30 at pipeline scope and inherited by the step\"\n                >\n                <span>Static view shown because reduced motion is enabled</span>\n              </a>\n            </div>\n            <figcaption id=\"lazy-inheritance-caption\">\n              <span class=\"gallery-label\">Configuration</span>\n              <h3>See configuration provenance in both directions</h3>\n              <p>Well Filter changes to Image30 in PipelineConfig, then the inherited step field flashes as the update arrives. Clicking that step label flashes the owning PipelineConfig field, making the provenance link explicit in both directions.</p>\n            </figcaption>\n          </figure>",
+      "publication_targets": [
+        "website",
+        "documentation"
+      ],
       "proof": "Editing the pipeline-owned Well Filter flashes its inherited step field; clicking the inherited step label then flashes the owning pipeline field.",
       "capture_target": {
         "kind": "application_scene",
@@ -107,7 +261,10 @@
     },
     {
       "id": "fiji-review",
-      "website_card_html": "          <figure class=\"gallery-card gallery-card-compact\">\n            <a\n              class=\"gallery-media-link\"\n              href=\"assets/gallery/fiji-review.webp\"\n              aria-label=\"Open the Fiji integration screenshot at full resolution\"\n            >\n              <img\n                src=\"assets/gallery/fiji-review.webp\"\n                width=\"1310\"\n                height=\"930\"\n                loading=\"lazy\"\n                decoding=\"async\"\n                alt=\"Fiji ImageJ showing one NeuronCyto II Field 1 nuclear plane with its nine native segmentation ROI entries\"\n              >\n            </a>\n            <figcaption>\n              <span class=\"gallery-label\">Fiji</span>\n              <h3>Review matching ROIs in Fiji</h3>\n              <p>OpenHCS streams one bound Field 1 nuclear plane and its nine segmentation ROIs together. The native outlines follow the displayed nuclei.</p>\n            </figcaption>\n          </figure>",
+      "publication_targets": [
+        "website",
+        "documentation"
+      ],
       "proof": "One bound Field 1 nuclear plane is shown with the corresponding nine native ROI Manager entries; the visible outlines follow the displayed nuclei without cross-plane ROI mixing.",
       "capture_target": {
         "kind": "fiji_viewer_window",
@@ -138,7 +295,10 @@
     },
     {
       "id": "zmq-startup-compile",
-      "website_card_html": "          <figure class=\"gallery-card gallery-card-motion gallery-card-feature\">\n            <div class=\"gallery-motion\">\n              <video\n                controls\n                muted\n                loop\n                playsinline\n                preload=\"metadata\"\n                poster=\"assets/gallery/zmq-startup-compile-poster.webp\"\n                aria-describedby=\"zmq-startup-compile-caption\"\n              >\n                <source src=\"assets/gallery/zmq-startup-compile.webm\" type=\"video/webm\">\n                <source src=\"assets/gallery/zmq-startup-compile.mp4\" type=\"video/mp4\">\n                <a href=\"assets/gallery/zmq-startup-compile.mp4\">Download the endpoint-startup recording.</a>\n              </video>\n              <a\n                class=\"gallery-motion-fallback gallery-media-link\"\n                href=\"assets/gallery/zmq-startup-compile-poster.webp\"\n                aria-label=\"Open the execution-endpoint startup poster at full resolution\"\n              >\n                <img\n                  src=\"assets/gallery/zmq-startup-compile-poster.webp\"\n                  width=\"1600\"\n                  height=\"1000\"\n                  loading=\"lazy\"\n                  decoding=\"async\"\n                  alt=\"OpenHCS showing an execution endpoint preparing its function catalog while a pipeline compiles\"\n                >\n                <span>Static view shown because reduced motion is enabled</span>\n              </a>\n            </div>\n            <figcaption id=\"zmq-startup-compile-caption\">\n              <span class=\"gallery-label\">Local MCP</span>\n              <h3>See endpoint startup while the request is running</h3>\n              <p>A pointer-free MCP compile request immediately adds the execution endpoint, streams catalog-preparation phases into the browser and status bar, and settles connected.</p>\n            </figcaption>\n          </figure>",
+      "publication_targets": [
+        "website",
+        "documentation"
+      ],
       "proof": "An execution endpoint appears during the compile request and reports startup phases before settling connected.",
       "capture_target": {
         "kind": "ui_bridge_window",
@@ -178,7 +338,10 @@
     },
     {
       "id": "napari-roi-navigation",
-      "website_card_html": "          <figure class=\"gallery-card gallery-card-motion gallery-card-feature\">\n            <div class=\"gallery-motion\">\n              <video\n                controls\n                muted\n                loop\n                playsinline\n                preload=\"metadata\"\n                poster=\"assets/gallery/napari-roi-navigation-poster.webp\"\n                aria-describedby=\"napari-roi-navigation-caption\"\n              >\n                <source src=\"assets/gallery/napari-roi-navigation.webm\" type=\"video/webm\">\n                <source src=\"assets/gallery/napari-roi-navigation.mp4\" type=\"video/mp4\">\n                <a href=\"assets/gallery/napari-roi-navigation.mp4\">Download the Napari ROI-navigation recording.</a>\n              </video>\n              <a\n                class=\"gallery-motion-fallback gallery-media-link\"\n                href=\"assets/gallery/napari-roi-navigation-poster.webp\"\n                aria-label=\"Open the Napari ROI-navigation poster at full resolution\"\n              >\n                <img\n                  src=\"assets/gallery/napari-roi-navigation-poster.webp\"\n                  width=\"1600\"\n                  height=\"896\"\n                  loading=\"lazy\"\n                  decoding=\"async\"\n                  alt=\"Napari showing segmented nuclei, a selected native ROI, its measurement row, and the current Z plane\"\n                >\n                <span>Static view shown because reduced motion is enabled</span>\n              </a>\n            </div>\n            <figcaption id=\"napari-roi-navigation-caption\">\n              <span class=\"gallery-label\">Napari</span>\n              <h3>ROI selection navigates the Z stack</h3>\n              <p>A pointer-free MCP sequence selects measurement rows across a three-plane result. Napari scrolls the table, highlights the native ROI, and moves from Z 3/3 to Z 1/3 and back.</p>\n            </figcaption>\n          </figure>",
+      "publication_targets": [
+        "website",
+        "documentation"
+      ],
       "proof": "MCP row selection scrolls the ROI table, updates native Shapes selection, and moves between Z 3/3 and Z 1/3.",
       "capture_target": {
         "kind": "napari_viewer_window",

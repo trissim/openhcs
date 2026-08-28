@@ -68,7 +68,8 @@ or how-to guide over a decorative screenshot or an image-heavy reference page.
 Public UI media belongs to a nominal gallery scenario. The scenario declaration
 owns its stable ID, representative still or video poster, caption, description,
 alt text, dimensions, capture target, derivative contract, and release evidence.
-An RTD page names only that ID:
+It also declares whether the scenario is available to the website, the
+documentation, or both. An RTD page names only that ID:
 
 .. code-block:: rst
 
@@ -76,9 +77,11 @@ An RTD page names only that ID:
 
 The Sphinx projection resolves every other figure property from the scenario.
 Do not add a second image path, caption, alt text, media-type branch, or
-documentation-only screenshot registry. If the available scenario does not
-truthfully depict the page's workflow, capture and declare a new scenario rather
-than placing a misleading image.
+documentation-only screenshot registry. A documentation-only scenario remains
+part of the same media catalogue, asset inventory, and checksum record; its
+typed publication target merely keeps it out of the website card projection.
+If the available scenario does not truthfully depict the page's workflow,
+capture and declare a new scenario rather than placing a misleading image.
 
 Follow :doc:`media_gallery_capture` to capture and verify the real application
 surface. Build the documentation with warnings treated as errors, then inspect

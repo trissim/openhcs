@@ -9,7 +9,7 @@ from docutils import nodes
 from sphinx.util.docutils import SphinxDirective
 
 from scripts.gallery_catalog import (
-    OpenHCSGalleryScenarioCatalog,
+    documentation_gallery_scenario_for_id,
     gallery_asset_root,
 )
 
@@ -25,7 +25,7 @@ class OpenHCSGalleryDirective(SphinxDirective):
     has_content = False
 
     def run(self) -> list[nodes.Node]:
-        scenario = OpenHCSGalleryScenarioCatalog.for_id(self.arguments[0].strip())
+        scenario = documentation_gallery_scenario_for_id(self.arguments[0].strip())
         asset_path = gallery_asset_root() / scenario.representative_image_path()
         source_path = Path(self.state.document.current_source).resolve()
         relative_uri = os.path.relpath(asset_path, source_path.parent)

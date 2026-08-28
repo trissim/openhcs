@@ -5,6 +5,8 @@ Use the desktop Log Viewer to inspect application, compiler, worker, ZMQ, and
 viewer messages without leaving the active workflow. Filter by level or source
 and keep the relevant execution identifier when reporting a failure.
 
+.. openhcs-gallery:: execution-log-viewer
+
 For compilation failures, start at the earliest error tied to the plate and
 step. Later worker or UI messages are often consequences. For runtime failures,
 record the execution axis, step name, worker process, and the typed plan field or

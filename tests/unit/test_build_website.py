@@ -33,9 +33,11 @@ from scripts.gallery_catalog import (
     GalleryScenarioABC,
     GalleryScenarioCatalog,
     OpenHCSGalleryScenarioCatalog,
+    documentation_gallery_scenarios,
     gallery_asset_root,
     gallery_release_record_text,
     gallery_scenarios,
+    website_gallery_scenarios,
 )
 from scripts.website_gallery_projection import (
     GALLERY_CARDS_TOKEN,
@@ -65,7 +67,19 @@ def test_gallery_sequence_is_composed_from_declaration_mro() -> None:
 
     assert ExtendedGallery.scenarios() == (workspace, pipeline)
     projection = _gallery_projection()
-    assert tuple(scenario.scenario_id for scenario in gallery_scenarios()) == tuple(
+    assert tuple(
+        scenario.scenario_id for scenario in website_gallery_scenarios()
+    ) == tuple(card.scenario_id for card in projection.cards)
+    documentation_only_scenario_ids = {
+        "first-plate-workflow",
+        "source-image-browser",
+        "global-configuration-editor",
+        "execution-log-viewer",
+    }
+    assert documentation_only_scenario_ids.issubset(
+        scenario.scenario_id for scenario in documentation_gallery_scenarios()
+    )
+    assert documentation_only_scenario_ids.isdisjoint(
         card.scenario_id for card in projection.cards
     )
     assert all(
@@ -627,6 +641,9 @@ def test_release_gallery_media_record_matches_published_assets():
     assert record["capture_contract"]["pointer_visibility"] == "mixed"
     assert set(record["capture_contract"]["source_formats"]) == {"FFV1", "PNG"}
     assert tuple(capture["id"] for capture in record["captures"]) == tuple(
+        scenario.scenario_id for scenario in gallery_scenarios()
+    )
+    assert tuple(card["id"] for card in record["website_cards"]) == tuple(
         card.scenario_id for card in projection.cards
     )
     assert (
