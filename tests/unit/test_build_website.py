@@ -4,6 +4,8 @@ import hashlib
 import json
 import re
 import runpy
+import subprocess
+import sys
 from html import escape
 from html.parser import HTMLParser
 from pathlib import Path
@@ -48,6 +50,31 @@ from scripts.website_gallery_projection import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_gallery_catalog_import_does_not_require_qt_runtime() -> None:
+    script = """
+import importlib.abc
+import sys
+
+class RejectQtImport(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path, target=None):
+        if fullname == "PyQt6" or fullname.startswith("PyQt6."):
+            raise ModuleNotFoundError("static gallery catalog imported PyQt6")
+        return None
+
+sys.meta_path.insert(0, RejectQtImport())
+import scripts.gallery_catalog
+"""
+    result = subprocess.run(
+        (sys.executable, "-c", script),
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def _gallery_projection():
@@ -684,8 +711,9 @@ def test_release_gallery_media_record_matches_published_assets():
             artifact_path = asset_root / published["path"]
             assert artifact_path.is_file()
             with artifact_path.open("rb") as artifact:
-                assert hashlib.file_digest(artifact, "sha256").hexdigest() == (
-                    published["sha256"]
+                assert (
+                    hashlib.file_digest(artifact, "sha256").hexdigest()
+                    == published["sha256"]
                 )
     fiji_capture = next(
         capture for capture in record["captures"] if capture["id"] == "fiji-review"
@@ -720,14 +748,16 @@ def test_neurite_showcase_edit_record_matches_source_and_published_assets():
     ]
     source_path = asset_root / record["source"]["path"]
     with source_path.open("rb") as source:
-        assert hashlib.file_digest(source, "sha256").hexdigest() == (
-            record["source"]["sha256"]
+        assert (
+            hashlib.file_digest(source, "sha256").hexdigest()
+            == record["source"]["sha256"]
         )
     for published in record["published"]:
         artifact_path = asset_root / published["path"]
         with artifact_path.open("rb") as artifact:
-            assert hashlib.file_digest(artifact, "sha256").hexdigest() == (
-                published["sha256"]
+            assert (
+                hashlib.file_digest(artifact, "sha256").hexdigest()
+                == published["sha256"]
             )
 
 

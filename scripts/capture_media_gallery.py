@@ -32,8 +32,8 @@ import openhcs  # noqa: F401  # Activate recorded source dependencies before UI 
 
 from pyqt_reactive.animation import WindowFlashOverlay
 from pyqt_reactive.animation.flash_overlay_opengl import WindowFlashOverlayGL
+from pyqt_reactive.services.tab_identity import TabLabelDeclarationMixin
 from pyqt_reactive.services.widget_tree_projection import WidgetActionKind
-from pyqt_reactive.widgets.shared import TabLabelDeclarationMixin
 from python_introspect import dataclass_from_mapping
 
 from openhcs.agent.dto.ui_bridge import (

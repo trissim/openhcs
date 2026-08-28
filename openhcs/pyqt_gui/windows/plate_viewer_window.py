@@ -5,8 +5,6 @@ Combines image browsing and metadata viewing in a single window with tabs.
 """
 
 import logging
-from enum import Enum
-from typing import Self
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
@@ -23,25 +21,13 @@ from pyqt_reactive.forms.object_form_document_renderer import (
     ObjectFormRenderContext,
 )
 from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.widgets.shared import BaseFormDialog, TabLabelDeclarationMixin
+from pyqt_reactive.widgets.shared import BaseFormDialog
 
 from openhcs.pyqt_gui.config import ProgressUIConfig
+from openhcs.pyqt_gui.ui_tab_identities import PlateViewerTab
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 
 logger = logging.getLogger(__name__)
-
-
-class PlateViewerTab(TabLabelDeclarationMixin, str, Enum):
-    """Plate-viewer tabs with declaration-owned public labels."""
-
-    def __new__(cls, value: str, label: str) -> Self:
-        member = str.__new__(cls, value)
-        member._value_ = value
-        member.label = label
-        return member
-
-    IMAGE_BROWSER = ("image_browser", "Image Browser")
-    METADATA = ("metadata", "Metadata")
 
 
 class PlateViewerWindow(BaseFormDialog):

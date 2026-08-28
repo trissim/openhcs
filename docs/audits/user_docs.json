@@ -1062,7 +1062,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
+        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
         "role": "Owns the documentation-enabled Function Selector capture declaration, accessibility text, capture target, and generated visual projection."
       }
     ],
@@ -1156,7 +1156,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
+        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
         "role": "Owns the documentation-enabled global, pipeline, step, and nested function configuration capture declarations, accessibility text, capture targets, and generated visual projections."
       }
     ],
@@ -1323,7 +1323,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
+        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
         "role": "Owns the documentation-enabled source-image browser capture, caption, accessibility text, dimensions, and source evidence."
       }
     ],
@@ -1506,7 +1506,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
+        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
         "role": "Owns the documentation-enabled synthetic generator, plate metadata, and live measurement result capture declarations used by the first-workflow tutorial."
       }
     ],
@@ -2484,7 +2484,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
+        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
         "role": "Owns the landing-page workspace scenario, representative image, caption, description, alt text, dimensions, and release evidence."
       }
     ],
@@ -2837,7 +2837,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
+        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
         "role": "Projects every registered stable-window identity into its documentation scenario, capture target, filename, and accessibility text."
       },
       {
@@ -2847,7 +2847,7 @@
       },
       {
         "path": "tests/unit/test_build_website.py",
-        "sha256": "e66aba73ff9dc10d04c72017abcb810c04bd775d31c61d822dd8060a6811a4dc",
+        "sha256": "d42eab9eca91351fe228ce98b075f2691686aa401445c377e02d271ec85afdc9",
         "role": "Proves stable-window scenario identities, titles, filenames, and capture targets derive one-to-one from the identity registry."
       },
       {
@@ -3002,7 +3002,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
+        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
         "role": "Owns the lazy-inheritance scenario, representative poster, caption, description, alt text, dimensions, and release evidence."
       }
     ],
@@ -3142,7 +3142,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
+        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
         "role": "Owns the documentation-enabled Custom Function Manager capture declaration, accessibility text, capture target, and generated visual projection."
       }
     ],
@@ -3416,7 +3416,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
+        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
         "role": "Owns the documentation-enabled execution-log capture, caption, accessibility text, dimensions, and source evidence."
       }
     ],
@@ -3485,7 +3485,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
+        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
         "role": "Owns the local-MCP endpoint-startup scenario, representative poster, caption, description, alt text, dimensions, and release evidence."
       }
     ],
@@ -3577,7 +3577,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
+        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
         "role": "Owns the Napari ROI-navigation and Fiji ROI-review scenarios, representative images, captions, descriptions, alt text, dimensions, and release evidence."
       }
     ],

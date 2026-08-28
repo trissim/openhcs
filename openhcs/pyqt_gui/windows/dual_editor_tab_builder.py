@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
-from typing import Any, Self
+from typing import Any
 
 from objectstate.context_manager import config_context
 from PyQt6.QtCore import Qt
@@ -13,9 +12,9 @@ from pyqt_reactive.widgets.function_list_editor import FunctionListEditorWidget
 from pyqt_reactive.widgets.shared import (
     ActionTabbedWindowBody,
     ActionTabSpec,
-    TabLabelDeclarationMixin,
 )
 
+from openhcs.pyqt_gui.ui_tab_identities import DualEditorTab
 from openhcs.pyqt_gui.widgets.artifact_plan_view import (
     ArtifactPlanViewWidget,
 )
@@ -24,28 +23,6 @@ from openhcs.pyqt_gui.windows.dual_editor_session import (
     DualEditorFunctionPatternController,
     DualEditorSession,
 )
-
-
-class DualEditorTab(TabLabelDeclarationMixin, str, Enum):
-    """Dual-editor tabs with declaration-owned public labels."""
-
-    def __new__(cls, value: str, label: str) -> Self:
-        member = str.__new__(cls, value)
-        member._value_ = value
-        member.label = label
-        return member
-
-    STEP_SETTINGS = ("step_settings", "Step Settings")
-    FUNCTION_PATTERN = ("function_pattern", "Function Pattern")
-    ARTIFACTS = ("artifacts", "Artifacts")
-
-    def select(self, body: ActionTabbedWindowBody) -> None:
-        """Select this declaration in one live dual-editor body."""
-
-        labels = tuple(
-            body.tab_bar.tabText(index) for index in range(body.tab_bar.count())
-        )
-        body.setCurrentIndex(self.index_in(labels))
 
 
 @dataclass(frozen=True, slots=True)

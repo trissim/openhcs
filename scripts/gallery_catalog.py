@@ -12,15 +12,17 @@ from dataclasses import dataclass
 from enum import Enum
 from html import escape
 from pathlib import Path
-from typing import ClassVar, Self
+from typing import TYPE_CHECKING, ClassVar, Self
 
 import openhcs  # noqa: F401  # Activate recorded source dependencies before UI imports.
 
 # isort: split
 
+from pyqt_reactive.services.function_list_editor_actions import (
+    FunctionListEditorAction,
+)
 from pyqt_reactive.services.function_navigation import FUNCTION_FIELD_ROOT
-from pyqt_reactive.widgets.function_list_editor import FunctionListEditorAction
-from pyqt_reactive.widgets.system_monitor import SystemMonitorAction
+from pyqt_reactive.services.system_monitor_actions import SystemMonitorAction
 from python_introspect import dataclass_from_mapping
 
 from openhcs.agent.ui_bridge_actions import PlateManagerAction
@@ -33,10 +35,11 @@ from openhcs.agent.ui_bridge_identities import (
     PlateManagerWidgetIdentity,
     UiStableWindowIdentityDeclaration,
 )
-from openhcs.pyqt_gui.services.step_scope_identity import StepEditorScope
-from openhcs.pyqt_gui.windows.dual_editor_tab_builder import DualEditorTab
-from openhcs.pyqt_gui.windows.plate_viewer_window import PlateViewerTab
+from openhcs.pyqt_gui.ui_tab_identities import DualEditorTab, PlateViewerTab
 from openhcs.serialization.json import JsonValue, to_jsonable
+
+if TYPE_CHECKING:
+    from openhcs.pyqt_gui.services.step_scope_identity import StepEditorScope
 
 RELEASE_MEDIA_SCHEMA_VERSION = "openhcs.release-media.v7"
 RELEASE_MEDIA_RECORD_NAME = "release-media-record.json"
@@ -373,6 +376,8 @@ class ObjectStateCaptureScopeRole(str, Enum):
 
     def resolve(self, scope_ids: Sequence[str]) -> str:
         """Resolve one unambiguous live scope through this member's leaf rules."""
+
+        from openhcs.pyqt_gui.services.step_scope_identity import StepEditorScope
 
         parsed_scopes = []
         for scope_id in scope_ids:

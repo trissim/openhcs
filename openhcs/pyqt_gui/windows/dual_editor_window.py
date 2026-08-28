@@ -54,6 +54,7 @@ from openhcs.pyqt_gui.services.step_scope_identity import (
     StepEditorScope,
     build_step_scope_id,
 )
+from openhcs.pyqt_gui.ui_tab_identities import DualEditorTab
 from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     PlateCompiledState,
 )
@@ -67,7 +68,6 @@ from openhcs.pyqt_gui.windows.dual_editor_session import (
     DualEditorSession,
 )
 from openhcs.pyqt_gui.windows.dual_editor_tab_builder import (
-    DualEditorTab,
     _DualEditorTabBuildContext,
     _DualEditorTabBuilder,
 )

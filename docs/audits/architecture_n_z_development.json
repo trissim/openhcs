@@ -2365,7 +2365,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
+        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
         "role": "Owns nominal gallery scenario identity, publication targets, representative images, copy, accessibility text, dimensions, contextual and stable-window capture targets, and derivative contracts."
       },
       {
@@ -2375,7 +2375,7 @@
       },
       {
         "path": "tests/unit/test_build_website.py",
-        "sha256": "e66aba73ff9dc10d04c72017abcb810c04bd775d31c61d822dd8060a6811a4dc",
+        "sha256": "d42eab9eca91351fe228ce98b075f2691686aa401445c377e02d271ec85afdc9",
         "role": "Proves every scenario owns a valid representative static projection, stable-window figures derive from registered UI identities, documentation-only scenarios do not expand the website cards, and Sphinx branding resolves from package authority."
       }
     ],
@@ -2568,12 +2568,12 @@
     "authority": [
       {
         "path": "scripts/capture_media_gallery.py",
-        "sha256": "46c27798e5b386933938c2651cbc3fbf234ff3358c1feafb695d2e83793fe6bb",
+        "sha256": "e570cb64640ed115280d004e95abb3acb2513ca29cc53191e81faf44ab0e4c03",
         "role": "Owns the typed capture manifest, host-tool discovery, trusted UI-bridge session, declaration-selected contextual fixture preparation, X11 capture, deterministic derivative construction, validation, and command-line surface."
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "12bd306f13716e07c58ea301fbcec46e11e9eca49c44de0637b7026d921aeced",
+        "sha256": "2aae7ff86112bad7d826d2ccf1399c056249202313f9679792d190e563cd9354",
         "role": "Owns the nominal gallery scenario lattice, stable-window and contextual capture targets, publication targets, derivative inventory, source evidence, card rendering, and generated release record."
       },
       {

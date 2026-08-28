@@ -929,7 +929,7 @@
       },
       {
         "path": "tests/unit/test_build_website.py",
-        "sha256": "e66aba73ff9dc10d04c72017abcb810c04bd775d31c61d822dd8060a6811a4dc",
+        "sha256": "d42eab9eca91351fe228ce98b075f2691686aa401445c377e02d271ec85afdc9",
         "role": "Verifies that the stable UI window reference derives its identities and titles from the nominal registry."
       }
     ],
