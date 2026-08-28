@@ -369,7 +369,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
     """
 
     # Declarative UI configuration
-    TITLE = "Pipeline Editor"
+    TITLE = PipelineEditorWidgetIdentity.require_title()
     UI_STATE_SURFACE_DECLARATIONS = (
         UiOwnedStateSurfaceDeclaration(
             identity=PipelineEditorStateSurfaceIdentityDeclaration,

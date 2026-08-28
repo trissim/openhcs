@@ -24,6 +24,16 @@ from PyQt6.QtWidgets import (
 from pyqt_reactive.services.window_manager import WindowManager
 from pyqt_reactive.widgets.shared.manager_ui_scaffold import ManagerHeaderParts
 
+from openhcs.agent.ui_bridge_identities import (
+    AboutOpenHCSWindowIdentity,
+    ImageBrowserWindowIdentity,
+    KnowledgeBaseWindowIdentity,
+    LogViewerWindowIdentity,
+    PipelineEditorWidgetIdentity,
+    PlateManagerWidgetIdentity,
+    UiStableWindowIdentityDeclaration,
+    ZmqServerManagerWindowIdentity,
+)
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
@@ -283,8 +293,7 @@ class MainWindowShortcutLifecycle:
 class MainWindowSpecDefinition:
     """Declarative record for one WindowManager-managed window."""
 
-    window_id: str
-    title: str
+    identity: type[UiStableWindowIdentityDeclaration]
     window_class: type[QDialog]
     initialize_on_startup: bool = False
     startup_presentation: StartupWindowPresentation = (
@@ -293,8 +302,8 @@ class MainWindowSpecDefinition:
 
     def build(self) -> WindowSpec:
         return WindowSpec(
-            window_id=self.window_id,
-            title=self.title,
+            window_id=self.identity.require_value(),
+            title=self.identity.require_title(),
             window_class=self.window_class,
             initialize_on_startup=self.initialize_on_startup,
             startup_presentation=self.startup_presentation,
@@ -304,7 +313,6 @@ class MainWindowSpecDefinition:
 def build_main_window_specs() -> dict[str, WindowSpec]:
     """Build all WindowManager-managed window specifications."""
 
-    from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
     from openhcs.pyqt_gui.windows.about_window import AboutOpenHCSWindow
     from openhcs.pyqt_gui.windows.help_window import HelpWindow
     from openhcs.pyqt_gui.windows.managed_windows import (
@@ -317,45 +325,39 @@ def build_main_window_specs() -> dict[str, WindowSpec]:
 
     definitions = (
         MainWindowSpecDefinition(
-            "plate_manager",
-            "Plate Manager",
+            PlateManagerWidgetIdentity,
             PlateManagerWindow,
             True,
         ),
         MainWindowSpecDefinition(
-            "pipeline_editor",
-            "Pipeline Editor",
+            PipelineEditorWidgetIdentity,
             PipelineEditorWindow,
         ),
         MainWindowSpecDefinition(
-            "image_browser",
-            "Image Browser",
+            ImageBrowserWindowIdentity,
             ImageBrowserWindow,
         ),
         MainWindowSpecDefinition(
-            "log_viewer",
-            "Log Viewer",
+            LogViewerWindowIdentity,
             LogViewerWindowWrapper,
             True,
             StartupWindowPresentation.HIDE,
         ),
         MainWindowSpecDefinition(
-            "zmq_server_manager",
-            "ZMQ Server Manager",
+            ZmqServerManagerWindowIdentity,
             ZMQServerManagerWindow,
         ),
         MainWindowSpecDefinition(
-            OpenHCSUiWindowId.knowledge_base,
-            "OpenHCS Knowledge Base",
+            KnowledgeBaseWindowIdentity,
             HelpWindow,
         ),
         MainWindowSpecDefinition(
-            OpenHCSUiWindowId.about,
-            "About OpenHCS",
+            AboutOpenHCSWindowIdentity,
             AboutOpenHCSWindow,
         ),
     )
-    return {definition.window_id: definition.build() for definition in definitions}
+    specs = tuple(definition.build() for definition in definitions)
+    return {spec.window_id: spec for spec in specs}
 
 
 @dataclass(slots=True, weakref_slot=True)

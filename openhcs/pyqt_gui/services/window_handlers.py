@@ -14,6 +14,7 @@ from pyqt_reactive.services.scope_window_factory import (
     ScopeWindowRegistry,
 )
 
+from openhcs.agent.ui_bridge_identities import GlobalConfigWindowIdentity
 from openhcs.pyqt_gui.services.step_scope_identity import StepEditorScope
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 from openhcs.ui.shared.plate_scope_identity import PipelineScopeIdentity
@@ -131,7 +132,7 @@ class OpenHCSWindowCreationAuthority:
             scope_id=OpenHCSUiWindowId.canonical_manager_scope_for_agent_window_id(
                 global_config_window_scope_id(request.scope_id)
             ),
-            title_text="Configure OpenHCS",
+            title_text=GlobalConfigWindowIdentity.require_title(),
         )
         self._show_window(window)
         return window

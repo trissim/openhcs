@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import platform
 
-from PyQt6.QtCore import QSize, Qt, QT_VERSION_STR, PYQT_VERSION_STR
+from PyQt6.QtCore import PYQT_VERSION_STR, QT_VERSION_STR, QSize, Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QDialog,
@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
 )
 
 from openhcs import __version__ as OPENHCS_VERSION
+from openhcs.agent.ui_bridge_identities import AboutOpenHCSWindowIdentity
 from openhcs.pyqt_gui.branding import openhcs_brand_pixmap
 from openhcs.resources.brand import BrandAsset
 
@@ -27,7 +28,7 @@ class AboutOpenHCSWindow(QDialog):
         self.main_window = main_window
         self.service_adapter = service_adapter
         self.setObjectName("about_openhcs_window")
-        self.setWindowTitle("About OpenHCS")
+        self.setWindowTitle(AboutOpenHCSWindowIdentity.require_title())
         self.setModal(False)
         self.setMinimumWidth(440)
         self._build_ui()
@@ -75,9 +76,9 @@ class AboutOpenHCSWindow(QDialog):
 
         links = QLabel(
             '<a href="https://openhcs.readthedocs.io/">Documentation</a>'
-            ' &nbsp;·&nbsp; '
+            " &nbsp;·&nbsp; "
             '<a href="https://github.com/OpenHCSDev/OpenHCS">Source code</a>'
-            ' &nbsp;·&nbsp; '
+            " &nbsp;·&nbsp; "
             '<a href="https://github.com/OpenHCSDev/OpenHCS/issues">Report an issue</a>',
             self,
         )

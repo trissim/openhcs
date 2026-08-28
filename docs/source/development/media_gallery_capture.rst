@@ -11,8 +11,11 @@ The workflow keeps four concerns separate:
 
 1. OpenHCS and its integrations create the real session.
 2. A lossless PNG or FFV1 Matroska file records that session.
-3. Nominal gallery scenario declarations own stable IDs, capture targets, publication targets, published filenames, copy, layout, and evidence.
+3. Nominal gallery scenario declarations own stable IDs, capture targets, publication targets, published filenames, copy, layout, and scientific evidence.
 4. One typed JSON manifest owns each capture-specific crop, trim, resolution bound, size bound, frame rate, and poster timestamp. Its output inventory must match the selected scenario declaration.
+
+Source hashes, dimensions, formats, and durations are generated from the
+accepted captures. They are not copied into scenario declarations.
 
 The website cards, RTD workflow figures, and public checksum record are generated
 projections of the scenario declarations. Captions, scenario descriptions,
@@ -51,6 +54,24 @@ For a scenario whose nominal target is exposed by the UI bridge, capture the dec
      --descriptor-file-path /absolute/path/to/ui-bridge-descriptor.json
 
 The command resolves its timeout through the same UI bridge timeout authority used by MCP, requests the declared widget snapshot, verifies the returned path, PNG suffix, SHA-256, and dimensions, and atomically moves the accepted source into the capture root. It refuses to overwrite an existing source.
+
+To refresh the complete stable-window reference, run the registry-derived batch:
+
+.. code:: bash
+
+   python -m scripts.capture_media_gallery capture-ui-window-references \
+     --source-root /absolute/private/ui-window-captures \
+     --output-root website/assets/gallery \
+     --descriptor-file-path /absolute/path/to/ui-bridge-descriptor.json \
+     --force
+
+The batch discovers stable windows from their registered UI identities, derives
+source and output filenames, captures each live surface, builds bounded WebP
+derivatives, updates ``source-capture-evidence.json``, and regenerates the
+release-media record. Adding a stable window identity therefore extends the
+capture and documentation inventory without editing this command or a screenshot
+list. ``--force`` replaces only the generated WebP derivatives; existing lossless
+sources remain immutable.
 
 For a human-reviewed native window that does not expose a trusted snapshot leaf, list visible X11 windows and note the ID of the intended window:
 
@@ -232,13 +253,15 @@ These records are capture provenance, not a second registry of OpenHCS scenarios
 
    python -m scripts.capture_media_gallery catalog
 
-The checked-in release record contains the complete capture and asset inventory,
-plus the derived website-card projection. Each scenario leaf supplies its copy,
-accessibility text, representative static image, layout, capture target,
-publication targets, derivative contract, and release evidence. The website
-builder reads its generated card projection without importing OpenHCS, while the
-Sphinx directive resolves documentation-enabled scenarios from the same nominal
-declarations. Neither deployment surface acquires a second gallery inventory.
+The checked-in source-capture evidence records facts measured from accepted
+sources. The release record combines that generated evidence with the complete
+declaration-derived asset inventory and website-card projection. Each scenario
+leaf supplies its copy, accessibility text, representative static image, layout,
+capture target, publication targets, derivative contract, and optional scientific
+evidence. The website builder reads its generated card projection without
+importing OpenHCS, while the Sphinx directive resolves documentation-enabled
+scenarios from the same nominal declarations. Neither deployment surface
+acquires a second gallery inventory.
 
 After a declaration or accepted asset changes, regenerate the checked-in projection and verify it exactly:
 

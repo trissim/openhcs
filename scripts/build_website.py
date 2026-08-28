@@ -451,6 +451,7 @@ def build_site(repo_root: Path, output_dir: Path) -> tuple[str, ...]:
                     for path in (
                         *gallery_projection.published_paths,
                         gallery_record_path.name,
+                        gallery_projection.source_capture_evidence_path,
                     )
                 ),
                 *(client.logo_path for client in mcp_clients),

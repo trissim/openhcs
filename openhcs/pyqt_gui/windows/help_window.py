@@ -47,6 +47,7 @@ from openhcs.agent.services.knowledge_base_service import (
     MAX_DOCUMENT_CHARS,
     KnowledgeBaseService,
 )
+from openhcs.agent.ui_bridge_identities import KnowledgeBaseWindowIdentity
 
 KNOWLEDGE_ITEM_ROLE = Qt.ItemDataRole.UserRole
 
@@ -126,7 +127,7 @@ class HelpWindow(QDialog):
         self._active_document_id: str | None = None
         self._updating_sections = False
 
-        self.setWindowTitle("OpenHCS Knowledge Base")
+        self.setWindowTitle(KnowledgeBaseWindowIdentity.require_title())
         self.setModal(False)
         self.setMinimumSize(760, 520)
         self.resize(980, 680)
@@ -143,7 +144,7 @@ class HelpWindow(QDialog):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
-        title = QLabel("OpenHCS Knowledge Base", self)
+        title = QLabel(KnowledgeBaseWindowIdentity.require_title(), self)
         title.setObjectName("knowledge_title")
         title.setStyleSheet("font-size: 16px; font-weight: bold;")
         layout.addWidget(title)
@@ -542,7 +543,7 @@ class HelpWindow(QDialog):
         self.current_document = None
         self.current_function_id = None
         self._active_document_id = None
-        self.document_title.setText("OpenHCS Knowledge Base")
+        self.document_title.setText(KnowledgeBaseWindowIdentity.require_title())
         self.document_content.set_help_document(HelpDocument(content=message))
         self._updating_sections = True
         try:

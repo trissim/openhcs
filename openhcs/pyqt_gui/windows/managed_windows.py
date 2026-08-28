@@ -8,6 +8,13 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QDialog, QVBoxLayout
 
+from openhcs.agent.ui_bridge_identities import (
+    ImageBrowserWindowIdentity,
+    LogViewerWindowIdentity,
+    PipelineEditorWidgetIdentity,
+    PlateManagerWidgetIdentity,
+    ZmqServerManagerWindowIdentity,
+)
 from openhcs.pyqt_gui.services.main_window_workflows import MainWindowWidgetConnector
 
 
@@ -22,8 +29,8 @@ class _ManagedChildCleanupWindow(QDialog):
 class ManagedPlatePipelineConnector:
     """Connects managed plate and pipeline windows when both are open."""
 
-    PLATE_WINDOW_ID = "plate_manager"
-    PIPELINE_WINDOW_ID = "pipeline_editor"
+    PLATE_WINDOW_ID = PlateManagerWidgetIdentity.require_value()
+    PIPELINE_WINDOW_ID = PipelineEditorWidgetIdentity.require_value()
 
     def connect_plate(self, plate_widget) -> None:
         pipeline_widget = self._open_widget(self.PIPELINE_WINDOW_ID)
@@ -48,7 +55,7 @@ class PlateManagerWindow(_ManagedChildCleanupWindow):
         super().__init__(main_window)
         self.main_window = main_window
         self.service_adapter = service_adapter
-        self.setWindowTitle("Plate Manager")
+        self.setWindowTitle(PlateManagerWidgetIdentity.require_title())
         self.setModal(False)
         self.resize(600, 400)
 
@@ -97,7 +104,7 @@ class PipelineEditorWindow(QDialog):
         super().__init__(main_window)
         self.main_window = main_window
         self.service_adapter = service_adapter
-        self.setWindowTitle("Pipeline Editor")
+        self.setWindowTitle(PipelineEditorWidgetIdentity.require_title())
         self.setModal(False)
         self.resize(800, 600)
 
@@ -120,7 +127,7 @@ class ImageBrowserWindow(_ManagedChildCleanupWindow):
         super().__init__(main_window)
         self.main_window = main_window
         self.service_adapter = service_adapter
-        self.setWindowTitle("Image Browser")
+        self.setWindowTitle(ImageBrowserWindowIdentity.require_title())
         self.setModal(False)
         self.resize(900, 600)
 
@@ -147,7 +154,9 @@ class ImageBrowserWindow(_ManagedChildCleanupWindow):
 
         plate_widgets = [self.main_window.embedded_widgets.require_plate_manager()]
 
-        plate_window = WindowManager._scoped_windows.get("plate_manager")
+        plate_window = WindowManager._scoped_windows.get(
+            PlateManagerWidgetIdentity.require_value()
+        )
         if plate_window is not None and plate_window.widget not in plate_widgets:
             plate_widgets.append(plate_window.widget)
 
@@ -170,7 +179,7 @@ class LogViewerWindowWrapper(_ManagedChildCleanupWindow):
         super().__init__(main_window)
         self.main_window = main_window
         self.service_adapter = service_adapter
-        self.setWindowTitle("Log Viewer")
+        self.setWindowTitle(LogViewerWindowIdentity.require_title())
         self.setModal(False)
         self.resize(900, 700)
 
@@ -192,7 +201,7 @@ class ZMQServerManagerWindow(_ManagedChildCleanupWindow):
         super().__init__(main_window)
         self.main_window = main_window
         self.service_adapter = service_adapter
-        self.setWindowTitle("ZMQ Server Manager")
+        self.setWindowTitle(ZmqServerManagerWindowIdentity.require_title())
         self.setModal(False)
         self.resize(600, 400)
 

@@ -26,6 +26,36 @@ class UiBridgeIdentityDeclaration(ABC, metaclass=AutoRegisterMeta):
         return cls.value
 
 
+class UiStableWindowIdentityDeclaration(UiBridgeIdentityDeclaration):
+    """Registered identity and presentation for a stable public UI window."""
+
+    title: ClassVar[str | None] = None
+
+    @classmethod
+    def require_title(cls) -> str:
+        """Return the declaration-owned public window title."""
+
+        if cls.title is None:
+            raise ValueError(f"{cls.__name__} does not declare a window title.")
+        return cls.title
+
+    @classmethod
+    def declaration_types(
+        cls,
+    ) -> tuple[type[UiStableWindowIdentityDeclaration], ...]:
+        """Project the complete stable-window family from the identity registry."""
+
+        return tuple(
+            dict.fromkeys(
+                declaration
+                for declaration in cls.__registry__.values()
+                if issubclass(declaration, cls)
+                and declaration.value is not None
+                and declaration.title is not None
+            )
+        )
+
+
 class UiWidgetIdentityDeclaration(UiBridgeIdentityDeclaration):
     """Registered widget identity declaration."""
 
@@ -35,8 +65,11 @@ class UiWidgetIdentityDeclaration(UiBridgeIdentityDeclaration):
         return f"{cls.require_value()}.actions"
 
 
-class UiStableWindowIdentityDeclaration(UiBridgeIdentityDeclaration):
-    """Registered identity for a stable agent-addressable UI window."""
+class UiStableWidgetIdentityDeclaration(
+    UiWidgetIdentityDeclaration,
+    UiStableWindowIdentityDeclaration,
+):
+    """Stable public window whose content is also a registered UI widget."""
 
 
 class UiOwnedByWidgetIdentityDeclaration(UiBridgeIdentityDeclaration):
@@ -62,14 +95,16 @@ class UiStateSurfaceIdentityDeclarationBase(UiBridgeIdentityDeclaration):
     """
 
 
-class PlateManagerWidgetIdentity(UiWidgetIdentityDeclaration):
+class PlateManagerWidgetIdentity(UiStableWidgetIdentityDeclaration):
     value = "plate_manager"
     enum_member_name = "PLATE_MANAGER"
+    title = "Plate Manager"
 
 
-class PipelineEditorWidgetIdentity(UiWidgetIdentityDeclaration):
+class PipelineEditorWidgetIdentity(UiStableWidgetIdentityDeclaration):
     value = "pipeline_editor"
     enum_member_name = "PIPELINE_EDITOR"
+    title = "Pipeline Editor"
 
 
 class PipelineDebugToolbarWidgetIdentity(UiWidgetIdentityDeclaration):
@@ -77,9 +112,10 @@ class PipelineDebugToolbarWidgetIdentity(UiWidgetIdentityDeclaration):
     enum_member_name = "PIPELINE_DEBUG_TOOLBAR"
 
 
-class MainWindowWidgetIdentity(UiWidgetIdentityDeclaration):
+class MainWindowWidgetIdentity(UiStableWidgetIdentityDeclaration):
     value = "main_window"
     enum_member_name = "MAIN_WINDOW"
+    title = "OpenHCS"
 
 
 class ManagedWindowWidgetIdentity(UiWidgetIdentityDeclaration):
@@ -89,30 +125,37 @@ class ManagedWindowWidgetIdentity(UiWidgetIdentityDeclaration):
 
 class SystemMonitorWindowIdentity(UiStableWindowIdentityDeclaration):
     value = "system_monitor"
+    title = "System Monitor"
 
 
 class ZmqServerManagerWindowIdentity(UiStableWindowIdentityDeclaration):
     value = "zmq_server_manager"
+    title = "ZMQ Server Manager"
 
 
 class ImageBrowserWindowIdentity(UiStableWindowIdentityDeclaration):
     value = "image_browser"
+    title = "Image Browser"
 
 
 class LogViewerWindowIdentity(UiStableWindowIdentityDeclaration):
     value = "log_viewer"
+    title = "Log Viewer"
 
 
 class GlobalConfigWindowIdentity(UiStableWindowIdentityDeclaration):
     value = "global_config"
+    title = "Configure OpenHCS"
 
 
 class KnowledgeBaseWindowIdentity(UiStableWindowIdentityDeclaration):
     value = "knowledge_base"
+    title = "OpenHCS Knowledge Base"
 
 
 class AboutOpenHCSWindowIdentity(UiStableWindowIdentityDeclaration):
     value = "about_openhcs"
+    title = "About OpenHCS"
 
 
 class PlateManagerOrchestratorCodeDocumentIdentity(UiCodeDocumentIdentityDeclaration):

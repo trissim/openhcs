@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-08-27",
+  "captured_at": "2026-08-28",
   "capture_contract": {
     "surface": "real OpenHCS, Napari, and Fiji/ImageJ X11 windows",
     "visible_interaction_driver": "local MCP calls, native viewer controls, and reviewed UI actions",
@@ -9,7 +9,8 @@
       "PNG"
     ]
   },
-  "schema_version": "openhcs.release-media.v6",
+  "schema_version": "openhcs.release-media.v7",
+  "source_capture_evidence_path": "source-capture-evidence.json",
   "dataset_attribution": {
     "dataset_note": "CellProfiler ExampleCometAssay and ExampleWoundHealing are shown under BSD-3-Clause. Comet fluorescence images were contributed by Scott Floyd and Michael Pacold.",
     "attribution_url": "https://github.com/CellProfiler/examples/tree/4972b59e670a4ae96c3d453803c92eeff378d054",
@@ -54,7 +55,8 @@
         "kind": "ui_bridge_window",
         "human_review_required": false,
         "parameters": {
-          "window_id": "main_window"
+          "window_id": "main_window",
+          "create_if_missing": false
         }
       },
       "source": null,
@@ -78,7 +80,8 @@
         "kind": "ui_bridge_window",
         "human_review_required": false,
         "parameters": {
-          "window_id": "pipeline_editor"
+          "window_id": "pipeline_editor",
+          "create_if_missing": false
         }
       },
       "source": null,
@@ -102,7 +105,8 @@
         "kind": "ui_bridge_window",
         "human_review_required": false,
         "parameters": {
-          "window_id": "main_window"
+          "window_id": "main_window",
+          "create_if_missing": false
         }
       },
       "source": {
@@ -132,7 +136,8 @@
         "kind": "ui_bridge_window",
         "human_review_required": false,
         "parameters": {
-          "window_id": "image_browser"
+          "window_id": "image_browser",
+          "create_if_missing": false
         }
       },
       "source": {
@@ -162,7 +167,8 @@
         "kind": "ui_bridge_window",
         "human_review_required": false,
         "parameters": {
-          "window_id": "global_config"
+          "window_id": "global_config",
+          "create_if_missing": false
         }
       },
       "source": {
@@ -192,7 +198,8 @@
         "kind": "ui_bridge_window",
         "human_review_required": false,
         "parameters": {
-          "window_id": "log_viewer"
+          "window_id": "log_viewer",
+          "create_if_missing": false
         }
       },
       "source": {
@@ -304,7 +311,8 @@
         "kind": "ui_bridge_window",
         "human_review_required": false,
         "parameters": {
-          "window_id": "main_window"
+          "window_id": "main_window",
+          "create_if_missing": false
         }
       },
       "source": {
@@ -374,6 +382,316 @@
           "media_type": "video/mp4",
           "path": "napari-roi-navigation.mp4",
           "sha256": "30b8a83a2304b4dc053563d84d5e8b2ee34192bf95a3c161320ee4fd41f05686"
+        }
+      ]
+    },
+    {
+      "id": "ui-plate-manager",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The live Plate Manager surface is captured through its registered stable UI-bridge identity.",
+      "capture_target": {
+        "kind": "ui_bridge_window",
+        "human_review_required": false,
+        "parameters": {
+          "window_id": "plate_manager",
+          "create_if_missing": true
+        }
+      },
+      "source": {
+        "sha256": "34f1a478826ac2a597e64b3f3746a727900dbf5fbb7538f76f1542b6a8d2d21f",
+        "width": 541,
+        "height": 281,
+        "duration_seconds": null,
+        "format": "png"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "ui-plate-manager.webp",
+          "sha256": "09a340b7b6320827429ca67e22b35aa39ed9543424be07bae399de881201d5b3"
+        }
+      ]
+    },
+    {
+      "id": "ui-pipeline-editor",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The live Pipeline Editor surface is captured through its registered stable UI-bridge identity.",
+      "capture_target": {
+        "kind": "ui_bridge_window",
+        "human_review_required": false,
+        "parameters": {
+          "window_id": "pipeline_editor",
+          "create_if_missing": true
+        }
+      },
+      "source": {
+        "sha256": "5c60ac735eeab2336e310cc04d85c3710b851436ac7d7db2c003d80d0f4e47ef",
+        "width": 477,
+        "height": 498,
+        "duration_seconds": null,
+        "format": "png"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "ui-pipeline-editor.webp",
+          "sha256": "88b9ecfce130e15d6bc98765414f36a02fc2a0eef37953a1cdea7bcadf07b82f"
+        }
+      ]
+    },
+    {
+      "id": "ui-main-window",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The live OpenHCS surface is captured through its registered stable UI-bridge identity.",
+      "capture_target": {
+        "kind": "ui_bridge_window",
+        "human_review_required": false,
+        "parameters": {
+          "window_id": "main_window",
+          "create_if_missing": true
+        }
+      },
+      "source": {
+        "sha256": "65f1a62771c879efad0ac0df4795a263537a66fc52d1e5112f271f2d20a10f2a",
+        "width": 1024,
+        "height": 768,
+        "duration_seconds": null,
+        "format": "png"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "ui-main-window.webp",
+          "sha256": "b42b3b03c23e6e168fdb1c515739831cd98fe022a9e41de3949e2f0cebd787bc"
+        }
+      ]
+    },
+    {
+      "id": "ui-system-monitor",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The live System Monitor surface is captured through its registered stable UI-bridge identity.",
+      "capture_target": {
+        "kind": "ui_bridge_window",
+        "human_review_required": false,
+        "parameters": {
+          "window_id": "system_monitor",
+          "create_if_missing": true
+        }
+      },
+      "source": {
+        "sha256": "53f7929157ec89206b8837dd4e52ab0288652306ba9ed67590f6d782ec094ffa",
+        "width": 1024,
+        "height": 143,
+        "duration_seconds": null,
+        "format": "png"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "ui-system-monitor.webp",
+          "sha256": "7a910e3b565712d75050ec5846282e733ab218132d5eb09a41853f48777782f0"
+        }
+      ]
+    },
+    {
+      "id": "ui-zmq-server-manager",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The live ZMQ Server Manager surface is captured through its registered stable UI-bridge identity.",
+      "capture_target": {
+        "kind": "ui_bridge_window",
+        "human_review_required": false,
+        "parameters": {
+          "window_id": "zmq_server_manager",
+          "create_if_missing": true
+        }
+      },
+      "source": {
+        "sha256": "beee7363525ea2f60c31268e535d5831ffc2c88a35ec85827962d90cbac6e853",
+        "width": 541,
+        "height": 183,
+        "duration_seconds": null,
+        "format": "png"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "ui-zmq-server-manager.webp",
+          "sha256": "7a8e86bd8c11c914103cd685f87177b367cf8219ef0ee2ac375a66557c97b3ff"
+        }
+      ]
+    },
+    {
+      "id": "ui-image-browser",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The live Image Browser surface is captured through its registered stable UI-bridge identity.",
+      "capture_target": {
+        "kind": "ui_bridge_window",
+        "human_review_required": false,
+        "parameters": {
+          "window_id": "image_browser",
+          "create_if_missing": true
+        }
+      },
+      "source": {
+        "sha256": "5edf9b0baed163421be003053cb669731a79a45fa09abfd542621cbc816bd0aa",
+        "width": 900,
+        "height": 600,
+        "duration_seconds": null,
+        "format": "png"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "ui-image-browser.webp",
+          "sha256": "adecdbec3e1381eb71f8fff813f1a56824e4c57a9d5f2d3c6659606682d7bfd8"
+        }
+      ]
+    },
+    {
+      "id": "ui-log-viewer",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The live Log Viewer surface is captured through its registered stable UI-bridge identity.",
+      "capture_target": {
+        "kind": "ui_bridge_window",
+        "human_review_required": false,
+        "parameters": {
+          "window_id": "log_viewer",
+          "create_if_missing": true
+        }
+      },
+      "source": {
+        "sha256": "2e35a9ddfdfaf7abfe15e5d91f9eb881aeed40dd874c23f5091d4bb74a4f5334",
+        "width": 900,
+        "height": 700,
+        "duration_seconds": null,
+        "format": "png"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "ui-log-viewer.webp",
+          "sha256": "0ac13269eed5832e5aa4c9a9ca27da59044da18709da4a17f40687c14fccb9ba"
+        }
+      ]
+    },
+    {
+      "id": "ui-global-config",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The live Configure OpenHCS surface is captured through its registered stable UI-bridge identity.",
+      "capture_target": {
+        "kind": "ui_bridge_window",
+        "human_review_required": false,
+        "parameters": {
+          "window_id": "global_config",
+          "create_if_missing": true
+        }
+      },
+      "source": {
+        "sha256": "41a350116331ad9cff2409efc54d0cf8f77eb674ee42b4841607748064783016",
+        "width": 650,
+        "height": 650,
+        "duration_seconds": null,
+        "format": "png"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "ui-global-config.webp",
+          "sha256": "b4b69cd74899639c12c9f7014449501f9fafe91a2cd65533631583e2f5ec48e9"
+        }
+      ]
+    },
+    {
+      "id": "ui-knowledge-base",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The live OpenHCS Knowledge Base surface is captured through its registered stable UI-bridge identity.",
+      "capture_target": {
+        "kind": "ui_bridge_window",
+        "human_review_required": false,
+        "parameters": {
+          "window_id": "knowledge_base",
+          "create_if_missing": true
+        }
+      },
+      "source": {
+        "sha256": "a6ffbe93690a3f795aa4aa6ffec516fb5aaabbfd442b846e16d92c71402ad964",
+        "width": 980,
+        "height": 680,
+        "duration_seconds": null,
+        "format": "png"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "ui-knowledge-base.webp",
+          "sha256": "f436036fc3b3cf85481051ebd690a2167468d09d186efce811936949b734613c"
+        }
+      ]
+    },
+    {
+      "id": "ui-about-openhcs",
+      "publication_targets": [
+        "documentation"
+      ],
+      "proof": "The live About OpenHCS surface is captured through its registered stable UI-bridge identity.",
+      "capture_target": {
+        "kind": "ui_bridge_window",
+        "human_review_required": false,
+        "parameters": {
+          "window_id": "about_openhcs",
+          "create_if_missing": true
+        }
+      },
+      "source": {
+        "sha256": "da3c36c12ed3e6ebd3ddeda252260236bb71b99f490d29ce277888c829f5ff51",
+        "width": 440,
+        "height": 441,
+        "duration_seconds": null,
+        "format": "png"
+      },
+      "scientific_evidence": null,
+      "published": [
+        {
+          "role": "image",
+          "media_type": "image/webp",
+          "path": "ui-about-openhcs.webp",
+          "sha256": "00a701ee47c35da96788e1dfcf63ef161fa8d92ead27f47b5302e8997fe251f8"
         }
       ]
     }

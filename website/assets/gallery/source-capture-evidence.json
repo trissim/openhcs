@@ -1,0 +1,185 @@
+{
+  "captures": [
+    {
+      "scenario_id": "first-plate-workflow",
+      "source": {
+        "duration_seconds": null,
+        "format": "PNG",
+        "height": 768,
+        "sha256": "18a8d6588b371b1ef81e95dd0dd5d2b0e31847d9aaa4ee2dddd6cbeba75979e3",
+        "width": 1024
+      }
+    },
+    {
+      "scenario_id": "source-image-browser",
+      "source": {
+        "duration_seconds": null,
+        "format": "PNG",
+        "height": 600,
+        "sha256": "45d8f8ffea4da99453604ad8ab06de3e16c533451bf223275847a0f108110651",
+        "width": 900
+      }
+    },
+    {
+      "scenario_id": "global-configuration-editor",
+      "source": {
+        "duration_seconds": null,
+        "format": "PNG",
+        "height": 650,
+        "sha256": "41a350116331ad9cff2409efc54d0cf8f77eb674ee42b4841607748064783016",
+        "width": 650
+      }
+    },
+    {
+      "scenario_id": "execution-log-viewer",
+      "source": {
+        "duration_seconds": null,
+        "format": "PNG",
+        "height": 700,
+        "sha256": "57f265b07312c0c7d8530d0938f5bc3fefb1a91f7815fa36d013718b83693afb",
+        "width": 900
+      }
+    },
+    {
+      "scenario_id": "lazy-inheritance",
+      "source": {
+        "duration_seconds": 18.0,
+        "format": null,
+        "height": 1000,
+        "sha256": "4057415aed2d48a6a923a063a5fcc5114f89b1fa9886ff491f5e32bd3503d0c5",
+        "width": 1600
+      }
+    },
+    {
+      "scenario_id": "fiji-review",
+      "source": {
+        "duration_seconds": null,
+        "format": "PNG",
+        "height": 930,
+        "sha256": "1fc686a80f78189d0abc6efbc1b9d10865a17812f94b0a63274af1551a6a44bd",
+        "width": 1310
+      }
+    },
+    {
+      "scenario_id": "zmq-startup-compile",
+      "source": {
+        "duration_seconds": 50.0,
+        "format": null,
+        "height": 1000,
+        "sha256": "721ecde56c99716656e188c00b3b57fe5c48a7708700de5572b4098fbabb9147",
+        "width": 1600
+      }
+    },
+    {
+      "scenario_id": "napari-roi-navigation",
+      "source": {
+        "duration_seconds": 30.0,
+        "format": null,
+        "height": 1290,
+        "sha256": "b8d8154e89474de1b8ff51d1ec099e83fba725068f2a1d0612b9882596954249",
+        "width": 2304
+      }
+    },
+    {
+      "scenario_id": "ui-plate-manager",
+      "source": {
+        "duration_seconds": null,
+        "format": "png",
+        "height": 281,
+        "sha256": "34f1a478826ac2a597e64b3f3746a727900dbf5fbb7538f76f1542b6a8d2d21f",
+        "width": 541
+      }
+    },
+    {
+      "scenario_id": "ui-pipeline-editor",
+      "source": {
+        "duration_seconds": null,
+        "format": "png",
+        "height": 498,
+        "sha256": "5c60ac735eeab2336e310cc04d85c3710b851436ac7d7db2c003d80d0f4e47ef",
+        "width": 477
+      }
+    },
+    {
+      "scenario_id": "ui-main-window",
+      "source": {
+        "duration_seconds": null,
+        "format": "png",
+        "height": 768,
+        "sha256": "65f1a62771c879efad0ac0df4795a263537a66fc52d1e5112f271f2d20a10f2a",
+        "width": 1024
+      }
+    },
+    {
+      "scenario_id": "ui-system-monitor",
+      "source": {
+        "duration_seconds": null,
+        "format": "png",
+        "height": 143,
+        "sha256": "53f7929157ec89206b8837dd4e52ab0288652306ba9ed67590f6d782ec094ffa",
+        "width": 1024
+      }
+    },
+    {
+      "scenario_id": "ui-zmq-server-manager",
+      "source": {
+        "duration_seconds": null,
+        "format": "png",
+        "height": 183,
+        "sha256": "beee7363525ea2f60c31268e535d5831ffc2c88a35ec85827962d90cbac6e853",
+        "width": 541
+      }
+    },
+    {
+      "scenario_id": "ui-image-browser",
+      "source": {
+        "duration_seconds": null,
+        "format": "png",
+        "height": 600,
+        "sha256": "5edf9b0baed163421be003053cb669731a79a45fa09abfd542621cbc816bd0aa",
+        "width": 900
+      }
+    },
+    {
+      "scenario_id": "ui-log-viewer",
+      "source": {
+        "duration_seconds": null,
+        "format": "png",
+        "height": 700,
+        "sha256": "2e35a9ddfdfaf7abfe15e5d91f9eb881aeed40dd874c23f5091d4bb74a4f5334",
+        "width": 900
+      }
+    },
+    {
+      "scenario_id": "ui-global-config",
+      "source": {
+        "duration_seconds": null,
+        "format": "png",
+        "height": 650,
+        "sha256": "41a350116331ad9cff2409efc54d0cf8f77eb674ee42b4841607748064783016",
+        "width": 650
+      }
+    },
+    {
+      "scenario_id": "ui-knowledge-base",
+      "source": {
+        "duration_seconds": null,
+        "format": "png",
+        "height": 680,
+        "sha256": "a6ffbe93690a3f795aa4aa6ffec516fb5aaabbfd442b846e16d92c71402ad964",
+        "width": 980
+      }
+    },
+    {
+      "scenario_id": "ui-about-openhcs",
+      "source": {
+        "duration_seconds": null,
+        "format": "png",
+        "height": 441,
+        "sha256": "da3c36c12ed3e6ebd3ddeda252260236bb71b99f490d29ce277888c829f5ff51",
+        "width": 440
+      }
+    }
+  ],
+  "schema_version": 1
+}

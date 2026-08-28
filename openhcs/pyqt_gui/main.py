@@ -45,7 +45,11 @@ from openhcs.agent.services.endpoint_function_catalog_service import (
 )
 from openhcs.agent.ui_bridge_identities import (
     MainWindowWidgetIdentity,
+    PipelineEditorWidgetIdentity,
+    PlateManagerWidgetIdentity,
+    SystemMonitorWindowIdentity,
     UiLiveOverviewStateSurfaceIdentityDeclaration,
+    ZmqServerManagerWindowIdentity,
 )
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.progress.projection import ExecutionRuntimeProjection
@@ -421,7 +425,7 @@ class OpenHCSMainWindow(QMainWindow):
 
     def setup_ui(self):
         """Compose the native Qt docking workspace."""
-        self.setWindowTitle("OpenHCS")
+        self.setWindowTitle(MainWindowWidgetIdentity.require_title())
         self.setMinimumSize(1024, 768)
         self.resize(self.minimumSize())
 
@@ -441,8 +445,8 @@ class OpenHCSMainWindow(QMainWindow):
         self.system_monitor = self.widget_services.create_system_monitor_widget()
         system_monitor_pane = MainWindowDockPane.create(
             main_window=self,
-            window_id=OpenHCSUiWindowId.system_monitor,
-            title="System Monitor",
+            window_id=SystemMonitorWindowIdentity.require_value(),
+            title=SystemMonitorWindowIdentity.require_title(),
             widget=self.system_monitor,
             manager_header=self.system_monitor.manager_header,
             docked_content_height=self.system_monitor.embedded_content_height,
@@ -469,8 +473,8 @@ class OpenHCSMainWindow(QMainWindow):
         self.plate_manager_widget = self.widget_services.create_plate_manager_widget()
         plate_manager_pane = MainWindowDockPane.create(
             main_window=self,
-            window_id=OpenHCSUiWindowId.plate_manager,
-            title="Plate Manager",
+            window_id=PlateManagerWidgetIdentity.require_value(),
+            title=PlateManagerWidgetIdentity.require_title(),
             widget=self.plate_manager_widget,
             manager_header=self.plate_manager_widget.manager_header,
         )
@@ -488,8 +492,8 @@ class OpenHCSMainWindow(QMainWindow):
         self.zmq_manager_widget.log_file_opened.connect(self._open_log_file_in_viewer)
         zmq_manager_pane = MainWindowDockPane.create(
             main_window=self,
-            window_id=OpenHCSUiWindowId.zmq_server_manager,
-            title="ZMQ Server Manager",
+            window_id=ZmqServerManagerWindowIdentity.require_value(),
+            title=ZmqServerManagerWindowIdentity.require_title(),
             widget=self.zmq_manager_widget,
             manager_header=self.zmq_manager_widget.manager_header,
             preferred_floating_size=QSize(960, 640),
@@ -501,8 +505,8 @@ class OpenHCSMainWindow(QMainWindow):
         )
         pipeline_editor_pane = MainWindowDockPane.create(
             main_window=self,
-            window_id=OpenHCSUiWindowId.pipeline_editor,
-            title="Pipeline Editor",
+            window_id=PipelineEditorWidgetIdentity.require_value(),
+            title=PipelineEditorWidgetIdentity.require_title(),
             widget=self.pipeline_editor_widget,
             manager_header=self.pipeline_editor_widget.manager_header,
         )

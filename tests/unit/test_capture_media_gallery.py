@@ -17,6 +17,7 @@ from scripts.capture_media_gallery import (
     CaptureManifest,
     CaptureRecord,
     CaptureToolDoctorReport,
+    CaptureValidationResult,
     Crop,
     Derivative,
     DerivativeValidationResult,
@@ -33,6 +34,7 @@ from scripts.capture_media_gallery import (
     build_transcode_command,
     capture_scenario_still,
     capture_ui_bridge_window_source,
+    capture_ui_window_reference_stills,
     capture_window_still,
     doctor,
     load_manifest,
@@ -47,6 +49,8 @@ from scripts.gallery_catalog import (
     GallerySourceCaptureRequest,
     GallerySourceCaptureResult,
     UiBridgeWindowCaptureTarget,
+    read_gallery_source_evidence,
+    ui_window_reference_gallery_scenarios,
 )
 
 
@@ -228,7 +232,10 @@ def test_mcp_snapshot_capture_uses_declared_request_and_result_contracts(
     )
 
     result = capture_ui_bridge_window_source(
-        UiBridgeWindowCaptureTarget(window_id="main_window"),
+        UiBridgeWindowCaptureTarget(
+            window_id="main_window",
+            create_if_missing=True,
+        ),
         GallerySourceCaptureRequest(
             source_root=source_root,
             output=Path("raw/workspace.png"),
@@ -238,11 +245,96 @@ def test_mcp_snapshot_capture_uses_declared_request_and_result_contracts(
 
     arguments = json.loads(observed_argv[3])
     assert arguments["window_id"] == "main_window"
+    assert arguments["create_if_missing"] is True
     assert arguments["connection"]["descriptor_file_path"] == str(descriptor_path)
     assert result.path == "raw/workspace.png"
     assert result.sha256 == expected_sha256
     assert (result.width, result.height) == (942, 900)
     assert (source_root / result.path).read_bytes() == snapshot_bytes
+
+
+def test_ui_window_reference_batch_derives_every_capture_and_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_root = tmp_path / "sources"
+    output_root = tmp_path / "gallery"
+    output_root.mkdir()
+    scenarios = ui_window_reference_gallery_scenarios()[:2]
+    captured_requests: list[tuple[str, GallerySourceCaptureRequest]] = []
+
+    def capture_source(scenario, request: GallerySourceCaptureRequest):
+        captured_requests.append((scenario.scenario_id, request))
+        target = request.source_root / request.output
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(scenario.scenario_id.encode())
+        return GallerySourceCaptureResult(
+            path=str(request.output),
+            sha256=sha256(target.read_bytes()).hexdigest(),
+            width=800,
+            height=600,
+            format="png",
+        )
+
+    def build(manifest, actual_source_root, actual_output_root, *, force):
+        assert actual_source_root == source_root
+        assert actual_output_root == output_root
+        assert force is True
+        return tuple(
+            CaptureValidationResult(
+                scenario_id=record.scenario_id,
+                source=GallerySourceCaptureResult(
+                    path=str(record.source),
+                    sha256=sha256(
+                        (source_root / record.source).read_bytes()
+                    ).hexdigest(),
+                    width=800,
+                    height=600,
+                    format="png",
+                ),
+                outputs=(),
+            )
+            for record in manifest.captures
+        )
+
+    synchronized: list[tuple[Path, bool]] = []
+    monkeypatch.setattr(
+        "scripts.capture_media_gallery.gallery_scenarios",
+        lambda: scenarios,
+    )
+    monkeypatch.setattr(
+        "scripts.gallery_catalog.UiWindowReferenceGalleryScenario.capture_source",
+        capture_source,
+    )
+    monkeypatch.setattr("scripts.capture_media_gallery.build_manifest", build)
+    monkeypatch.setattr(
+        "scripts.capture_media_gallery.synchronize_gallery_release_record_for_asset_root",
+        lambda path, *, check: synchronized.append((path, check)),
+    )
+
+    result = capture_ui_window_reference_stills(
+        source_root,
+        output_root,
+        descriptor_file_path=tmp_path / "bridge.json",
+        timeout_ms=12_000,
+        force=True,
+    )
+
+    assert tuple(scenario_id for scenario_id, _request in captured_requests) == tuple(
+        scenario.scenario_id for scenario in scenarios
+    )
+    assert tuple(
+        request.output for _scenario_id, request in captured_requests
+    ) == tuple(Path("raw") / f"{scenario.scenario_id}.png" for scenario in scenarios)
+    assert all(request.timeout_ms == 12_000 for _, request in captured_requests)
+    assert synchronized == [(output_root, False)]
+    evidence = read_gallery_source_evidence(output_root)
+    assert tuple(capture.scenario_id for capture in result.captures) == tuple(
+        scenario.scenario_id for scenario in scenarios
+    )
+    assert Path(result.manifest_path).is_file()
+    assert Path(result.evidence_path).is_file()
+    assert len(evidence.captures) == len(scenarios)
 
 
 def test_load_manifest_builds_typed_authority_and_rejects_unknown_fields(

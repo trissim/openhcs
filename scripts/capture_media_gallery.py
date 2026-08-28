@@ -29,13 +29,18 @@ from python_introspect import dataclass_from_mapping
 
 from openhcs.serialization.json import to_jsonable
 from scripts.gallery_catalog import (
+    SOURCE_CAPTURE_EVIDENCE_RECORD_NAME,
     GalleryCatalogError,
     GalleryScenarioCatalogRecord,
     GallerySourceCaptureRequest,
     GallerySourceCaptureResult,
+    GallerySourceEvidenceEntry,
     OpenHCSGalleryScenarioCatalog,
     UiBridgeWindowCaptureTarget,
+    UiWindowReferenceGalleryScenario,
     gallery_scenarios,
+    read_gallery_source_evidence,
+    synchronize_gallery_release_record_for_asset_root,
 )
 
 CAPTURE_MANIFEST_SCHEMA_VERSION = 2
@@ -718,6 +723,40 @@ class CaptureValidationResult:
     outputs: tuple[DerivativeValidationResult, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class UiWindowReferenceCaptureResult:
+    """Reproducible manifest and evidence from one derived window batch."""
+
+    manifest_path: str
+    evidence_path: str
+    captures: tuple[CaptureValidationResult, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class UiWindowReferenceDerivativePolicy:
+    """Shared publication bounds for declaration-derived UI reference stills."""
+
+    max_width: int = 1600
+    max_height: int = 1200
+    max_bytes: int = 1_200_000
+
+    def derivative_for(
+        self,
+        scenario: UiWindowReferenceGalleryScenario,
+    ) -> Derivative:
+        """Project one scenario's declared image path into bounded output policy."""
+
+        return Derivative(
+            filename=scenario.representative_image_path(),
+            max_width=self.max_width,
+            max_height=self.max_height,
+            max_bytes=self.max_bytes,
+        )
+
+
+UI_WINDOW_REFERENCE_DERIVATIVE_POLICY = UiWindowReferenceDerivativePolicy()
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class WindowRecordingCaptureResult(GallerySourceCaptureResult):
     """Lossless window-recording evidence including pointer visibility."""
@@ -750,7 +789,7 @@ def capture_ui_bridge_window_source(
     snapshot_request = UiWindowSnapshotRequest.from_fields(
         window_id=target.window_id,
         output_dir_path=str(target_path.parent),
-        create_if_missing=False,
+        create_if_missing=target.create_if_missing,
     )
     connection = UiConnectionArguments(
         host=None,
@@ -1625,6 +1664,93 @@ def capture_scenario_still(
         raise MediaGalleryError(str(error)) from error
 
 
+def _write_json_file(path: Path, value: object) -> None:
+    """Write one generated JSON projection atomically."""
+
+    target = path.resolve()
+    temporary = _temporary_target(target)
+    try:
+        temporary.write_text(
+            json.dumps(to_jsonable(value), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def capture_ui_window_reference_stills(
+    source_root: Path,
+    output_root: Path,
+    *,
+    descriptor_file_path: Path | None = None,
+    timeout_ms: int | None = None,
+    force: bool = False,
+) -> UiWindowReferenceCaptureResult:
+    """Capture and publish every registry-derived stable UI-window reference."""
+
+    scenarios = tuple(
+        scenario
+        for scenario in gallery_scenarios()
+        if isinstance(scenario, UiWindowReferenceGalleryScenario)
+    )
+    if not scenarios:
+        raise MediaGalleryError("No stable UI-window reference scenarios are declared.")
+
+    records = []
+    for scenario in scenarios:
+        source = Path("raw") / f"{scenario.scenario_id}.png"
+        scenario.capture_source(
+            GallerySourceCaptureRequest(
+                source_root=source_root,
+                output=source,
+                descriptor_file_path=descriptor_file_path,
+                timeout_ms=timeout_ms,
+            )
+        )
+        records.append(
+            CaptureRecord(
+                source=source,
+                scenario_id=scenario.scenario_id,
+                outputs=(
+                    UI_WINDOW_REFERENCE_DERIVATIVE_POLICY.derivative_for(scenario),
+                ),
+            )
+        )
+
+    manifest = CaptureManifest(captures=tuple(records))
+    manifest_path = source_root / "ui-window-reference-manifest.json"
+    _write_json_file(manifest_path, manifest)
+    captures = build_manifest(
+        manifest,
+        source_root,
+        output_root,
+        force=force,
+    )
+    source_evidence = read_gallery_source_evidence(output_root).merge(
+        tuple(
+            GallerySourceEvidenceEntry(
+                scenario_id=capture.scenario_id,
+                source=capture.source.as_evidence(),
+            )
+            for capture in captures
+        )
+    )
+    _write_json_file(
+        output_root / SOURCE_CAPTURE_EVIDENCE_RECORD_NAME,
+        source_evidence,
+    )
+    synchronize_gallery_release_record_for_asset_root(output_root, check=False)
+    evidence_path = source_root / "ui-window-reference-evidence.json"
+    result = UiWindowReferenceCaptureResult(
+        manifest_path=str(manifest_path.resolve()),
+        evidence_path=str(evidence_path.resolve()),
+        captures=captures,
+    )
+    _write_json_file(evidence_path, result)
+    return result
+
+
 def doctor() -> CaptureToolDoctorReport:
     """Report availability and versions from the typed host-tool authority."""
 
@@ -1705,6 +1831,18 @@ def _capture_scenario_still_operation(
     )
 
 
+def _capture_ui_window_references_operation(
+    arguments: argparse.Namespace,
+) -> UiWindowReferenceCaptureResult:
+    return capture_ui_window_reference_stills(
+        arguments.source_root,
+        arguments.output_root,
+        descriptor_file_path=arguments.descriptor_file_path,
+        timeout_ms=arguments.timeout_ms,
+        force=arguments.force,
+    )
+
+
 def _record_window_operation(
     arguments: argparse.Namespace,
 ) -> WindowRecordingCaptureResult:
@@ -1782,6 +1920,24 @@ def build_parser() -> argparse.ArgumentParser:
     scenario_still_parser.add_argument("--descriptor-file-path", type=Path)
     scenario_still_parser.add_argument("--timeout-ms", type=int)
     scenario_still_parser.set_defaults(operation=_capture_scenario_still_operation)
+
+    ui_reference_parser = subparsers.add_parser(
+        "capture-ui-window-references",
+        help=(
+            "Capture and publish every stable UI-window reference derived from "
+            "registered identities."
+        ),
+    )
+    ui_reference_parser.add_argument("--source-root", type=Path, required=True)
+    ui_reference_parser.add_argument("--output-root", type=Path, required=True)
+    ui_reference_parser.add_argument("--descriptor-file-path", type=Path)
+    ui_reference_parser.add_argument("--timeout-ms", type=int)
+    ui_reference_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Atomically replace existing derivatives, never source captures.",
+    )
+    ui_reference_parser.set_defaults(operation=_capture_ui_window_references_operation)
 
     record_parser = subparsers.add_parser(
         "record-window",

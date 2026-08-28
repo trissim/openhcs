@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from openhcs import __version__ as OPENHCS_VERSION
+from openhcs.agent.ui_bridge_identities import UiStableWindowIdentityDeclaration
 from openhcs.resources.brand import (
     BRAND_PRODUCT_NAME,
     BrandAsset,
@@ -30,13 +31,14 @@ from scripts.build_website import (
 )
 from scripts.gallery_catalog import (
     RELEASE_MEDIA_SCHEMA_VERSION,
-    GalleryScenarioABC,
     GalleryScenarioCatalog,
+    GalleryScenarioDeclarationABC,
     OpenHCSGalleryScenarioCatalog,
     documentation_gallery_scenarios,
     gallery_asset_root,
     gallery_release_record_text,
     gallery_scenarios,
+    ui_window_reference_gallery_scenarios,
     website_gallery_scenarios,
 )
 from scripts.website_gallery_projection import (
@@ -57,10 +59,10 @@ def test_gallery_sequence_is_composed_from_declaration_mro() -> None:
     workspace, pipeline, *_ = OpenHCSGalleryScenarioCatalog.scenarios()
 
     class WorkspaceGallery(GalleryScenarioCatalog):
-        scenario = workspace
+        declaration = workspace
 
     class PipelineGallery(GalleryScenarioCatalog):
-        scenario = pipeline
+        declaration = pipeline
 
     class ExtendedGallery(WorkspaceGallery, PipelineGallery):
         pass
@@ -86,10 +88,27 @@ def test_gallery_sequence_is_composed_from_declaration_mro() -> None:
         tuple(
             name
             for name, value in owner_type.__dict__.items()
-            if isinstance(value, GalleryScenarioABC)
+            if isinstance(value, GalleryScenarioDeclarationABC)
         )
-        in {(), ("scenario",)}
+        in {(), ("declaration",)}
         for owner_type in OpenHCSGalleryScenarioCatalog.__mro__
+    )
+
+
+def test_stable_ui_window_reference_scenarios_derive_from_identity_registry() -> None:
+    identities = UiStableWindowIdentityDeclaration.declaration_types()
+    scenarios = ui_window_reference_gallery_scenarios()
+
+    assert tuple(scenario.capture_target.window_id for scenario in scenarios) == tuple(
+        identity.require_value() for identity in identities
+    )
+    assert tuple(scenario.heading for scenario in scenarios) == tuple(
+        identity.require_title() for identity in identities
+    )
+    assert all(scenario.capture_target.create_if_missing for scenario in scenarios)
+    assert all(
+        scenario.scenario_id == f"ui-{identity.require_value().replace('_', '-')}"
+        for scenario, identity in zip(scenarios, identities, strict=True)
     )
 
 
@@ -120,6 +139,9 @@ def test_gallery_scenarios_own_their_static_projection() -> None:
         assert representative_path in scenario.published_paths()
         assert representative_path.endswith(".webp")
         assert (asset_root / representative_path).is_file()
+        dimensions = scenario.representative_image_dimensions(asset_root)
+        assert dimensions.width > 0
+        assert dimensions.height > 0
         assert scenario.alt_text
         assert scenario.heading
 
@@ -662,9 +684,8 @@ def test_release_gallery_media_record_matches_published_assets():
             artifact_path = asset_root / published["path"]
             assert artifact_path.is_file()
             with artifact_path.open("rb") as artifact:
-                assert (
-                    hashlib.file_digest(artifact, "sha256").hexdigest()
-                    == (published["sha256"])
+                assert hashlib.file_digest(artifact, "sha256").hexdigest() == (
+                    published["sha256"]
                 )
     fiji_capture = next(
         capture for capture in record["captures"] if capture["id"] == "fiji-review"
@@ -699,16 +720,14 @@ def test_neurite_showcase_edit_record_matches_source_and_published_assets():
     ]
     source_path = asset_root / record["source"]["path"]
     with source_path.open("rb") as source:
-        assert (
-            hashlib.file_digest(source, "sha256").hexdigest()
-            == (record["source"]["sha256"])
+        assert hashlib.file_digest(source, "sha256").hexdigest() == (
+            record["source"]["sha256"]
         )
     for published in record["published"]:
         artifact_path = asset_root / published["path"]
         with artifact_path.open("rb") as artifact:
-            assert (
-                hashlib.file_digest(artifact, "sha256").hexdigest()
-                == (published["sha256"])
+            assert hashlib.file_digest(artifact, "sha256").hexdigest() == (
+                published["sha256"]
             )
 
 

@@ -9,6 +9,7 @@ guides and background belongs in the concepts section.
    :maxdepth: 2
 
    configuration
+   ui_windows
    dimensionality_and_measurements
    experimental_config_syntax
    ../guides/complete_examples
@@ -19,6 +20,8 @@ Reference pages
 
 - :doc:`configuration` — generated global, pipeline, step, and desktop UI
   configuration fields.
+- :doc:`ui_windows` — registered stable desktop windows and their current
+  visual surfaces.
 - :doc:`dimensionality_and_measurements` — exact plane-local and volumetric
   segmentation and measurement boundary.
 - :doc:`experimental_config_syntax` — Excel experimental-design syntax.

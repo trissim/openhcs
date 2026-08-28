@@ -32,6 +32,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiLiveOverviewSection,
     UiLiveOverviewSeverity,
 )
+from openhcs.agent.ui_bridge_identities import ZmqServerManagerWindowIdentity
 from openhcs.core.progress import ProgressEvent, registry
 from openhcs.pyqt_gui.config import ProgressUIConfig
 from openhcs.pyqt_gui.services.ui_bridge_contracts import UiLiveOverviewWidget
@@ -171,7 +172,7 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         return (
             UiLiveOverviewSection(
                 section_id=OpenHCSUiWindowId.zmq_server_manager,
-                title="ZMQ Server Manager",
+                title=ZmqServerManagerWindowIdentity.require_title(),
                 summary=f"{len(rows)} servers",
                 metrics=(
                     UiLiveOverviewMetric(

@@ -536,7 +536,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
     recompile after changing a pipeline before running it again.
     """
 
-    TITLE = "Plate Manager"
+    TITLE = PlateManagerWidgetIdentity.require_title()
     UI_STATE_SURFACE_DECLARATIONS = (
         UiOwnedStateSurfaceDeclaration(
             identity=PlateManagerStateSurfaceIdentityDeclaration,

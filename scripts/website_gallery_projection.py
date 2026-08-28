@@ -53,6 +53,7 @@ class WebsiteGalleryProjection:
     cards: tuple[ProjectedGalleryCard, ...]
     captures: tuple[ProjectedGalleryCapture, ...]
     provenance_html: str
+    source_capture_evidence_path: str
 
     @property
     def published_paths(self) -> tuple[str, ...]:
@@ -87,6 +88,10 @@ def read_website_gallery_projection(record_path: Path) -> WebsiteGalleryProjecti
     captures_payload = record.get("captures")
     website_cards_payload = record.get("website_cards")
     provenance_html = record.get("website_provenance_html")
+    source_capture_evidence_path = _required_string(
+        record,
+        "source_capture_evidence_path",
+    )
     if not isinstance(captures_payload, list) or not captures_payload:
         raise WebsiteGalleryProjectionError(
             "Gallery projection must contain at least one capture."
@@ -115,6 +120,7 @@ def read_website_gallery_projection(record_path: Path) -> WebsiteGalleryProjecti
         cards=cards,
         captures=captures,
         provenance_html=provenance_html,
+        source_capture_evidence_path=source_capture_evidence_path,
     )
     _validate_projected_assets(record_path, projection)
     return projection
@@ -219,7 +225,13 @@ def _validate_projected_assets(
     projection: WebsiteGalleryProjection,
 ) -> None:
     asset_root = record_path.parent
-    expected = frozenset((*projection.published_paths, record_path.name))
+    expected = frozenset(
+        (
+            *projection.published_paths,
+            record_path.name,
+            projection.source_capture_evidence_path,
+        )
+    )
     try:
         actual = frozenset(path.name for path in asset_root.iterdir() if path.is_file())
     except OSError as error:
