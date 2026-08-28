@@ -10,6 +10,10 @@ build:
   tools:
     python: "3.12"
     # You can also specify other tools here like nodejs, rust, golang, etc.
+  jobs:
+    post_checkout:
+      - git submodule sync --recursive
+      - git submodule update --init --recursive
 
 # Build documentation in the "docs/" directory with Sphinx
 sphinx:
