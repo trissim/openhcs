@@ -55,6 +55,8 @@ declared surface when configuring the client:
 Changing the surface requires restarting the MCP client so it requests the new
 tool schemas.
 
+.. openhcs-gallery:: zmq-startup-compile
+
 What the agent learns on connection
 -----------------------------------
 

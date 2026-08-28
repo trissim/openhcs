@@ -44,6 +44,8 @@ an explicit ``max_rois`` bound for metadata examples. That bound applies across
 the complete response and the summary omits geometry; request raw viewer
 payloads only when coordinates are needed.
 
+.. openhcs-gallery:: napari-roi-navigation
+
 To display only one step, leave viewer streaming disabled at global and
 pipeline scope and enable ``napari_streaming_config`` or
 ``fiji_streaming_config`` only on that ``FunctionStep``. Use its ``well_filter``
@@ -55,6 +57,8 @@ ordinary main-flow result, and from typed artifact materialization, which owns
 named images, labels, measurements, relationships, tables, grids, and external
 resources. The compiled artifact plan is the authority for runtime-only versus
 persistent outputs.
+
+.. openhcs-gallery:: fiji-review
 
 The compiler determines component order and attaches typed metadata to each
 viewer batch. If a viewer does not start, check the execution log for dependency,

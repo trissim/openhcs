@@ -22,6 +22,8 @@ from openhcs.serialization.json import JsonValue, to_jsonable
 
 RELEASE_MEDIA_SCHEMA_VERSION = "openhcs.release-media.v5"
 RELEASE_MEDIA_RECORD_NAME = "release-media-record.json"
+GALLERY_REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+GALLERY_ASSET_RELATIVE_ROOT = Path("website/assets/gallery")
 SCENARIO_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
@@ -270,6 +272,10 @@ class GalleryScenarioABC(ABC):
         """Render this scenario's media element without caller-side dispatch."""
 
     @abstractmethod
+    def representative_image_path(self) -> str:
+        """Return this scenario's still or poster image for static projections."""
+
+    @abstractmethod
     def capture_source(
         self,
         request: GallerySourceCaptureRequest,
@@ -379,8 +385,13 @@ class StillGalleryScenarioABC(GalleryScenarioABC, ABC):
             ),
         )
 
+    def representative_image_path(self) -> str:
+        """Return the declared full-resolution still image."""
+
+        return self.derivative_path(GalleryDerivativeRole.IMAGE)
+
     def render_media(self) -> str:
-        asset_filename = self.published_paths()[0]
+        asset_filename = self.representative_image_path()
         return "\n".join(
             (
                 "            <a",
@@ -467,10 +478,13 @@ class MotionGalleryScenario(GalleryScenarioABC):
     def caption_id_attribute(self) -> str:
         return f' id="{escape(self.scenario_id, quote=True)}-caption"'
 
+    def representative_image_path(self) -> str:
+        """Return the declared poster for static projections."""
+
+        return self.derivative_path(GalleryDerivativeRole.POSTER)
+
     def render_media(self) -> str:
-        poster_path = escape(
-            self.derivative_path(GalleryDerivativeRole.POSTER), quote=True
-        )
+        poster_path = escape(self.representative_image_path(), quote=True)
         web_video_path = escape(
             self.derivative_path(GalleryDerivativeRole.WEB_VIDEO), quote=True
         )
@@ -589,8 +603,7 @@ class PipelineEditorGalleryScenarioCatalog(GalleryScenarioCatalog):
             "viewers, and results."
         ),
         proof=(
-            "The imported CellProfiler Comet Assay is visible as twelve pipeline "
-            "steps."
+            "The imported CellProfiler Comet Assay is visible as twelve pipeline steps."
         ),
         layout_class="gallery-card-compact",
         width=942,
@@ -905,11 +918,16 @@ def gallery_published_paths() -> tuple[str, ...]:
     )
 
 
+def gallery_asset_root(repo_root: Path = GALLERY_REPOSITORY_ROOT) -> Path:
+    """Return the declaration-owned public gallery asset directory."""
+
+    return repo_root / GALLERY_ASSET_RELATIVE_ROOT
+
+
 def gallery_release_record(repo_root: Path) -> GalleryReleaseRecord:
     """Project the checked-in release record from declarations and assets."""
 
-    asset_root = repo_root / "website" / "assets" / "gallery"
-    return GALLERY_RELEASE.project_record(asset_root)
+    return GALLERY_RELEASE.project_record(gallery_asset_root(repo_root))
 
 
 def gallery_release_record_text(repo_root: Path) -> str:
@@ -921,7 +939,7 @@ def gallery_release_record_text(repo_root: Path) -> str:
 def validate_gallery_assets(repo_root: Path) -> None:
     """Require the asset directory to equal the declaration-derived inventory."""
 
-    asset_root = repo_root / "website" / "assets" / "gallery"
+    asset_root = gallery_asset_root(repo_root)
     expected = frozenset((*gallery_published_paths(), RELEASE_MEDIA_RECORD_NAME))
     actual = frozenset(path.name for path in asset_root.iterdir() if path.is_file())
     if actual != expected:
@@ -937,9 +955,7 @@ def synchronize_gallery_release_record(repo_root: Path, *, check: bool) -> None:
     """Write or verify the checked-in generated release-media record."""
 
     validate_gallery_assets(repo_root)
-    record_path = (
-        repo_root / "website" / "assets" / "gallery" / RELEASE_MEDIA_RECORD_NAME
-    )
+    record_path = gallery_asset_root(repo_root) / RELEASE_MEDIA_RECORD_NAME
     expected = gallery_release_record_text(repo_root)
     if check:
         actual = record_path.read_text(encoding="utf-8")

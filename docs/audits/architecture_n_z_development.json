@@ -2331,7 +2331,7 @@
   },
   {
     "path": "docs/source/development/documentation_authoring.rst",
-    "source_sha256": "d129323e461563e1ea694a34d2f1fe611087b7903edcc879bf5ba7cc597530b3",
+    "source_sha256": "bd33c749a8036fc5955a657103f85b3f995f1518c0cffef84b412f21e0cc8f74",
     "audience": [
       "OpenHCS documentation and declaration authors"
     ],
@@ -2357,6 +2357,21 @@
         "path": "docs/audits/README.md",
         "sha256": "aeb08ec4e4a0e8cc7dd6e0be9d0de9c1dc159793f5643e91aa6c543cac145c4b",
         "role": "Audit-ledger schema and evidence rules only; it is not used as product-fact authority."
+      },
+      {
+        "path": "scripts/gallery_catalog.py",
+        "sha256": "22614708146ee65339f146bfe2cb96f728cae743eb26b91abce5527ac9cc78d2",
+        "role": "Owns nominal gallery scenario identity, representative images, copy, accessibility text, dimensions, capture targets, and derivative contracts."
+      },
+      {
+        "path": "docs/source/_ext/openhcs_gallery.py",
+        "sha256": "45ece16ff201dce56579cbf4c74d30db6784ac02c23a889e51a9dfad6a0b92c6",
+        "role": "Projects one scenario ID into a standard Sphinx figure without repeating scenario metadata in documentation source."
+      },
+      {
+        "path": "tests/unit/test_build_website.py",
+        "sha256": "3d2583b4392e0d7789c08448f1ee568426144fc4a946c44ff091fc24c4e52ee4",
+        "role": "Proves every scenario owns a valid representative static projection and that Sphinx branding resolves from package authority."
       }
     ],
     "findings": [
@@ -2368,7 +2383,8 @@
       "scripts/validate_docs.py validated the final RST source and its concrete repository paths",
       "Config-help and knowledge-service tests provide the listed projection gates; the audit validator enforces exact active-source coverage and SHA-256 freshness.",
       "On 2026-08-24, re-read the complete guide after deriving the package-index README from project.readme and requiring it in the audit; 10 focused audit regressions passed.",
-      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate."
+      "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
+      "On 2026-08-27, applied the Diataxis visual-documentation boundary and re-read the complete authoring guide after adding the declaration-derived gallery directive workflow; focused tests, a warning-clean Sphinx build, and desktop plus narrow visual inspection validated the projection."
     ]
   },
   {
@@ -2536,7 +2552,7 @@
   },
   {
     "path": "docs/source/development/media_gallery_capture.rst",
-    "source_sha256": "e3c70f1625c5ea1cfc8f200e2e81ffb28ae87ec19208a6e6bbc90507f9dd07a8",
+    "source_sha256": "efd7a44df7d1ffc9f73231df3641b6b0d1c1a72a2fe5483d7537609a55d1fa1e",
     "audience": [
       "OpenHCS release-media maintainers"
     ],
@@ -2550,7 +2566,7 @@
       },
       {
         "path": "scripts/gallery_catalog.py",
-        "sha256": "e4acad6eed321cdf78235c45ecd87e07c8daf6e4b9a3eb91616605219099cef1",
+        "sha256": "22614708146ee65339f146bfe2cb96f728cae743eb26b91abce5527ac9cc78d2",
         "role": "Owns the nominal gallery scenario lattice, capture targets, derivative inventory, source evidence, card rendering, and generated release record."
       },
       {
@@ -2562,6 +2578,11 @@
         "path": "tests/unit/test_capture_media_gallery.py",
         "sha256": "508ded14049dc2060cded87dcfc2d74889e6a5152fa0a9b00cb651c02e58c834",
         "role": "Proves manifest bounds, path containment, no-overwrite rules, trusted snapshot ingestion, X11 capture commands, deterministic FFmpeg projection, atomic builds, and independent derivative validation."
+      },
+      {
+        "path": "docs/source/_ext/openhcs_gallery.py",
+        "sha256": "45ece16ff201dce56579cbf4c74d30db6784ac02c23a889e51a9dfad6a0b92c6",
+        "role": "Consumes the same scenario declarations to produce RTD workflow figures without creating a documentation-only media registry."
       }
     ],
     "findings": [
@@ -2576,7 +2597,8 @@
       "Passed scripts/validate_docs.py docs/source and a warning-as-error Sphinx build after adding the page to the focused development-guide navigation.",
       "On 2026-08-26, re-read the complete how-to after trusted UI snapshot capture switched from a deleted duplicate command-profile name to the canonical declaration-derived UI bridge timeout policy; the documented timeout, capture, validation, and no-overwrite behavior remains unchanged, and all 23 gallery capture tests passed.",
       "On 2026-08-27, re-read the complete how-to and gallery declaration after the endpoint-startup source evidence and published derivatives were recaptured; the workflow, ownership, and reproducibility guidance remains accurate, and the declaration-derived record passed its focused gallery and website validation.",
-      "On 2026-08-27, re-read the complete how-to after capture plans, source evidence, derivative validation, per-scenario reports, host-tool diagnostics, and scenario discovery became nominal records projected through the shared JSON serializer; MediaCategory source, output, transcode-duration, and duration-evidence semantics moved onto its ABC-backed enum leaves, X11 geometry parsing became dataclass-derived, and the release record now reports mixed pointer visibility instead of claiming every clip is pointer-free. The how-to remains an action-oriented maintainer guide and its capture, report, pointer-policy, and validation claims match the current owners."
+      "On 2026-08-27, re-read the complete how-to after capture plans, source evidence, derivative validation, per-scenario reports, host-tool diagnostics, and scenario discovery became nominal records projected through the shared JSON serializer; MediaCategory source, output, transcode-duration, and duration-evidence semantics moved onto its ABC-backed enum leaves, X11 geometry parsing became dataclass-derived, and the release record now reports mixed pointer visibility instead of claiming every clip is pointer-free. The how-to remains an action-oriented maintainer guide and its capture, report, pointer-policy, and validation claims match the current owners.",
+      "On 2026-08-27, re-read the complete capture how-to after RTD became a second declaration-derived gallery projection; the workflow now explains the shared representative image and accessibility ownership without duplicating scenario facts."
     ]
   },
   {

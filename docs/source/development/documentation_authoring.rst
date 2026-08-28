@@ -58,6 +58,34 @@ Explanation
 A page can link across modes, but it should not switch modes halfway through.
 Do not manufacture an empty page merely to fill a category.
 
+Add a workflow visual
+---------------------
+
+Use a screenshot only when it helps the reader recognise a state, control, or
+result needed to complete the page's task. Prefer a focused figure in a tutorial
+or how-to guide over a decorative screenshot or an image-heavy reference page.
+
+Public UI media belongs to a nominal gallery scenario. The scenario declaration
+owns its stable ID, representative still or video poster, caption, description,
+alt text, dimensions, capture target, derivative contract, and release evidence.
+An RTD page names only that ID:
+
+.. code-block:: rst
+
+   .. openhcs-gallery:: napari-roi-navigation
+
+The Sphinx projection resolves every other figure property from the scenario.
+Do not add a second image path, caption, alt text, media-type branch, or
+documentation-only screenshot registry. If the available scenario does not
+truthfully depict the page's workflow, capture and declare a new scenario rather
+than placing a misleading image.
+
+Follow :doc:`media_gallery_capture` to capture and verify the real application
+surface. Build the documentation with warnings treated as errors, then inspect
+the rendered figure at desktop and narrow widths. Confirm that the image remains
+legible, the caption matches what is visible, and the alt text conveys the
+task-relevant information without relying on the image.
+
 Update a configuration description
 ----------------------------------
 

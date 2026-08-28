@@ -54,6 +54,8 @@ value waiting for a separate Save button. A step or configuration editor that
 provides an explicit save action retains that smaller editor's normal dirty-state
 workflow.
 
+.. openhcs-gallery:: lazy-inheritance
+
 Clean and resolved views
 ------------------------
 

@@ -20,10 +20,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parent / "_ext"))
 
 from openhcs import __version__ as release
+from openhcs.resources.brand import (
+    BRAND_PRODUCT_NAME,
+    BrandAsset,
+    brand_asset_path,
+)
 
 # -- Project information -----------------------------------------------------
 
-project = "OpenHCS"
+project = BRAND_PRODUCT_NAME
 copyright = "2025, trissim"
 author = "trissim"
 
@@ -46,6 +51,7 @@ extensions = [
     "sphinx_toolbox.collapse",
     "sphinx_design",
     "openhcs_config_reference",
+    "openhcs_gallery",
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -132,12 +138,14 @@ autodoc_default_options = {
 
 # The theme to use for HTML and HTML Help pages.
 html_theme = "sphinx_rtd_theme"
+html_logo = str(brand_asset_path(BrandAsset.LOCKUP_HORIZONTAL))
+html_favicon = str(brand_asset_path(BrandAsset.FAVICON))
 
 # Theme options
 html_theme_options = {
     "navigation_depth": 4,
     "titles_only": False,
-    "logo_only": False,
+    "logo_only": True,
 }
 
 # Custom sidebar templates, must be a dictionary that maps document names

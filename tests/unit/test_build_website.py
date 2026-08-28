@@ -11,6 +11,11 @@ from pathlib import Path
 import pytest
 
 from openhcs import __version__ as OPENHCS_VERSION
+from openhcs.resources.brand import (
+    BRAND_PRODUCT_NAME,
+    BrandAsset,
+    brand_asset_path,
+)
 from scripts.build_website import (
     ASSET_SOURCES,
     CONTACT_EMAIL_TOKEN,
@@ -28,6 +33,7 @@ from scripts.gallery_catalog import (
     GalleryScenarioABC,
     GalleryScenarioCatalog,
     OpenHCSGalleryScenarioCatalog,
+    gallery_asset_root,
     gallery_release_record_text,
     gallery_scenarios,
 )
@@ -88,6 +94,20 @@ def test_gallery_viewer_identity_is_nominal_not_string_discriminated() -> None:
         or "viewer_type" not in target.parameters
         for target in targets_by_scenario.values()
     )
+
+
+def test_gallery_scenarios_own_their_static_projection() -> None:
+    asset_root = gallery_asset_root(REPO_ROOT)
+    assert gallery_asset_root() == asset_root
+
+    for scenario in gallery_scenarios():
+        representative_path = scenario.representative_image_path()
+
+        assert representative_path in scenario.published_paths()
+        assert representative_path.endswith(".webp")
+        assert (asset_root / representative_path).is_file()
+        assert scenario.alt_text
+        assert scenario.heading
 
 
 class _GalleryMarkupCollector(HTMLParser):
@@ -372,6 +392,13 @@ def test_documentation_and_runtime_version_surfaces_use_package_authority():
     sphinx_configuration = runpy.run_path(str(docs_config_path))
     assert sphinx_configuration["release"] == OPENHCS_VERSION
     assert sphinx_configuration["version"] == ".".join(OPENHCS_VERSION.split(".")[:2])
+    assert sphinx_configuration["project"] == BRAND_PRODUCT_NAME
+    assert sphinx_configuration["html_logo"] == str(
+        brand_asset_path(BrandAsset.LOCKUP_HORIZONTAL)
+    )
+    assert sphinx_configuration["html_favicon"] == str(
+        brand_asset_path(BrandAsset.FAVICON)
+    )
 
 
 def test_mcp_client_marks_project_from_registration_authority(tmp_path: Path):
@@ -618,8 +645,9 @@ def test_release_gallery_media_record_matches_published_assets():
             artifact_path = asset_root / published["path"]
             assert artifact_path.is_file()
             with artifact_path.open("rb") as artifact:
-                assert hashlib.file_digest(artifact, "sha256").hexdigest() == (
-                    published["sha256"]
+                assert (
+                    hashlib.file_digest(artifact, "sha256").hexdigest()
+                    == (published["sha256"])
                 )
     fiji_capture = next(
         capture for capture in record["captures"] if capture["id"] == "fiji-review"
@@ -654,14 +682,16 @@ def test_neurite_showcase_edit_record_matches_source_and_published_assets():
     ]
     source_path = asset_root / record["source"]["path"]
     with source_path.open("rb") as source:
-        assert hashlib.file_digest(source, "sha256").hexdigest() == (
-            record["source"]["sha256"]
+        assert (
+            hashlib.file_digest(source, "sha256").hexdigest()
+            == (record["source"]["sha256"])
         )
     for published in record["published"]:
         artifact_path = asset_root / published["path"]
         with artifact_path.open("rb") as artifact:
-            assert hashlib.file_digest(artifact, "sha256").hexdigest() == (
-                published["sha256"]
+            assert (
+                hashlib.file_digest(artifact, "sha256").hexdigest()
+                == (published["sha256"])
             )
 
 

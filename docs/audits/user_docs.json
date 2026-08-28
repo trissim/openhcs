@@ -133,7 +133,7 @@
       },
       {
         "path": "docs/source/conf.py",
-        "sha256": "99a3256293f8f9d28e86d03d13fb242544c233b0573db30903fd71d85aead1b2",
+        "sha256": "12ce06b4b919aa366e1e1fe25d8700e8e684e26f9bb487144716417c22c88b0c",
         "role": "Registers the active Sphinx extensions and documentation build configuration that expose the appendix navigation."
       }
     ],
@@ -2416,7 +2416,7 @@
   },
   {
     "path": "docs/source/index.rst",
-    "source_sha256": "affe51b40a4d3716826aaf26e293399f22465331838ec901ebf7c7113be1b00e",
+    "source_sha256": "708577608c7afb29ce9e3d579bcce3c099348cdad8cb05af63656db66b1c8c72",
     "audience": [
       "imaging scientists",
       "pipeline authors",
@@ -2444,6 +2444,11 @@
         "path": "openhcs/mcp/bootstrap.py",
         "sha256": "c95514b556993d5c49927e40ab4438a365a2ec7ceafe07155770eaa4d206193a",
         "role": "Builds the installed MCP server, registers its tools and resources, and starts the selected transport."
+      },
+      {
+        "path": "scripts/gallery_catalog.py",
+        "sha256": "22614708146ee65339f146bfe2cb96f728cae743eb26b91abce5527ac9cc78d2",
+        "role": "Owns the landing-page workspace scenario, representative image, caption, description, alt text, dimensions, and release evidence."
       }
     ],
     "findings": [],
@@ -2453,7 +2458,8 @@
       "Compared its factual claims directly with the hash-pinned files listed in authority: openhcs/core/pipeline_document.py; openhcs/pyqt_gui/main.py; openhcs/interop/cellprofiler/pipeline_import.py; openhcs/mcp/bootstrap.py.",
       "Passed `.venv/bin/python scripts/validate_docs.py docs/source/index.rst`: documentation validation passed: 1 files, 0 Python blocks.",
       "On 2026-08-24, re-read the complete index after bootstrap delegated stdio channel ownership to its transport; the documentation routing claims remain unchanged.",
-      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate."
+      "On 2026-08-25, re-read the complete page against the painted-ready background-service startup boundary and producer-before-executor shutdown order; its documented ownership and user guidance remain accurate.",
+      "On 2026-08-27, applied the Diataxis landing-page boundary and re-read the complete page after adding the declaration-projected multi-plate workspace figure; the image, caption, description, alt text, and dimensions resolve from the gallery scenario, and desktop plus narrow rendered views were inspected."
     ]
   },
   {
@@ -2815,7 +2821,7 @@
   },
   {
     "path": "docs/source/user_guide/code_ui_editing.rst",
-    "source_sha256": "6da23b76409d55bda1c42eeb3d13b6aed1692fc43f2b83ebca48938d64317c03",
+    "source_sha256": "b81a4006a8d7a349c7c1b89232123d7ee5f2ed4e35e4b00e00723c4a333c0205",
     "audience": [
       "desktop pipeline authors",
       "MCP-assisted editors"
@@ -2897,6 +2903,11 @@
         "path": "tests/unit/pyqt_gui/test_pipeline_editor_widget.py",
         "sha256": "41b66744f1f3d8bac87bd54ef03f80070f3f890bfb821f8f95f3feddc7421547",
         "role": "Proves selected-plate writability and that code apply advances saved baselines for the editor, step, and nested function states."
+      },
+      {
+        "path": "scripts/gallery_catalog.py",
+        "sha256": "22614708146ee65339f146bfe2cb96f728cae743eb26b91abce5527ac9cc78d2",
+        "role": "Owns the lazy-inheritance scenario, representative poster, caption, description, alt text, dimensions, and release evidence."
       }
     ],
     "findings": [
@@ -2916,7 +2927,8 @@
       "On 2026-08-21, re-read the complete guide and changed authorities; 137 focused UI bridge and Pipeline Editor tests passed, including read-only rejection and semantic no-op application, and live UI round trips confirmed apply, repeat, and stale-revision behaviour.",
       "Re-read callable occurrence claims against FunctionStep.same_declaration and the repeated-step history regression.",
       "On 2026-08-24, re-read the complete page against the changed declaration, dependency, UI state, knowledge, and test authorities named by this record; the documented behavior and ownership boundaries remain accurate.",
-      "On 2026-08-26, re-read the complete how-to after the UI bridge default connection stopped repeating its timeout value; code-document editing and state-reconciliation behavior remains unchanged."
+      "On 2026-08-26, re-read the complete how-to after the UI bridge default connection stopped repeating its timeout value; code-document editing and state-reconciliation behavior remains unchanged.",
+      "On 2026-08-27, re-read the complete how-to after adding the declaration-projected lazy-inheritance poster at the saved-state and inheritance boundary; the visual and accessibility copy remain owned by its gallery scenario."
     ]
   },
   {
@@ -3316,7 +3328,7 @@
   },
   {
     "path": "docs/source/user_guide/mcp_clients.rst",
-    "source_sha256": "f0b1c37e1884e4aaee6c44391d3e40c599ac8045b9c839be85a18281dcc4e9f2",
+    "source_sha256": "1bffcd986b0a3949e4d2974a2cd840fb06666217bcb56f76a1d05a81e30419d3",
     "audience": [
       "desktop users connecting local agent clients",
       "MCP administrators"
@@ -3358,6 +3370,11 @@
         "path": "tests/unit/agent/test_mcp_server.py",
         "sha256": "34ad08a4e5059efe1bd00d6b8030ed7b65a6a572a1ecdc2ba153675b8bb4ffbe",
         "role": "Proves MCP server tool registration, request handling, and lifecycle behaviour."
+      },
+      {
+        "path": "scripts/gallery_catalog.py",
+        "sha256": "22614708146ee65339f146bfe2cb96f728cae743eb26b91abce5527ac9cc78d2",
+        "role": "Owns the local-MCP endpoint-startup scenario, representative poster, caption, description, alt text, dimensions, and release evidence."
       }
     ],
     "findings": [
@@ -3382,12 +3399,13 @@
       "On 2026-08-26, re-read the complete client how-to against the changed capability, registration, and regression-test authorities; registered platform leaves now own Claude Desktop paths, while supported clients, commands, configuration behavior, and reconnect guidance remain unchanged.",
       "On 2026-08-26, re-read the complete client how-to after the stdio bootstrap regression isolated its spawned process from pytest-cov instrumentation; installation, registration, reconnect, and GUI attachment guidance remains unchanged.",
       "On 2026-08-26, re-read the complete client how-to against the regenerated 0.8.0 MCPB manifest and the child-process temporary-root regression; installation, path policy, registration, and GUI attachment guidance remain accurate.",
-      "On 2026-08-26, re-read the complete client how-to after the shared MCP regression began proving the declaration-owned submission default; installation, registration, reconnect, and GUI attachment guidance remain accurate."
+      "On 2026-08-26, re-read the complete client how-to after the shared MCP regression began proving the declaration-owned submission default; installation, registration, reconnect, and GUI attachment guidance remain accurate.",
+      "On 2026-08-27, re-read the complete client how-to after adding the declaration-projected endpoint-startup poster beside the selected-surface procedure; the visual and accessibility copy remain owned by its gallery scenario."
     ]
   },
   {
     "path": "docs/source/user_guide/real_time_visualization.rst",
-    "source_sha256": "31d88c83c9a68f15aa2b944770118ff58c4c752bb5fb7a0132fcefae4619b6e7",
+    "source_sha256": "c269dd225183533dbd30237661eb2f8926c9f42b46082023e457a6c9232f7e3d",
     "audience": [
       "pipeline authors reviewing live scientific outputs"
     ],
@@ -3443,6 +3461,11 @@
         "path": "openhcs/runtime/napari_streaming_handlers.py",
         "sha256": "6808a9ee23c4312d9cb2a24777c1ca1106613cf0ac091b756050d6b139a88a1d",
         "role": "Owns shared semantic axis slots and route-local singleton alignment for Napari layers."
+      },
+      {
+        "path": "scripts/gallery_catalog.py",
+        "sha256": "22614708146ee65339f146bfe2cb96f728cae743eb26b91abce5527ac9cc78d2",
+        "role": "Owns the Napari ROI-navigation and Fiji ROI-review scenarios, representative images, captions, descriptions, alt text, dimensions, and release evidence."
       }
     ],
     "findings": [
@@ -3459,7 +3482,8 @@
       "Passed ./.venv/bin/python -m sphinx -E -W --keep-going -b html docs/source <temporary-build-directory>: 153 source files rendered without warnings.",
       "On 2026-08-22, re-read the complete how-to against the current Napari route-selection regressions; the focused OpenHCS documentation-drift suite passed 238 tests.",
       "On 2026-08-25, re-read the complete how-to against the caller-control, runtime-policy, Napari, agent-service, and regression authorities added for bounded ROI projection and atomic isolation.",
-      "The complete 186-test viewer family and 377 agent/MCP tests passed; three isolated real rehearsals returned ROI summaries in 0.063-0.485 seconds and bulk isolation in 0.078-1.078 seconds within the 2-second command budget."
+      "The complete 186-test viewer family and 377 agent/MCP tests passed; three isolated real rehearsals returned ROI summaries in 0.063-0.485 seconds and bulk isolation in 0.078-1.078 seconds within the 2-second command budget.",
+      "On 2026-08-27, re-read the complete how-to after adding declaration-projected Napari ROI-navigation and Fiji ROI-review figures at the matching task boundaries; desktop rendering, captions, and alt text were inspected against the accepted media."
     ]
   }
 ]

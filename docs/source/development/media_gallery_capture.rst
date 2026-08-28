@@ -14,7 +14,10 @@ The workflow keeps four concerns separate:
 3. Nominal gallery scenario declarations own stable IDs, capture targets, published filenames, copy, layout, and evidence.
 4. One typed JSON manifest owns each capture-specific crop, trim, resolution bound, size bound, frame rate, and poster timestamp. Its output inventory must match the selected scenario declaration.
 
-The website cards and public checksum record are generated projections of the scenario declarations. Captions, scenario descriptions, feature claims, and website layout therefore do not drift into the private transformation manifest.
+The website cards, RTD workflow figures, and public checksum record are generated
+projections of the scenario declarations. Captions, scenario descriptions,
+accessibility text, feature claims, and website layout therefore do not drift
+into documentation pages or the private transformation manifest.
 
 Host requirements
 -----------------
@@ -229,7 +232,12 @@ These records are capture provenance, not a second registry of OpenHCS scenarios
 
    python -m scripts.capture_media_gallery catalog
 
-The checked-in release record is also the zero-dependency website projection. Each scenario leaf supplies its card copy, accessibility text, layout, capture target, derivative contract, and release evidence. The website builder reads the generated projection without importing OpenHCS, so deployment cannot acquire a second gallery inventory.
+The checked-in release record is also the zero-dependency website projection.
+Each scenario leaf supplies its card copy, accessibility text, representative
+static image, layout, capture target, derivative contract, and release evidence.
+The website builder reads the generated projection without importing OpenHCS,
+while the Sphinx directive reads the same nominal scenario declarations. Neither
+deployment surface acquires a second gallery inventory.
 
 After a declaration or accepted asset changes, regenerate the checked-in projection and verify it exactly:
 

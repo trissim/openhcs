@@ -7,6 +7,8 @@ rerun. It keeps source selection, processing steps, and result definitions in
 one validated pipeline across the desktop GUI, Python, supported CellProfiler
 imports, and local agents.
 
+.. openhcs-gallery:: multi-plate-overview
+
 Is OpenHCS right for your work?
 -------------------------------
 
