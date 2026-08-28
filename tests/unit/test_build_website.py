@@ -11,7 +11,6 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
-import yaml
 
 from openhcs import __version__ as OPENHCS_VERSION
 from openhcs.agent.ui_bridge_identities import UiStableWindowIdentityDeclaration
@@ -54,14 +53,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_readthedocs_build_activates_recorded_source_dependencies() -> None:
-    configuration = yaml.safe_load(
-        (REPO_ROOT / ".readthedocs.yaml").read_text(encoding="utf-8")
-    )
+    configuration = (REPO_ROOT / ".readthedocs.yaml").read_text(encoding="utf-8")
 
-    assert configuration["build"]["jobs"]["post_checkout"] == [
-        "git submodule sync --recursive",
-        "git submodule update --init --recursive",
-    ]
+    assert (
+        "  jobs:\n"
+        "    post_checkout:\n"
+        "      - git submodule sync --recursive\n"
+        "      - git submodule update --init --recursive\n"
+    ) in configuration
 
 
 def test_gallery_catalog_import_does_not_require_qt_runtime() -> None:
