@@ -481,7 +481,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
+        "sha256": "82f92cd02644367de7b158dad71b0a9165d7af641e001fd31c7660fd8373bc9a",
         "role": "Lowers declarations into typed step plans, including declaration-derived framework-device assignments."
       },
       {
@@ -518,7 +518,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
+        "sha256": "82f92cd02644367de7b158dad71b0a9165d7af641e001fd31c7660fd8373bc9a",
         "role": "Implements the current compiler stages, including declaration-derived framework-device assignment."
       },
       {
@@ -654,7 +654,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
+        "sha256": "82f92cd02644367de7b158dad71b0a9165d7af641e001fd31c7660fd8373bc9a",
         "role": "Consumes component declarations to construct execution axes, stacks, grouping, and typed plans."
       }
     ],
@@ -1502,7 +1502,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
+        "sha256": "82f92cd02644367de7b158dad71b0a9165d7af641e001fd31c7660fd8373bc9a",
         "role": "Invokes callable validation and framework-device assignment before assembling the execution bundle."
       },
       {
@@ -2049,7 +2049,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
+        "sha256": "82f92cd02644367de7b158dad71b0a9165d7af641e001fd31c7660fd8373bc9a",
         "role": "Compiles source execution-axis and framework-device facts into frozen contexts and typed plans."
       },
       {

@@ -32,7 +32,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
+        "sha256": "82f92cd02644367de7b158dad71b0a9165d7af641e001fd31c7660fd8373bc9a",
         "role": "Owns compile-time resolution across selected axes and construction of the execution bundle."
       },
       {
