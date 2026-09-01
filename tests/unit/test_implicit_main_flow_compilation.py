@@ -78,7 +78,7 @@ def test_native_grouped_main_flow_compiles_into_cellprofiler_consumer(tmp_path):
     finally:
         set_progress_queue(None)
 
-    context = compilation["execution_bundle"].runtime_contexts["A01"]
+    context = compilation.runtime_contexts["A01"]
     native_plan = context.step_plans[0]
     threshold_plan = context.step_plans[1]
     assert threshold_plan.main_input_dependency == StepInputDependency.step_output(

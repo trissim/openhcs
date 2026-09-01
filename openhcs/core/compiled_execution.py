@@ -182,11 +182,6 @@ class CompiledExecutionBundle:
             runtime_environment=runtime_environment,
         )
 
-    def as_compilation_result(self) -> dict[str, "CompiledExecutionBundle"]:
-        return {
-            "execution_bundle": self,
-        }
-
     def for_transport_serialization(self) -> "CompiledExecutionBundle":
         """Return this bundle in the worker-transport pickle-safe shape."""
 

@@ -1926,7 +1926,7 @@ def test_first_step_prepares_raw_source_anchors_under_semantic_binding_groups(
     finally:
         set_progress_queue(None)
 
-    context = compilation["execution_bundle"].runtime_contexts["A01"]
+    context = compilation.runtime_contexts["A01"]
     executor = FunctionStepExecutor(context, 0)
     grouped_patterns = executor._prepare_groups(executor._detect_patterns())
 
@@ -2931,7 +2931,7 @@ def test_pipeline_start_main_flow_survives_prior_producer_image_input(
     finally:
         set_progress_queue(None)
 
-    context = compilation["execution_bundle"].runtime_contexts["A01"]
+    context = compilation.runtime_contexts["A01"]
     consumer_plan = context.step_plans[1]
     compiled_pattern = consumer_plan.compiled_function_pattern
     assert compiled_pattern is not None

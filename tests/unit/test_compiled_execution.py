@@ -75,21 +75,6 @@ def test_compiled_execution_bundle_owns_transport_context_resolution(monkeypatch
     assert bundle.worker_assignments == {"worker_0": ["A01"]}
 
 
-def test_compiled_execution_bundle_exports_bundle_only_compilation_result():
-    bundle = CompiledExecutionBundle(
-        pipeline_definition=(),
-        runtime_contexts={},
-        transport_contexts={},
-        worker_assignments={},
-        runtime_environment=_runtime_environment(),
-    )
-
-    result = bundle.as_compilation_result()
-
-    assert result["execution_bundle"] is bundle
-    assert tuple(result) == ("execution_bundle",)
-
-
 def test_compiled_execution_bundle_derives_axis_ids_from_contexts() -> None:
     bundle = CompiledExecutionBundle(
         pipeline_definition=(),

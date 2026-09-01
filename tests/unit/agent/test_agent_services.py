@@ -6,7 +6,6 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, fields
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from polystore.virtual_workspace import SourcePixelRef
@@ -51,6 +50,7 @@ from openhcs.agent.services import function_catalog_service as function_catalog_
 from openhcs.agent.services import viewer_window_service as viewer_window_service_module
 from openhcs.agent.services.config_service import ConfigService
 from openhcs.agent.services.execution_session_service import (
+    CompileInspectionResult,
     ExecutionSessionService,
     PipelineSourceSessionRequest,
     artifact_plan_inspection_from_compilation,
@@ -82,10 +82,21 @@ from openhcs.core.artifacts import (
     SpecialArtifactType,
 )
 from openhcs.core.callable_contract import CallableContract
+from openhcs.core.compiled_execution import (
+    CompiledExecutionBundle,
+    CompiledRuntimeEnvironmentPlan,
+    CompiledWorkerStartPlan,
+)
 from openhcs.core.compiled_step_plan import CompiledStepPlan, MaterializedOutputPlan
 from openhcs.core.component_group_scope import ComponentGroupScope
-from openhcs.core.config import Backend, NapariStreamingConfig, PipelineConfig
+from openhcs.core.config import (
+    Backend,
+    MultiprocessingStartMethod,
+    NapariStreamingConfig,
+    PipelineConfig,
+)
 from openhcs.core.config_document import ConfigDocumentAuthority
+from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs
 from openhcs.core.pipeline_document import PipelineDocumentAuthority
 from openhcs.core.source_bindings import (
@@ -465,6 +476,35 @@ class _FakeExecutionClientFactory:
         return self.client
 
 
+def _compile_inspection_result(
+    *,
+    runtime_contexts: dict[str, ProcessingContext],
+    worker_assignments: dict[str, list[str]],
+    source_workspace_projection: VirtualWorkspaceSourceProjection,
+) -> CompileInspectionResult:
+    runtime_environment = CompiledRuntimeEnvironmentPlan(
+        worker_start=CompiledWorkerStartPlan(
+            requested=MultiprocessingStartMethod.SPAWN,
+            resolved=MultiprocessingStartMethod.SPAWN,
+            reason="test",
+            gpu_enabled=False,
+            server_mode=True,
+        ),
+        use_threading=True,
+        configured_num_workers=1,
+    )
+    return CompileInspectionResult(
+        execution_bundle=CompiledExecutionBundle(
+            pipeline_definition=(),
+            runtime_contexts=runtime_contexts,
+            transport_contexts=runtime_contexts,
+            worker_assignments=worker_assignments,
+            runtime_environment=runtime_environment,
+        ),
+        source_workspace_projection=source_workspace_projection,
+    )
+
+
 class _FakeCompileInspectionGateway:
     def __init__(self) -> None:
         self.requests = []
@@ -516,15 +556,14 @@ class _FakeCompileInspectionGateway:
             paths_by_group={"A01": "/tmp/out/A01/objects.zarr"},
         )
         step_plan.artifact_outputs[output_plan.ref()] = output_plan
-        context = SimpleNamespace(step_plans={0: step_plan})
+        context = ProcessingContext(axis_id="A01")
+        context.step_plans[0] = step_plan
         virtual_name = "A01_s001_w1_z001_t001.tif"
         full_virtual_path = str(request.plate / virtual_name)
-        return {
-            "execution_bundle": SimpleNamespace(
-                runtime_contexts={"A01": context},
-                worker_assignments={"worker-1": ["A01"]},
-            ),
-            "source_workspace_projection": VirtualWorkspaceSourceProjection(
+        return _compile_inspection_result(
+            runtime_contexts={"A01": context},
+            worker_assignments={"worker-1": ["A01"]},
+            source_workspace_projection=VirtualWorkspaceSourceProjection(
                 source_refs_by_virtual_path={
                     virtual_name: SourcePixelRef(
                         "disk", str(request.plate / "source.tif")
@@ -539,7 +578,7 @@ class _FakeCompileInspectionGateway:
                 },
                 workspace_root=str(request.plate),
             ),
-        }
+        )
 
 
 class _FailingCompileInspectionGateway:
@@ -3017,12 +3056,10 @@ def test_compile_inspection_counts_source_workspace_for_empty_pipeline_axis_filt
     inspection = artifact_plan_inspection_from_compilation(
         plate_path=str(tmp_path),
         axis_filter=("A01",),
-        compilation={
-            "execution_bundle": SimpleNamespace(
-                runtime_contexts={},
-                worker_assignments={},
-            ),
-            "source_workspace_projection": VirtualWorkspaceSourceProjection(
+        compilation=_compile_inspection_result(
+            runtime_contexts={},
+            worker_assignments={},
+            source_workspace_projection=VirtualWorkspaceSourceProjection(
                 source_refs_by_virtual_path={
                     virtual_name: SourcePixelRef(
                         "disk", str(tmp_path / "source-a01.tif")
@@ -3034,7 +3071,7 @@ def test_compile_inspection_counts_source_workspace_for_empty_pipeline_axis_filt
                 source_metadata_by_path={},
                 workspace_root=str(tmp_path),
             ),
-        },
+        ),
         progress_event_count=0,
     )
 

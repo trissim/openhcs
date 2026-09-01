@@ -217,7 +217,7 @@
       },
       {
         "path": "openhcs/core/orchestrator/orchestrator.py",
-        "sha256": "235450ee0d2e5a776b0d1bd785cd47d103e63c31b8951750ed719ee6bce3d4cf",
+        "sha256": "1f072cbeeed1b31f154e6965b248328e3c14c50fe408b5b3d8a870eacb027d3f",
         "role": "PipelineOrchestrator configuration ownership, resolution, compiler setup, and executor lifecycle."
       },
       {
@@ -275,12 +275,12 @@
     "authority": [
       {
         "path": "openhcs/core/orchestrator/orchestrator.py",
-        "sha256": "235450ee0d2e5a776b0d1bd785cd47d103e63c31b8951750ed719ee6bce3d4cf",
+        "sha256": "1f072cbeeed1b31f154e6965b248328e3c14c50fe408b5b3d8a870eacb027d3f",
         "role": "PipelineOrchestrator configuration ownership, resolution, compiler setup, and executor lifecycle."
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compilation order, declaration resolution, callable warm-up, framework-local device assignment, and bundle construction."
       },
       {
@@ -515,7 +515,7 @@
   },
   {
     "path": "docs/source/architecture/pipeline_compilation_system.rst",
-    "source_sha256": "c487caecb2568b0cd19ca1ece47ea8d48442b7633e9dcccf50a85b6039bd5a76",
+    "source_sha256": "f67a6877063713b3b8fd469b87ae1b1cd4bc4832e9a7e0eb1497a5c216e5f3af",
     "audience": [
       "OpenHCS compiler, runtime, and extension maintainers"
     ],
@@ -524,7 +524,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compilation order, declaration resolution, callable warm-up, framework-local device assignment, and bundle construction."
       },
       {
@@ -534,7 +534,7 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
+        "sha256": "b2dd83ebf18f59d868e8fb12535c3e3f7c3c3df48ed963775cd57b62e4141d47",
         "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts and context-derived axis identities remain separate from per-step framework devices."
       },
       {
@@ -544,7 +544,7 @@
       },
       {
         "path": "tests/unit/test_compiled_execution.py",
-        "sha256": "63638cf29d6ce30076198ea110c220e7c1262fcd51fcb8a9e8e9e4a7d28d6054",
+        "sha256": "f328432069d426a59bd4f95e83e1bc17f4c1beecb824c757f3fc911d7015b201",
         "role": "Verifies that bundle axis projection derives from context declarations rather than mapping-key syntax."
       },
       {
@@ -855,7 +855,7 @@
       },
       {
         "path": "openhcs/agent/services/execution_session_service.py",
-        "sha256": "dd1fd401b9971d8a008ab4597650c39b49552cb46c4948cb3b1e9899466edc09",
+        "sha256": "a25fa97d660f01763325ae05a36845716eb714d0ac00b8beb6550272ca9e5e98",
         "role": "Retains the exact submitting client and projects its authoritative progress observation."
       },
       {
@@ -865,7 +865,7 @@
       },
       {
         "path": "tests/unit/agent/test_agent_services.py",
-        "sha256": "82b8e14abdc4a6b6e684786a2061422106236618ddd07122b257782aecd9eb0d",
+        "sha256": "d395b548aef1ec2a12615183cf004d18cffa689b6c9143c81e8c819ee8cd7213",
         "role": "Proves same-client reuse, exact observation serialization, terminal caching, and one-time client release."
       }
     ],
@@ -1484,12 +1484,12 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compilation order, declaration resolution, callable warm-up, framework-local device assignment, and bundle construction."
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
+        "sha256": "b2dd83ebf18f59d868e8fb12535c3e3f7c3c3df48ed963775cd57b62e4141d47",
         "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
       }
     ],
@@ -1526,7 +1526,7 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
+        "sha256": "b2dd83ebf18f59d868e8fb12535c3e3f7c3c3df48ed963775cd57b62e4141d47",
         "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
       },
       {
@@ -1745,7 +1745,7 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
+        "sha256": "b2dd83ebf18f59d868e8fb12535c3e3f7c3c3df48ed963775cd57b62e4141d47",
         "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
       },
       {
@@ -1795,7 +1795,7 @@
       },
       {
         "path": "openhcs/agent/services/execution_session_service.py",
-        "sha256": "dd1fd401b9971d8a008ab4597650c39b49552cb46c4948cb3b1e9899466edc09",
+        "sha256": "a25fa97d660f01763325ae05a36845716eb714d0ac00b8beb6550272ca9e5e98",
         "role": "Retains the exact submitting client, projects its authoritative progress, caches terminal status, and releases the client once."
       },
       {
@@ -1910,7 +1910,7 @@
       },
       {
         "path": "tests/unit/agent/test_agent_services.py",
-        "sha256": "82b8e14abdc4a6b6e684786a2061422106236618ddd07122b257782aecd9eb0d",
+        "sha256": "d395b548aef1ec2a12615183cf004d18cffa689b6c9143c81e8c819ee8cd7213",
         "role": "Proves same-client status reuse, progress serialization, terminal caching, and one-time client release."
       },
       {
@@ -2124,7 +2124,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compilation order, declaration resolution, callable warm-up, framework-local device assignment, and bundle construction."
       }
     ],
@@ -2282,7 +2282,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compilation order, declaration resolution, callable warm-up, framework-local device assignment, and bundle construction."
       },
       {
@@ -2530,7 +2530,7 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
+        "sha256": "b2dd83ebf18f59d868e8fb12535c3e3f7c3c3df48ed963775cd57b62e4141d47",
         "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
       },
       {
@@ -2701,7 +2701,7 @@
       },
       {
         "path": "openhcs/agent/services/execution_session_service.py",
-        "sha256": "dd1fd401b9971d8a008ab4597650c39b49552cb46c4948cb3b1e9899466edc09",
+        "sha256": "a25fa97d660f01763325ae05a36845716eb714d0ac00b8beb6550272ca9e5e98",
         "role": "Retains the submitting execution client, distinguishes dispatch outcomes, and projects its exact progress observation."
       },
       {
@@ -2736,7 +2736,7 @@
       },
       {
         "path": "tests/unit/agent/test_agent_services.py",
-        "sha256": "82b8e14abdc4a6b6e684786a2061422106236618ddd07122b257782aecd9eb0d",
+        "sha256": "d395b548aef1ec2a12615183cf004d18cffa689b6c9143c81e8c819ee8cd7213",
         "role": "Proves exact progress projection from the submitting client and one-time release at terminal status."
       }
     ],
@@ -3112,7 +3112,7 @@
       },
       {
         "path": "tests/integration/test_main.py",
-        "sha256": "099fdb349009f503d4eb115b871e78b9be5cbd860838d140111ee138074d5cd3",
+        "sha256": "1a0c532eb631a89b77f92a4202a7b55033c86d7b872350156f106d276b061e9f",
         "role": "Direct and ZMQ compile-before-execute integration harness with explicit OMERO lifecycle cleanup and no browser side effect."
       },
       {
@@ -3250,7 +3250,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compilation order, declaration resolution, callable warm-up, framework-local device assignment, and bundle construction."
       }
     ],
@@ -3442,7 +3442,7 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
+        "sha256": "b2dd83ebf18f59d868e8fb12535c3e3f7c3c3df48ed963775cd57b62e4141d47",
         "role": "CompiledExecutionBundle and runtime-environment authority; execution-wide worker facts remain separate from per-step framework devices."
       },
       {

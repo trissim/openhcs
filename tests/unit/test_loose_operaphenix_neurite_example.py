@@ -191,7 +191,7 @@ def test_neurite_example_compiles_with_declared_loose_file_identities(
     finally:
         set_progress_queue(None)
 
-    context = compilation["execution_bundle"].runtime_contexts[inputs.well]
+    context = compilation.runtime_contexts[inputs.well]
     assert [plan.step_name for plan in context.step_plans.values()] == expected_names
     assert (
         context.step_plans[max(context.step_plans)].compiled_function_pattern

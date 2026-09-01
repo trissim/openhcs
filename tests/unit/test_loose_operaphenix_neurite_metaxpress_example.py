@@ -179,7 +179,7 @@ def test_compact_example_compiles_the_full_ordered_channel_stack(
     finally:
         set_progress_queue(None)
 
-    context = compilation["execution_bundle"].runtime_contexts[inputs.well]
+    context = compilation.runtime_contexts[inputs.well]
     plan = context.step_plans[0]
     assert plan.step_name == "CompactMetaXpressNeuriteOutgrowth"
     assert tuple(plan.variable_components) == (VariableComponents.CHANNEL,)

@@ -503,7 +503,7 @@ def test_quality_control_plate_invocation_is_context_independent(
     finally:
         set_progress_queue(None)
 
-    contexts = compilation["execution_bundle"].runtime_contexts
+    contexts = compilation.runtime_contexts
     (plate_step_index,) = validate_plate_scoped_contexts(contexts)
     invocations = tuple(
         context.step_plans[

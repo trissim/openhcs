@@ -155,7 +155,7 @@ def test_neuroncyto_demo_compiles_exact_loose_tiff_pair(tmp_path: Path) -> None:
     finally:
         set_progress_queue(None)
 
-    context = compilation["execution_bundle"].runtime_contexts[inputs.image_id]
+    context = compilation.runtime_contexts[inputs.image_id]
     plan = context.step_plans[0]
     assert plan.step_name == "NeuronCyto II Crossover Neurite Outgrowth"
     assert tuple(plan.variable_components) == (VariableComponents.CHANNEL,)
@@ -206,7 +206,7 @@ def test_neuroncyto_demo_executes_numeric_biological_well_identity(
             enable_visualizer_override=False,
         )
         results = orchestrator.execute_compiled_plate(
-            execution_bundle=compilation["execution_bundle"],
+            execution_bundle=compilation,
             max_workers=1,
             progress_queue=progress_queue,
             progress_context={
@@ -344,7 +344,7 @@ def test_neuroncyto_demo_contributor_prepares_only_declared_pair(
     finally:
         set_progress_queue(None)
 
-    context = compilation["execution_bundle"].runtime_contexts["Image15"]
+    context = compilation.runtime_contexts["Image15"]
     assert [
         context.step_plans[index].step_name for index in range(len(context.step_plans))
     ] == [

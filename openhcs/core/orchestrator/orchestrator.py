@@ -644,8 +644,8 @@ class PipelineOrchestrator:
         enable_visualizer_override: bool = False,
         is_zmq_execution: bool = False,
         debug_execution_policy: DebugExecutionPolicy = NoOpDebugExecutionPolicy(),
-    ) -> Dict[str, ProcessingContext]:
-        """Compile pipelines for axis values (well_filter name preserved for UI compatibility)."""
+    ) -> CompiledExecutionBundle:
+        """Compile the selected axes into one typed execution bundle."""
         return PipelineCompiler.compile_pipelines(
             orchestrator=self,
             pipeline_definition=pipeline_definition,

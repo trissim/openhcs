@@ -451,7 +451,7 @@ def test_czi_contributor_samples_only_declared_crop_planes(
     finally:
         set_progress_queue(None)
 
-    context = compilation["execution_bundle"].runtime_contexts["A01"]
+    context = compilation.runtime_contexts["A01"]
     full_axon_plan = context.step_plans[3]
     compiled_pattern = full_axon_plan.compiled_function_pattern
     assert compiled_pattern is not None

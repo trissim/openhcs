@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import MutableMapping, Sequence
+from collections.abc import MutableMapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Mapping
 
@@ -71,7 +71,7 @@ class ZMQCompilationRequest:
 
     execution_id: str
     plate_id: str
-    pipeline_steps: Sequence[AbstractStep]
+    pipeline_steps: list[AbstractStep]
     orchestrator: "PipelineOrchestrator"
     wells: list[str]
     compile_artifact_id: str | None
@@ -161,7 +161,7 @@ class ZMQCompilationRequest:
                 step_count=len(self.pipeline_steps),
                 interval_seconds=self.compile_heartbeat_interval_seconds,
             ):
-                compilation = self.orchestrator.compile_pipelines(
+                execution_bundle = self.orchestrator.compile_pipelines(
                     pipeline_definition=self.pipeline_steps,
                     well_filter=self.wells,
                     is_zmq_execution=True,
@@ -170,9 +170,6 @@ class ZMQCompilationRequest:
         finally:
             set_progress_queue(None)
 
-        if not isinstance(compilation, dict) or "execution_bundle" not in compilation:
-            raise ValueError("Compilation did not return execution_bundle")
-        execution_bundle = compilation["execution_bundle"]
         compiled_contexts = execution_bundle.runtime_contexts
         if not compiled_contexts:
             raise ValueError("Compilation produced no compiled contexts")

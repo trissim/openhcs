@@ -624,11 +624,10 @@ def _execute_pipeline_phases(
 
     try:
         set_progress_queue(progress_queue)
-        compilation_result = orchestrator.compile_pipelines(
+        execution_bundle = orchestrator.compile_pipelines(
             pipeline_definition=pipeline, well_filter=wells
         )
 
-        execution_bundle = compilation_result["execution_bundle"]
         compiled_contexts = execution_bundle.runtime_contexts
 
         if len(compiled_contexts) != len(wells):

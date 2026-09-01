@@ -46,7 +46,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import (
-    Any,
     Callable,
     Dict,
     List,
@@ -1525,7 +1524,7 @@ class PipelineCompiler:
         enable_visualizer_override: bool = False,
         is_zmq_execution: bool = False,
         debug_execution_policy: DebugExecutionPolicy = NoOpDebugExecutionPolicy(),
-    ) -> Dict[str, Any]:
+    ) -> CompiledExecutionBundle:
         """
         Compile-all phase: prepares execution artifacts for each axis value.
 
@@ -1545,9 +1544,8 @@ class PipelineCompiler:
                               after resolution to free RAM (for ZMQ server mode).
 
         Returns:
-            A compilation result containing the compiler-owned
-            CompiledExecutionBundle plus compatibility projections for compiled
-            contexts, worker assignments, and the stateless pipeline definition.
+            The compiler-owned bundle containing compiled contexts, worker
+            assignments, runtime policy, and the stateless pipeline definition.
         """
         PipelineCompiler._validate_compile_request(orchestrator, pipeline_definition)
         compiler_scope_id: str | None = None
@@ -1567,7 +1565,7 @@ class PipelineCompiler:
                         compiled_contexts={},
                         server_mode=is_zmq_execution,
                     ),
-                ).as_compilation_result()
+                )
 
             logger.info(
                 f"Starting compilation for axis values: {', '.join(axis_values_to_process)}"
@@ -1597,7 +1595,7 @@ class PipelineCompiler:
                         compiled_contexts={},
                         server_mode=is_zmq_execution,
                     ),
-                ).as_compilation_result()
+                )
             pipeline_config = PipelineCompiler._capture_pipeline_config(
                 pipeline_config_state
             )
@@ -1693,7 +1691,7 @@ class PipelineCompiler:
                 pipeline_config,
                 execution_bundle,
             )
-            return execution_bundle.as_compilation_result()
+            return execution_bundle
         except Exception as e:
             if compiler_scope_id is not None:
                 PipelineCompiler._cleanup_compilation_object_states(

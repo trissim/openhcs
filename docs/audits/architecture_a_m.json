@@ -481,7 +481,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Lowers declarations into typed step plans, including declaration-derived framework-device assignments."
       },
       {
@@ -491,7 +491,7 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
+        "sha256": "b2dd83ebf18f59d868e8fb12535c3e3f7c3c3df48ed963775cd57b62e4141d47",
         "role": "Assembles and validates worker-safe execution bundles without a process-global GPU registry."
       }
     ],
@@ -518,7 +518,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Implements the current compiler stages, including declaration-derived framework-device assignment."
       },
       {
@@ -654,7 +654,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Consumes component declarations to construct execution axes, stacks, grouping, and typed plans."
       }
     ],
@@ -718,7 +718,7 @@
     "authority": [
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
+        "sha256": "b2dd83ebf18f59d868e8fb12535c3e3f7c3c3df48ed963775cd57b62e4141d47",
         "role": "Defines the worker-safe CompiledExecutionBundle and its context-derived axis projection."
       },
       {
@@ -1502,7 +1502,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Invokes callable validation and framework-device assignment before assembling the execution bundle."
       },
       {
@@ -1611,7 +1611,7 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
+        "sha256": "b2dd83ebf18f59d868e8fb12535c3e3f7c3c3df48ed963775cd57b62e4141d47",
         "role": "Defines the worker-safe runtime bundle boundary without a process-global GPU registry."
       }
     ],
@@ -2049,12 +2049,12 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compiles source execution-axis and framework-device facts into frozen contexts and typed plans."
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
+        "sha256": "b2dd83ebf18f59d868e8fb12535c3e3f7c3c3df48ed963775cd57b62e4141d47",
         "role": "Assembles and validates the one worker-safe execution bundle without a process-global GPU registry."
       },
       {

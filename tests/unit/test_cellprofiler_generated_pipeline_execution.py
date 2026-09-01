@@ -214,7 +214,7 @@ def test_compiler_derives_runtime_executor_after_generic_transport(
             well_filter=["A01"],
             is_zmq_execution=True,
         )
-        context = compilation["execution_bundle"].runtime_contexts["A01"]
+        context = compilation.runtime_contexts["A01"]
         compiled_pattern = context.step_plans[0].compiled_function_pattern
     finally:
         set_progress_queue(None)

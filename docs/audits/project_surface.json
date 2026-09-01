@@ -1,7 +1,7 @@
 [
   {
     "path": "README.md",
-    "source_sha256": "dcde62f5059448d79c6267c8942da3eaeee8d3816c409e50fac94b32ea1303fb",
+    "source_sha256": "f5e56ada7d20c7d252aabbbc4f8a27a9450193769630e51ef85c3ec82555542b",
     "audience": [
       "imaging scientists evaluating OpenHCS",
       "pipeline authors",
@@ -32,7 +32,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Owns compile-time resolution across selected axes and construction of the execution bundle."
       },
       {

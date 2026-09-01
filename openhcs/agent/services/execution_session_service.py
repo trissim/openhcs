@@ -51,6 +51,7 @@ from openhcs.agent.exceptions import AgentFacingErrorMixin
 from openhcs.agent.path_policy import AgentPathPolicy
 from openhcs.agent.services.config_service import ConfigService
 from openhcs.agent.services.pipeline_authoring_service import PipelineAuthoringService
+from openhcs.core.compiled_execution import CompiledExecutionBundle
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.pipeline.path_planner import MissingArtifactInputError
@@ -133,14 +134,22 @@ class CompileInspectionInput:
     progress_queue: AgentProgressQueue
 
 
+@dataclass(frozen=True, slots=True)
+class CompileInspectionResult:
+    """Compiler-owned bundle joined to its inspection-only source projection."""
+
+    execution_bundle: CompiledExecutionBundle
+    source_workspace_projection: VirtualWorkspaceSourceProjection
+
+
 class CompileInspectionGatewayABC(ABC):
     @abstractmethod
-    def compile(self, request: CompileInspectionInput) -> JsonObject:
+    def compile(self, request: CompileInspectionInput) -> CompileInspectionResult:
         raise NotImplementedError
 
 
 class InProcessCompileInspectionGateway(CompileInspectionGatewayABC):
-    def compile(self, request: CompileInspectionInput) -> JsonObject:
+    def compile(self, request: CompileInspectionInput) -> CompileInspectionResult:
         from objectstate.lazy_factory import ensure_global_config_context
 
         import openhcs.processing.func_registry as func_registry_module
@@ -164,17 +173,17 @@ class InProcessCompileInspectionGateway(CompileInspectionGatewayABC):
         orchestrator.initialize()
         set_progress_queue(request.progress_queue)
         try:
-            compilation = dict(
-                orchestrator.compile_pipelines(
-                    pipeline_definition=request.pipeline_document.pipeline_steps,
-                    well_filter=list(request.axis_filter) or None,
-                    is_zmq_execution=True,
-                )
+            execution_bundle = orchestrator.compile_pipelines(
+                pipeline_definition=request.pipeline_document.pipeline_steps,
+                well_filter=list(request.axis_filter) or None,
+                is_zmq_execution=True,
             )
-            compilation["source_workspace_projection"] = (
-                orchestrator.source_workspace_projection()
+            return CompileInspectionResult(
+                execution_bundle=execution_bundle,
+                source_workspace_projection=(
+                    orchestrator.source_workspace_projection()
+                ),
             )
-            return compilation
         finally:
             set_progress_queue(None)
 
@@ -1115,11 +1124,11 @@ def artifact_plan_inspection_from_compilation(
     *,
     plate_path: str,
     axis_filter: tuple[str, ...],
-    compilation: JsonObject,
+    compilation: CompileInspectionResult,
     progress_event_count: int,
     warnings: tuple[AgentWarning, ...] = (),
 ) -> ArtifactPlanInspection:
-    execution_bundle = compilation["execution_bundle"]
+    execution_bundle = compilation.execution_bundle
     compiled_contexts = dict(execution_bundle.runtime_contexts)
     axes = tuple(sorted(str(axis_id) for axis_id in compiled_contexts))
     source_workspace_axes = axes or axis_filter
@@ -1147,7 +1156,7 @@ def artifact_plan_inspection_from_compilation(
             for worker, axis_ids in execution_bundle.worker_assignments.items()
         },
         source_workspace=_source_workspace_summary(
-            compilation.get("source_workspace_projection"),
+            compilation.source_workspace_projection,
             axes=source_workspace_axes,
         ),
         progress_event_count=progress_event_count,

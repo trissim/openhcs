@@ -71,9 +71,9 @@ Compile before execution
 
 ``PipelineOrchestrator.compile_pipelines(pipeline_steps)`` resolves the pipeline
 once and compiles every selected execution axis. The returned
-``execution_bundle`` contains runtime contexts, worker steps, and environment
-decisions. The GUI uses the same boundary and compiles the complete selected set
-before executing it.
+``CompiledExecutionBundle`` contains runtime contexts, worker steps, and
+environment decisions. The GUI uses the same boundary and compiles the complete
+selected set before executing it.
 
 Related pages
 -------------

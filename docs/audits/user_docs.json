@@ -1,7 +1,7 @@
 [
   {
     "path": "docs/source/api/index.rst",
-    "source_sha256": "76dddb2af078972357bab28b6bf9d76022ba0f184700d853cf06098496d6acea",
+    "source_sha256": "68401481faeeb4745afa97a50248df8533cfdb6ca0aa09a94557bae2cc4ef57c",
     "audience": [
       "Python integrators",
       "application developers"
@@ -21,17 +21,17 @@
       },
       {
         "path": "openhcs/core/orchestrator/orchestrator.py",
-        "sha256": "235450ee0d2e5a776b0d1bd785cd47d103e63c31b8951750ed719ee6bce3d4cf",
+        "sha256": "1f072cbeeed1b31f154e6965b248328e3c14c50fe408b5b3d8a870eacb027d3f",
         "role": "Owns execution orchestration, worker submission, progress handling, and cleanup of compiled bundles."
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
+        "sha256": "b2dd83ebf18f59d868e8fb12535c3e3f7c3c3df48ed963775cd57b62e4141d47",
         "role": "Declares the frozen compiled execution bundle consumed by workers after compilation."
       },
       {
         "path": "tests/unit/test_compiled_execution.py",
-        "sha256": "63638cf29d6ce30076198ea110c220e7c1262fcd51fcb8a9e8e9e4a7d28d6054",
+        "sha256": "f328432069d426a59bd4f95e83e1bc17f4c1beecb824c757f3fc911d7015b201",
         "role": "Proves compilation produces immutable step plans and execution bundles with the expected resolved values."
       },
       {
@@ -196,7 +196,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -289,12 +289,12 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
+        "sha256": "b2dd83ebf18f59d868e8fb12535c3e3f7c3c3df48ed963775cd57b62e4141d47",
         "role": "Declares the frozen compiled execution bundle consumed by workers after compilation."
       },
       {
@@ -415,7 +415,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -582,7 +582,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -626,7 +626,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       }
     ],
@@ -739,7 +739,7 @@
   },
   {
     "path": "docs/source/concepts/pipelines_and_steps.rst",
-    "source_sha256": "4af5c3b75f1f762473093f0f2445de4b18faa8fc8f2bf508113066229dfd5213",
+    "source_sha256": "ae82cf8baa401e60948956fd26590ae6d32c0a08db147df5c7a70ab09398eed6",
     "audience": [
       "pipeline authors"
     ],
@@ -763,7 +763,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -1303,7 +1303,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -1443,7 +1443,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -1541,7 +1541,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -1810,7 +1810,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -2047,7 +2047,7 @@
       },
       {
         "path": "tests/integration/test_main.py",
-        "sha256": "099fdb349009f503d4eb115b871e78b9be5cbd860838d140111ee138074d5cd3",
+        "sha256": "1a0c532eb631a89b77f92a4202a7b55033c86d7b872350156f106d276b061e9f",
         "role": "Exercises live OMERO instance and integration behaviour through the packaged OpenHCS boundary."
       },
       {
@@ -2107,7 +2107,7 @@
     "authority": [
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       },
       {
@@ -2122,12 +2122,12 @@
       },
       {
         "path": "openhcs/core/compiled_execution.py",
-        "sha256": "2a746cb90f5faba1962dfdee187219053eb002f023027dc736910706b16e9d4f",
+        "sha256": "b2dd83ebf18f59d868e8fb12535c3e3f7c3c3df48ed963775cd57b62e4141d47",
         "role": "Declares the frozen compiled execution bundle consumed by workers after compilation."
       },
       {
         "path": "tests/unit/test_compiled_execution.py",
-        "sha256": "63638cf29d6ce30076198ea110c220e7c1262fcd51fcb8a9e8e9e4a7d28d6054",
+        "sha256": "f328432069d426a59bd4f95e83e1bc17f4c1beecb824c757f3fc911d7015b201",
         "role": "Proves compilation produces immutable step plans and execution bundles with the expected resolved values."
       },
       {
@@ -3360,7 +3360,7 @@
       },
       {
         "path": "openhcs/core/pipeline/compiler.py",
-        "sha256": "807b90ab583648676768581b117165d23e9ada4714b71b694cea3b6ddfb7165c",
+        "sha256": "a4f3dbd0b4805047fc5be37760730a1328ee65f12070c26b53352ccfc1d28777",
         "role": "Compiles pipeline declarations into validated step plans and execution bundles."
       }
     ],

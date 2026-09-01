@@ -138,7 +138,7 @@ def test_neurite_outgrowth_runs_on_synthetic_plate_as_2d_channel_stack(
         compilation = orchestrator.compile_pipelines(
             pipeline_definition=[step], well_filter=["A01"]
         )
-        compiled_context = compilation["execution_bundle"].runtime_contexts["A01"]
+        compiled_context = compilation.runtime_contexts["A01"]
         compiled_plan = compiled_context.step_plans[0]
         assert compiled_plan.variable_components == [VariableComponents.CHANNEL]
         assert compiled_plan.group_by is GroupBy.SITE
@@ -148,7 +148,7 @@ def test_neurite_outgrowth_runs_on_synthetic_plate_as_2d_channel_stack(
         assert compiled_invocation.kwargs_dict["pixel_size"] == 0.65
 
         results = orchestrator.execute_compiled_plate(
-            execution_bundle=compilation["execution_bundle"],
+            execution_bundle=compilation,
             progress_queue=progress_queue,
             progress_context={
                 "execution_id": f"test::{time.time_ns()}",

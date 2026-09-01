@@ -13,9 +13,8 @@ Input
   ``PipelineOrchestrator``.
 
 Output
-  A compatibility compilation result whose ``execution_bundle`` entry is a
-  ``CompiledExecutionBundle``. The bundle owns runtime and transport contexts,
-  worker assignments, and the compiled runtime environment.
+  A ``CompiledExecutionBundle`` owning runtime and transport contexts, worker
+  assignments, and the compiled runtime environment.
 
 Resolve once
 ------------

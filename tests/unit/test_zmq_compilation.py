@@ -101,7 +101,7 @@ class _FreshCompileOrchestrator:
         well_filter,
         is_zmq_execution,
         debug_execution_policy,
-    ) -> dict:
+    ) -> CompiledExecutionBundle:
         self.calls.append(
             {
                 "pipeline_definition": pipeline_definition,
@@ -111,7 +111,7 @@ class _FreshCompileOrchestrator:
             }
         )
         time.sleep(0.03)
-        return {"execution_bundle": self.bundle}
+        return self.bundle
 
 
 def _runtime_environment() -> CompiledRuntimeEnvironmentPlan:
@@ -174,7 +174,7 @@ def test_reused_compile_artifact_reads_step_names_from_compiled_plans() -> None:
     request = ZMQCompilationRequest(
         execution_id="exec-1",
         plate_id="/tmp/plate",
-        pipeline_steps=(),
+        pipeline_steps=[],
         orchestrator=None,
         wells=["A01"],
         compile_artifact_id="artifact-1",
@@ -213,7 +213,7 @@ def test_compile_fresh_emits_heartbeat_during_long_compilation() -> None:
     request = ZMQCompilationRequest(
         execution_id="exec-1",
         plate_id="/tmp/plate",
-        pipeline_steps=(_StrippedStepShell(), _StrippedStepShell()),
+        pipeline_steps=[_StrippedStepShell(), _StrippedStepShell()],
         orchestrator=orchestrator,
         wells=["A01"],
         compile_artifact_id=None,

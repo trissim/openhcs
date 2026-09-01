@@ -252,7 +252,7 @@ def test_colocalization_presentation_compiles_from_public_native_source(
     finally:
         set_progress_queue(None)
 
-    context = compilation["execution_bundle"].runtime_contexts["A01"]
+    context = compilation.runtime_contexts["A01"]
     assert [plan.step_name for plan in context.step_plans.values()] == [
         "Measure two-channel colocalization",
         "Render shared-intensity colocalization",

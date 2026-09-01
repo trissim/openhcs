@@ -327,8 +327,7 @@ orchestrator = PipelineOrchestrator(
     plate_path,
     pipeline_config=pipeline_config,
 ).initialize()
-compilation = orchestrator.compile_pipelines(steps)
-execution_bundle = compilation["execution_bundle"]
+execution_bundle = orchestrator.compile_pipelines(steps)
 ```
 
 The GUI and execution services consume the same `list[FunctionStep]`,

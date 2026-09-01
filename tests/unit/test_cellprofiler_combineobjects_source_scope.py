@@ -164,7 +164,7 @@ def test_public_combineobjects_import_compiles_source_owned_scope(
     finally:
         set_progress_queue(None)
 
-    context = compilation["execution_bundle"].runtime_contexts["A01"]
+    context = compilation.runtime_contexts["A01"]
     step_plan = context.step_plans[0]
     assert tuple(step_plan.variable_components) == (VariableComponents.SITE,)
     assert step_plan.group_by is GroupBy.CHANNEL

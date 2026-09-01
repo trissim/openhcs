@@ -61,9 +61,8 @@ silently omitted from the headless ``FunctionStep`` projection.
 Compilation and execution
 -------------------------
 
-``PipelineOrchestrator.compile_pipelines`` returns a compatibility result whose
-``execution_bundle`` entry is the typed ``CompiledExecutionBundle`` consumed by
-execution.
+``PipelineOrchestrator.compile_pipelines`` returns the typed
+``CompiledExecutionBundle`` consumed by execution.
 
 .. code-block:: python
 
@@ -80,8 +79,7 @@ execution.
        pipeline_config=pipeline_config,
    ).initialize()
 
-   compilation = orchestrator.compile_pipelines(pipeline_steps)
-   execution_bundle = compilation["execution_bundle"]
+   execution_bundle = orchestrator.compile_pipelines(pipeline_steps)
 
    progress_context = {
        "execution_id": f"local::{plate_path}",
