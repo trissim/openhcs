@@ -1600,9 +1600,7 @@ class PipelineCompiler:
                 pipeline_config_state
             )
             path_resolver = CompilationPathResolver(
-                plate_scope=CompilationPlateScope.from_path(
-                    orchestrator.plate_path
-                ),
+                plate_scope=CompilationPlateScope.from_path(orchestrator.plate_path),
                 filemanager=orchestrator.filemanager,
                 backend=Backend.DISK.value,
             )

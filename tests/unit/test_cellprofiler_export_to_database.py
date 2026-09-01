@@ -537,7 +537,9 @@ def test_quality_control_plate_invocation_is_context_independent(
     assert all(edge.projection is None for edge in image_edges)
 
     (output_plan,) = invocations[0].artifact_output_plans
-    assert Path(output_plan.path).name == f"{output_plan.name}_step{plate_step_index}.pkl"
+    assert (
+        Path(output_plan.path).name == f"{output_plan.name}_step{plate_step_index}.pkl"
+    )
     input_storage_paths = tuple(
         tuple(
             edge.storage_plan.path
@@ -1003,7 +1005,9 @@ def test_long_projection_uses_nominal_field_for_matching_row_feature() -> None:
         )
 
 
-def test_relate_objects_database_schema_preserves_native_integer_distance_type() -> None:
+def test_relate_objects_database_schema_preserves_native_integer_distance_type() -> (
+    None
+):
     store = RuntimeValueStore()
     measurement_spec = _record_measurement_table(
         store,

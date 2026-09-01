@@ -238,9 +238,7 @@ def test_neurite_outgrowth_runs_on_synthetic_plate_as_2d_channel_stack(
         assert all(load_rois_from_zip(path) for path in roi_paths)
 
         swc_paths = sorted(tmp_path.rglob("*neurite_morphology*.swc"))
-        graph_roi_paths = sorted(
-            tmp_path.rglob("*neurite_morphology*.graph.roi.zip")
-        )
+        graph_roi_paths = sorted(tmp_path.rglob("*neurite_morphology*.graph.roi.zip"))
         assert len(swc_paths) == 2
         assert len(graph_roi_paths) == 2
         assert all(

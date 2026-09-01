@@ -10,7 +10,11 @@ from objectstate.lazy_factory import ensure_global_config_context
 from openhcs.constants import AllComponents, GroupBy, Microscope, VariableComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.callable_contract import FunctionStepExecutionScope
-from openhcs.core.config import GlobalPipelineConfig, LazyProcessingConfig, PipelineConfig
+from openhcs.core.config import (
+    GlobalPipelineConfig,
+    LazyProcessingConfig,
+    PipelineConfig,
+)
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.pipeline.path_planner import PathPlannerGroupScope
 from openhcs.core.progress import set_progress_queue
@@ -24,9 +28,7 @@ def test_native_grouped_main_flow_compiles_into_cellprofiler_consumer(tmp_path):
     image_dir = tmp_path / "TimePoint_1"
     image_dir.mkdir()
     (tmp_path / "plate.HTD").write_text(
-        '\n'.join(
-            ('"XSites", 1', '"YSites", 1', '"PixelSizeUM", 1.0')
-        ),
+        "\n".join(('"XSites", 1', '"YSites", 1', '"PixelSizeUM", 1.0')),
         encoding="utf-8",
     )
     for channel in (1, 2, 4):
@@ -90,9 +92,7 @@ def test_native_grouped_main_flow_compiles_into_cellprofiler_consumer(tmp_path):
         component=AllComponents.CHANNEL,
     )
     assert threshold_plan.compiled_function_pattern is not None
-    invocation = next(
-        threshold_plan.compiled_function_pattern.iter_invocations()
-    )
+    invocation = next(threshold_plan.compiled_function_pattern.iter_invocations())
     (edge,) = invocation.artifact_input_edges
     assert edge.consumes_main_flow
     assert edge.storage_plan is None

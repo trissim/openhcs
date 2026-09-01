@@ -767,9 +767,7 @@ def test_filter_objects_function_step_reconstructs_exact_public_topology(
     )
     assert {
         spec.parameter_name
-        for spec in contract.artifact_inputs.of_artifact_type(
-            ObjectLabelsArtifactType
-        )
+        for spec in contract.artifact_inputs.of_artifact_type(ObjectLabelsArtifactType)
     } == {"object_labels"}
     object_outputs = ArtifactSpecCollection(contract.artifact_outputs).of_artifact_type(
         ObjectLabelsArtifactType

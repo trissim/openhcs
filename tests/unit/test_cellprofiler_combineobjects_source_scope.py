@@ -42,7 +42,6 @@ from openhcs.interop.cellprofiler.plate_workspace import (
     CellProfilerPlateWorkspacePreparer,
 )
 
-
 COMBINE_OBJECTS_CPIPE = """CellProfiler Pipeline: http://www.cellprofiler.org
 Version:5
 ModuleCount:3
