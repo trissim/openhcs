@@ -133,7 +133,7 @@
       },
       {
         "path": "docs/source/conf.py",
-        "sha256": "12ce06b4b919aa366e1e1fe25d8700e8e684e26f9bb487144716417c22c88b0c",
+        "sha256": "37c6c130d75662601d1e0fece5e0f206b7bf366ae04b596ae39aa9f691ad1c94",
         "role": "Registers the active Sphinx extensions and documentation build configuration that expose the appendix navigation."
       }
     ],
