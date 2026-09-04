@@ -1698,9 +1698,7 @@ def test_source_bindings_inherited_table_value_edit_undo_restores_lazy_child() -
         ObjectStateRegistry.clear()
 
 
-def test_source_bindings_inherited_table_first_edit_materializes_second_edit_flashes_cell() -> (
-    None
-):
+def test_source_bindings_inherited_table_edits_do_not_flash_source_cell() -> None:
     QtApplicationHarness.app()
     ObjectStateRegistry.clear()
     ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
@@ -1812,10 +1810,8 @@ def test_source_bindings_inherited_table_first_edit_materializes_second_edit_fla
         assert value_item.data(Qt.ItemDataRole.EditRole) == "RNA2"
         assert value_item.text() == "*_RNA2"
 
-        flash_key = "step_source_bindings_config.source_filters[0].value"
-        assert flash_key in queued
-        assert "step_source_bindings_config" not in queued
-        assert any(key == flash_key for key, *_ in registered)
+        assert queued == []
+        assert registered == []
     finally:
         manager.deleteLater()
         ObjectStateRegistry.clear()
@@ -3179,7 +3175,7 @@ def test_inline_step_source_bindings_undo_one_of_two_cell_edits_keeps_owner_dirt
         ObjectStateRegistry.clear()
 
 
-def test_inline_source_bindings_edit_queues_child_field_flash() -> None:
+def test_inline_source_bindings_edit_does_not_self_flash() -> None:
     QtApplicationHarness.app()
     step = FunctionStep(func=lambda image: image)
     state = ObjectState(step)
@@ -3205,11 +3201,10 @@ def test_inline_source_bindings_edit_queues_child_field_flash() -> None:
     widget.add_binding_row(NamedSourceBinding(alias="DNA"))
     QApplication.processEvents()
 
-    assert "source_bindings.bindings" in queued
-    assert "source_bindings" not in queued
+    assert queued == []
 
 
-def test_inline_source_bindings_dropdown_edit_queues_child_section_flash() -> None:
+def test_inline_source_bindings_dropdown_edit_does_not_self_flash() -> None:
     QtApplicationHarness.app()
     state = ObjectState(PipelineConfig())
     manager = ParameterFormManager(
@@ -3255,13 +3250,8 @@ def test_inline_source_bindings_dropdown_edit_queues_child_section_flash() -> No
         )
         QApplication.processEvents()
 
-        assert len(registered) == 1
-        key, section, _, label_widget = registered[0]
-        assert key == "source_bindings_config.source_filters[0].match_type"
-        assert section is widget.child_field_section_group("source_filters")
-        assert label_widget is widget.child_field_label("source_filters")
-        assert "source_bindings_config.source_filters[0].match_type" in queued
-        assert "source_bindings_config" not in queued
+        assert registered == []
+        assert queued == []
         assert state.parameters["source_bindings_config.source_filters"] == (
             SourceFilterClause(
                 SourceFilterSubject.FILE,

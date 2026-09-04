@@ -75,8 +75,8 @@ def test_cross_window_change_debounces_placeholder_refresh() -> None:
     manager._cross_window_refresh_timer.stop()
 
 
-def test_dispatcher_notifies_source_root_for_live_resolved_refresh() -> None:
-    """Unsaved edits must fan out to the source root's live preview refresh."""
+def test_dispatcher_notifies_source_root_without_self_flash() -> None:
+    """Unsaved edits refresh live consumers without obscuring their source input."""
     from PyQt6.QtCore import QEventLoop, QTimer
 
     class SignalRecorder:
@@ -155,7 +155,7 @@ def test_dispatcher_notifies_source_root_for_live_resolved_refresh() -> None:
         assert manager.synced == [
             ("well_filter", "step_well_filter_config.well_filter")
         ]
-        assert manager.flash_requests == ["step_well_filter_config.well_filter"]
+        assert manager.flash_requests == []
         assert manager.live_refreshes == 1
         assert manager.parameter_changed.emissions == [
             ("step_well_filter_config.well_filter", "B02")
@@ -422,8 +422,8 @@ def test_flash_paths_keep_single_structural_leaf_but_coalesce_rows() -> None:
     ) == ("source_bindings.bindings",)
 
 
-def test_resolved_child_path_flashes_inline_dataclass_container() -> None:
-    """Inline dataclass child updates flash by ObjectState path."""
+def test_local_structural_child_edit_does_not_self_flash() -> None:
+    """An inline dataclass edit remains visible instead of flashing its source."""
     from openhcs.core.source_bindings import NamedSourceBinding
     from openhcs.core.steps.function_step import FunctionStep
     from openhcs.pyqt_gui.widgets.source_bindings_editor import (
@@ -455,8 +455,7 @@ def test_resolved_child_path_flashes_inline_dataclass_container() -> None:
         widget.add_binding_row(NamedSourceBinding(alias="DNA"))
         QApplication.processEvents()
 
-        assert "source_bindings.bindings" in flashes
-        assert "source_bindings" not in flashes
+        assert flashes == []
     finally:
         manager.deleteLater()
 

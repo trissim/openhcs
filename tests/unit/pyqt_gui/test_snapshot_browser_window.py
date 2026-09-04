@@ -32,11 +32,8 @@ def test_snapshot_browser_window_constructs_table_browser_with_selection_mode(
     try:
         assert window.browser._selection_mode is TableSelectionMode.SINGLE
         assert window.browser.window() is window
-        assert "QComboBox::drop-down" in window.branch_combo.styleSheet()
-        assert (
-            "QComboBox::drop-down"
-            in window.timeline_widget.styleSheet()
-        )
+        assert "QComboBox::drop-down" not in window.branch_combo.styleSheet()
+        assert "QComboBox::drop-down" not in window.timeline_widget.styleSheet()
     finally:
         window.close()
         app.processEvents()
