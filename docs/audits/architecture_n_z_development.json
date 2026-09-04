@@ -310,7 +310,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "f9563d7c26edc1082a87e222fa0793478736bdc592f2c0629d7947783dd2111c",
+        "sha256": "1921d08abaed67203ec1a4f7bffb0fe1c8e4ee1a635ffa565ac8d827723f8d91",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
@@ -369,7 +369,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "f9563d7c26edc1082a87e222fa0793478736bdc592f2c0629d7947783dd2111c",
+        "sha256": "1921d08abaed67203ec1a4f7bffb0fe1c8e4ee1a635ffa565ac8d827723f8d91",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
@@ -1049,7 +1049,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "f9563d7c26edc1082a87e222fa0793478736bdc592f2c0629d7947783dd2111c",
+        "sha256": "1921d08abaed67203ec1a4f7bffb0fe1c8e4ee1a635ffa565ac8d827723f8d91",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
@@ -1281,7 +1281,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "f9563d7c26edc1082a87e222fa0793478736bdc592f2c0629d7947783dd2111c",
+        "sha256": "1921d08abaed67203ec1a4f7bffb0fe1c8e4ee1a635ffa565ac8d827723f8d91",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
@@ -1326,7 +1326,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
+        "sha256": "872e4350c47c21427b5cfc12edc200f7bc49171f178478e955cf4e7c244093e8",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1536,7 +1536,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
+        "sha256": "872e4350c47c21427b5cfc12edc200f7bc49171f178478e955cf4e7c244093e8",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1599,7 +1599,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
+        "sha256": "872e4350c47c21427b5cfc12edc200f7bc49171f178478e955cf4e7c244093e8",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
@@ -1705,7 +1705,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "f9563d7c26edc1082a87e222fa0793478736bdc592f2c0629d7947783dd2111c",
+        "sha256": "1921d08abaed67203ec1a4f7bffb0fe1c8e4ee1a635ffa565ac8d827723f8d91",
         "role": "Reusable parameter-form lifecycle and value projection."
       },
       {
@@ -2410,7 +2410,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
+        "sha256": "872e4350c47c21427b5cfc12edc200f7bc49171f178478e955cf4e7c244093e8",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2487,7 +2487,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
+        "sha256": "872e4350c47c21427b5cfc12edc200f7bc49171f178478e955cf4e7c244093e8",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2525,7 +2525,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
+        "sha256": "872e4350c47c21427b5cfc12edc200f7bc49171f178478e955cf4e7c244093e8",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2833,7 +2833,7 @@
     "authority": [
       {
         "path": "openhcs/__init__.py",
-        "sha256": "1c57f2d490ca88a2e3cef984fb61c774cff4d8dd9861dacc44d49a614a76bc3a",
+        "sha256": "1f9deac468df264334ef7b542bb8ed5ac31c48006e1505a815904a1efb7e0785",
         "role": "Single OpenHCS package version authority."
       },
       {
@@ -3184,7 +3184,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
+        "sha256": "872e4350c47c21427b5cfc12edc200f7bc49171f178478e955cf4e7c244093e8",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -3199,7 +3199,7 @@
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/forms/parameter_form_manager.py",
-        "sha256": "f9563d7c26edc1082a87e222fa0793478736bdc592f2c0629d7947783dd2111c",
+        "sha256": "1921d08abaed67203ec1a4f7bffb0fe1c8e4ee1a635ffa565ac8d827723f8d91",
         "role": "Reusable parameter-form lifecycle and value projection."
       }
     ],
@@ -3360,7 +3360,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
+        "sha256": "872e4350c47c21427b5cfc12edc200f7bc49171f178478e955cf4e7c244093e8",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

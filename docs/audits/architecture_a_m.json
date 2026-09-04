@@ -15,7 +15,7 @@
       },
       {
         "path": "external/pyqt-reactive/tests/test_widgets.py",
-        "sha256": "88fb7b003a1facf8d6ad908f92796d8aa9775da4f1631c30c6c7e275cff6fea6",
+        "sha256": "5237fd9ad2a2f3a6b09184bfd54002c50f7fe95315dcae7aadd497a6b265bb94",
         "role": "Exercises the reusable pyqt-reactive widget behaviours referenced by the transition page."
       }
     ],
@@ -44,7 +44,7 @@
       },
       {
         "path": "external/pyqt-reactive/tests/test_widgets.py",
-        "sha256": "88fb7b003a1facf8d6ad908f92796d8aa9775da4f1631c30c6c7e275cff6fea6",
+        "sha256": "5237fd9ad2a2f3a6b09184bfd54002c50f7fe95315dcae7aadd497a6b265bb94",
         "role": "Covers the generic widget behaviour supplied by pyqt-reactive."
       }
     ],
@@ -853,7 +853,7 @@
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/field_change_dispatcher.py",
-        "sha256": "6a9cd41c1a34f71e641b4a9740d313bd8aa1bb5cf6e115dad4175f0a8e536c6c",
+        "sha256": "fd0281de7ca170b435646b1c9c64a8179661a8a2d131293dbaec83534eed8351",
         "role": "Implements generic change dispatch and subscription mechanics."
       }
     ],
@@ -1070,7 +1070,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "2ebd7f842e8c31829b6446502398201e6aaa8c779800c975c760dd159bbe6405",
+        "sha256": "872e4350c47c21427b5cfc12edc200f7bc49171f178478e955cf4e7c244093e8",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -1274,7 +1274,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/field_change_dispatcher.py",
-        "sha256": "6a9cd41c1a34f71e641b4a9740d313bd8aa1bb5cf6e115dad4175f0a8e536c6c",
+        "sha256": "fd0281de7ca170b435646b1c9c64a8179661a8a2d131293dbaec83534eed8351",
         "role": "Implements generic field-change subscription, dispatch, and cleanup."
       },
       {
@@ -1571,7 +1571,7 @@
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/field_change_dispatcher.py",
-        "sha256": "6a9cd41c1a34f71e641b4a9740d313bd8aa1bb5cf6e115dad4175f0a8e536c6c",
+        "sha256": "fd0281de7ca170b435646b1c9c64a8179661a8a2d131293dbaec83534eed8351",
         "role": "Implements coalesced generic update dispatch used by reactive forms."
       }
     ],
