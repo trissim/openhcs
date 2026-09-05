@@ -153,20 +153,13 @@ class PipelineOrchestrator:
         # The orchestrator should not modify thread-local storage during initialization
         # Global config is already available through the dual-axis resolver fallback
 
-        # Convert to Path and validate
+        # Convert to the immutable execution identity. Source availability is a
+        # runtime initialization precondition so declarations can be loaded and
+        # edited while their external source is temporarily unavailable.
         if plate_path:
             plate_path = Path(plate_path)
-
-            # Validate filesystem paths (skip for OMERO virtual paths)
-            if not str(plate_path).startswith("/omero/"):
-                if not plate_path.is_absolute():
-                    raise ValueError(f"Plate path must be absolute: {plate_path}")
-                if not plate_path.exists():
-                    raise FileNotFoundError(f"Plate path does not exist: {plate_path}")
-                if not plate_path.is_dir():
-                    raise NotADirectoryError(
-                        f"Plate path is not a directory: {plate_path}"
-                    )
+            if not plate_path.is_absolute():
+                raise ValueError(f"Plate path must be absolute: {plate_path}")
 
         self._plate_path_frozen = False
 
@@ -423,6 +416,9 @@ class PipelineOrchestrator:
 
         try:
             self.initialize_microscope_handler()
+            self.microscope_handler.source_selection_role().require_available_source(
+                self.plate_path
+            )
 
             # Delegate workspace initialization to microscope handler
             logger.info("Initializing workspace with microscope handler...")
@@ -491,20 +487,17 @@ class PipelineOrchestrator:
         Uses the same context creation logic as pipeline execution to get full metadata
         with channel names from metadata files (HTD, Index.xml, etc).
 
-        Skips OMERO and other non-disk-based microscope handlers since they don't have
-        real disk directories.
+        Skips remote-service handlers because they do not have local source
+        directories.
         """
         from openhcs.microscopes.openhcs import (
             OpenHCSMetadataGenerator,
             get_subdirectory_name,
         )
 
-        # Skip metadata creation for OMERO and other non-disk-based handlers
-        # OMERO uses virtual paths like /omero/plate_1 which are not real directories
-        if self.microscope_handler.microscope_type == "omero":
-            logger.debug(
-                "Skipping metadata creation for OMERO plate (uses virtual paths)"
-            )
+        source_role = self.microscope_handler.source_selection_role()
+        if not source_role.requires_local_directory:
+            logger.debug("Skipping local metadata creation for %s", source_role.value)
             return
 
         # For plates with virtual workspace, metadata is already created by _build_virtual_mapping()

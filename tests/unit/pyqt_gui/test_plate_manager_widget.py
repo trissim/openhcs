@@ -29,6 +29,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiStateSurfaceRequest,
 )
 from openhcs.agent.ui_bridge_identities import PipelineEditorWidgetIdentity
+from openhcs.constants import Microscope
 from openhcs.constants.constants import OrchestratorState
 from openhcs.core.config import (
     GlobalPipelineConfig,
@@ -53,6 +54,7 @@ from openhcs.core.progress import (
     ProgressPhase,
     ProgressStatus,
 )
+from openhcs.core.selection import SelectedAllSelectionMode
 from openhcs.core.source_bindings import (
     LazyStepSourceBindingsConfig,
     MetadataSelector,
@@ -223,6 +225,47 @@ class InlineUiThreadDispatcher:
 
 
 class TestPlateManagerWidget:
+    def test_missing_plate_declaration_stays_editable_until_initialization(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        monkeypatch.setattr(PlateManagerWidget, "update_item_list", lambda self: None)
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        widget.item_list = QListWidget()
+        ensure_global_config_context(GlobalPipelineConfig, widget.global_config)
+        missing_plate = tmp_path / "unavailable-plate"
+        scope_id = str(missing_plate)
+        payload = PlateManagerCodeDocumentAuthority.from_values(
+            plate_paths=(scope_id,),
+            global_pipeline_config=widget.global_config,
+            per_plate_configs={scope_id: PipelineConfig(microscope=Microscope.OPENHCS)},
+            pipeline_data={scope_id: []},
+        )
+
+        try:
+            assert widget.code_execution_workflow.apply_payload(payload)
+
+            orchestrator = ObjectStateRegistry.get_object(scope_id)
+            assert isinstance(orchestrator, PipelineOrchestrator)
+            assert orchestrator.state is OrchestratorState.CREATED
+            assert not orchestrator.is_initialized()
+            restored_source = widget.orchestrator_code_document_context(
+                selection_mode=SelectedAllSelectionMode.ALL,
+            ).source
+            restored_payload = PlateManagerCodeDocumentAuthority.from_source(
+                restored_source
+            )
+            assert restored_payload.plate_paths == (scope_id,)
+
+            with pytest.raises(FileNotFoundError, match="unavailable-plate"):
+                orchestrator.initialize()
+            assert orchestrator.state is OrchestratorState.INIT_FAILED
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
+
     def test_standard_run_supersedes_only_target_debug_summaries(
         self,
         monkeypatch,

@@ -10,7 +10,7 @@ from pathlib import Path
 from types import FunctionType
 from typing import TYPE_CHECKING
 
-from objectstate.object_state import ObjectState
+from objectstate.object_state import ObjectState, ObjectStateRegistry
 from polystore.base import storage_registry
 from polystore.filemanager import FileManager
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
@@ -917,16 +917,7 @@ class OpenHCSMainWindow(QMainWindow):
         # Connect service adapter to application
         self.config_services.set_global_config(self.pipeline_runtime_config)
 
-        # Subscribe to time-travel completion to reopen windows for dirty states
-        from objectstate.object_state import ObjectStateRegistry
-
-        ObjectStateRegistry.add_time_travel_complete_callback(
-            self._on_time_travel_complete
-        )
-
-        # Subscribe to ObjectState unregistration to auto-close associated windows
-        # This ensures windows close when time-traveling removes their backing state
-        ObjectStateRegistry.add_unregister_callback(self._on_object_state_unregistered)
+        self._connect_object_state_lifecycle()
 
         # Register OpenHCS window handlers with the generic factory
         from openhcs.pyqt_gui.services.window_handlers import (
@@ -937,6 +928,25 @@ class OpenHCSMainWindow(QMainWindow):
 
         # Setup global keyboard shortcuts from declarative config
         self._setup_global_shortcuts()
+
+    def _connect_object_state_lifecycle(self) -> None:
+        """Own the registry subscriptions rendered by this main window."""
+
+        self._time_travel_complete_subscription = (
+            ObjectStateRegistry.add_time_travel_complete_callback(
+                self._on_time_travel_complete
+            )
+        )
+        self.destroyed.connect(self._time_travel_complete_subscription.release)
+
+        # Subscribe to ObjectState unregistration to auto-close associated windows
+        # This ensures windows close when time-traveling removes their backing state
+        self._object_state_unregister_subscription = (
+            ObjectStateRegistry.add_unregister_callback(
+                self._on_object_state_unregistered
+            )
+        )
+        self.destroyed.connect(self._object_state_unregister_subscription.release)
 
     def _connect_zmq_lifecycle(self) -> None:
         """Project endpoint authority and use lifecycle events as invalidations."""
@@ -1750,6 +1760,10 @@ class OpenHCSMainWindow(QMainWindow):
         failures: list[Exception] = []
         shutdown_operations = (
             ("saving dock layout", lambda: self.dock_layout_store.save(self)),
+            (
+                "closing ObjectState subscriptions",
+                self._close_object_state_subscriptions,
+            ),
             ("closing shortcut routing", self.shortcut_lifecycle.close),
             ("closing window resources", self.lifecycle_workflow.close),
         )
@@ -1773,6 +1787,13 @@ class OpenHCSMainWindow(QMainWindow):
         from PyQt6.QtCore import QTimer
 
         QTimer.singleShot(100, lambda: QApplication.instance().quit())
+
+    def _close_object_state_subscriptions(self) -> None:
+        """Release main-window and time-travel registry ownership."""
+
+        self._time_travel_complete_subscription.release()
+        self._object_state_unregister_subscription.release()
+        self.time_travel_widget.close()
 
     # ========== THEME MANAGEMENT METHODS ==========
 

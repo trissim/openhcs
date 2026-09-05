@@ -66,7 +66,10 @@ class TimeTravelWidget(QWidget):
         self._setup_ui()
 
         # Subscribe to history changes (event-based, no polling)
-        ObjectStateRegistry.add_history_changed_callback(self._update_ui)
+        self._history_subscription = ObjectStateRegistry.add_history_changed_callback(
+            self._update_ui
+        )
+        self.destroyed.connect(self._history_subscription.release)
 
     def _create_icon_button(self, text: str, tooltip: str) -> QPushButton:
         """Create a compact icon button with consistent styling."""
@@ -366,5 +369,5 @@ class TimeTravelWidget(QWidget):
 
     def closeEvent(self, event):
         """Unsubscribe from callbacks on close."""
-        ObjectStateRegistry.remove_history_changed_callback(self._update_ui)
+        self._history_subscription.release()
         super().closeEvent(event)

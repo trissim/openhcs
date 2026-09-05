@@ -558,6 +558,7 @@ def test_main_close_attempts_every_top_level_owner_after_other_failures(
     event = SimpleNamespace(accept=lambda: calls.append("accept"))
     main_like = SimpleNamespace(
         dock_layout_store=SimpleNamespace(save=lambda _window: fail("layout")),
+        _close_object_state_subscriptions=lambda: fail("subscriptions"),
         shortcut_lifecycle=SimpleNamespace(close=lambda: fail("shortcuts")),
         lifecycle_workflow=SimpleNamespace(close=lambda: fail("resources")),
     )
@@ -570,6 +571,7 @@ def test_main_close_attempts_every_top_level_owner_after_other_failures(
 
     assert calls == [
         "layout",
+        "subscriptions",
         "shortcuts",
         "resources",
         "accept",

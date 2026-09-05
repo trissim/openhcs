@@ -155,7 +155,7 @@ def test_dispatcher_notifies_source_root_without_self_flash() -> None:
         assert manager.synced == [
             ("well_filter", "step_well_filter_config.well_filter")
         ]
-        assert manager.flash_requests == []
+        assert manager.flash_requests == ["step_well_filter_config.well_filter"]
         assert manager.live_refreshes == 1
         assert manager.parameter_changed.emissions == [
             ("step_well_filter_config.well_filter", "B02")

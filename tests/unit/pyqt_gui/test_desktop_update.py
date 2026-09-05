@@ -14,6 +14,7 @@ from pyqt_reactive.theming import ColorScheme
 
 import openhcs.pyqt_gui.main as main_module
 from openhcs import __version__ as OPENHCS_VERSION
+from openhcs.core.config import GlobalPipelineConfig
 from openhcs.desktop_deployment import (
     DESKTOP_RESTART_EXECUTABLE_ENVIRONMENT_VARIABLE,
 )
@@ -21,6 +22,7 @@ from openhcs.desktop_installation import DESKTOP_INSTALL_PROFILE
 from openhcs.pyqt_gui.services.desktop_update import (
     LATEST_RELEASE_API_URL,
     DesktopRestartPurpose,
+    DesktopRestartRestoreOutcomeABC,
     DesktopRestartSession,
     DesktopRuntimeEnvironment,
     DesktopUpdateCheckFailure,
@@ -28,6 +30,7 @@ from openhcs.pyqt_gui.services.desktop_update import (
     DesktopUpdateCheckResult,
     DesktopUpdateDialogPresenter,
     DesktopUpdateError,
+    DesktopUpdateFailedAndRestored,
     DesktopUpdateService,
     parse_latest_release,
 )
@@ -37,6 +40,9 @@ from openhcs.pyqt_gui.services.desktop_update_worker import (
 )
 from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 from openhcs.resources.brand import BrandAsset, brand_asset_bytes
+from openhcs.ui.shared.plate_manager_code_document import (
+    PlateManagerCodeDocumentAuthority,
+)
 
 
 def _release_payload(version: str = "0.7.0") -> dict[str, object]:
@@ -1045,13 +1051,25 @@ def test_saved_update_session_restores_through_existing_authorities(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    session = DesktopRestartSession(tmp_path)
-    session.session_document.write_text("plate_paths = []", encoding="utf-8")
+    session = DesktopRestartSession(tmp_path / "pending")
+    session.directory.mkdir()
+    payload = PlateManagerCodeDocumentAuthority.from_values(
+        plate_paths=(),
+        global_pipeline_config=GlobalPipelineConfig(),
+        per_plate_configs={},
+        pipeline_data={},
+    )
+    session.session_document.write_text(
+        PlateManagerCodeDocumentAuthority.render(payload),
+        encoding="utf-8",
+    )
     session.history_document.write_text("{}", encoding="utf-8")
     session.update_error_document.write_text("install failed", encoding="utf-8")
     calls = []
     plate_manager = SimpleNamespace(
-        apply_code_document_source=lambda source: calls.append(("source", source)),
+        code_execution_workflow=SimpleNamespace(
+            apply_payload=lambda restored: calls.append(("payload", restored))
+        ),
         update_item_list=lambda: calls.append(("refresh", None)),
     )
     time_travel = SimpleNamespace(refresh=lambda: calls.append(("history-ui", None)))
@@ -1066,13 +1084,147 @@ def test_saved_update_session_restores_through_existing_authorities(
         lambda path: calls.append(("history", path)),
     )
 
-    update_error = session.restore(main_window)
+    consumed = session.consume()
+    outcome = consumed.restore(main_window)
 
-    assert update_error == "install failed"
+    assert outcome.error == "install failed"
+    assert isinstance(outcome, DesktopUpdateFailedAndRestored)
     assert calls == [
-        ("source", "plate_paths = []"),
-        ("history", str(session.history_document)),
+        ("payload", payload),
+        ("history", str(consumed.history_document)),
         ("history-ui", None),
         ("refresh", None),
     ]
-    assert not tmp_path.exists()
+    assert not session.directory.exists()
+    assert not consumed.directory.exists()
+
+
+def test_restored_session_outcome_leaves_own_dialog_presentation() -> None:
+    calls = []
+    dialogs = SimpleNamespace(
+        show_info_dialog=lambda message, title: calls.append(("info", title, message)),
+        show_warning_dialog=lambda message, title: calls.append(
+            ("warning", title, message)
+        ),
+    )
+
+    success = DesktopRestartRestoreOutcomeABC.from_restoration(
+        DesktopRestartPurpose.ZMQ_VERSION,
+        None,
+    )
+    update_failure = DesktopRestartRestoreOutcomeABC.from_restoration(
+        DesktopRestartPurpose.UPDATE,
+        "install failed",
+    )
+
+    success.present(dialogs)
+    update_failure.present(dialogs)
+
+    assert calls == [
+        (
+            "info",
+            "OpenHCS Restart Complete",
+            DesktopRestartPurpose.ZMQ_VERSION.success_message,
+        ),
+        (
+            "warning",
+            "OpenHCS Update Failed",
+            "OpenHCS reopened after the update failed and restored the saved "
+            "session.\n\ninstall failed",
+        ),
+    ]
+
+
+def test_decoded_restart_is_consumed_before_runtime_materialization(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cache_root = tmp_path / "cache"
+    monkeypatch.setattr(
+        "openhcs.core.xdg_paths.get_openhcs_cache_dir",
+        lambda: cache_root,
+    )
+    session = DesktopRestartSession.pending()
+    session.directory.mkdir(parents=True)
+    payload = PlateManagerCodeDocumentAuthority.from_values(
+        plate_paths=(),
+        global_pipeline_config=GlobalPipelineConfig(),
+        per_plate_configs={},
+        pipeline_data={},
+    )
+    session.session_document.write_text(
+        PlateManagerCodeDocumentAuthority.render(payload),
+        encoding="utf-8",
+    )
+    session.history_document.write_text("{}", encoding="utf-8")
+
+    consumed = session.consume()
+
+    def fail_materialization(_payload) -> None:
+        raise RuntimeError("runtime materialization failed")
+
+    plate_manager = SimpleNamespace(
+        code_execution_workflow=SimpleNamespace(
+            apply_payload=fail_materialization,
+        )
+    )
+    main_window = SimpleNamespace(
+        embedded_widgets=SimpleNamespace(
+            require_plate_manager=lambda: plate_manager,
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="runtime materialization failed"):
+        consumed.restore(main_window)
+
+    assert not session.directory.exists()
+    assert not DesktopRestartSession.pending().directory.exists()
+    assert consumed.directory.is_dir()
+    assert consumed.session_document.is_file()
+    assert consumed.history_document.is_file()
+
+
+def test_invalid_restart_document_is_consumed_before_decoding(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cache_root = tmp_path / "cache"
+    monkeypatch.setattr(
+        "openhcs.core.xdg_paths.get_openhcs_cache_dir",
+        lambda: cache_root,
+    )
+    session = DesktopRestartSession.pending()
+    session.directory.mkdir(parents=True)
+    session.session_document.write_text("plate_paths = []", encoding="utf-8")
+    session.history_document.write_text("{}", encoding="utf-8")
+
+    consumed = session.consume()
+    with pytest.raises(ValueError, match="global_config"):
+        consumed.restore(SimpleNamespace())
+
+    assert not session.directory.exists()
+    assert not DesktopRestartSession.pending().directory.exists()
+    assert consumed.directory.is_dir()
+    assert consumed.session_document.read_text(encoding="utf-8") == "plate_paths = []"
+
+
+def test_incomplete_restart_session_is_consumed_before_validation(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cache_root = tmp_path / "cache"
+    monkeypatch.setattr(
+        "openhcs.core.xdg_paths.get_openhcs_cache_dir",
+        lambda: cache_root,
+    )
+    session = DesktopRestartSession.pending()
+    session.directory.mkdir(parents=True)
+    session.session_document.write_text("plate_paths = []", encoding="utf-8")
+
+    consumed = session.consume()
+    with pytest.raises(DesktopUpdateError, match="incomplete"):
+        consumed.restore(SimpleNamespace())
+
+    assert not session.directory.exists()
+    assert not DesktopRestartSession.pending().directory.exists()
+    assert consumed.directory.is_dir()

@@ -96,7 +96,7 @@ def test_nested_ui_config_projects_color_enums_and_shortcut_capture(qapp) -> Non
         help_widget.editingFinished.emit()
         qapp.processEvents()
         assert state.parameters["shortcuts.show_help"] == "Ctrl+Shift+H"
-        assert flashes == []
+        assert flashes == ["shortcuts.show_help"]
     finally:
         manager.close()
         manager.deleteLater()

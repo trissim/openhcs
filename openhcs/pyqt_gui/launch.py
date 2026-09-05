@@ -334,36 +334,19 @@ def main(
             )
             if session.directory.exists():
                 dialogs = app.main_window.window_services
-                if not session.is_complete:
-                    dialogs.show_warning_dialog(
-                        "OpenHCS found an incomplete saved update session. The "
-                        f"recovery files were preserved at:\n\n{session.directory}",
-                        "OpenHCS Update Recovery",
-                    )
+                try:
+                    consumed_session = session.consume()
+                except Exception as error:  # noqa: BLE001 - Qt presentation boundary
+                    logging.exception("Failed to restore the saved update session")
+                    session.present_restore_failure(dialogs, error)
                 else:
                     try:
-                        restart_purpose = session.purpose
-                        update_error = session.restore(app.main_window)
-                    except Exception as error:
+                        restore_outcome = consumed_session.restore(app.main_window)
+                    except Exception as error:  # noqa: BLE001 - UI recovery boundary
                         logging.exception("Failed to restore the saved update session")
-                        dialogs.show_warning_dialog(
-                            "OpenHCS reopened, but could not restore the saved "
-                            "session. The recovery files were preserved at:\n\n"
-                            f"{session.directory}\n\n{type(error).__name__}: {error}",
-                            "OpenHCS Update Recovery",
-                        )
+                        consumed_session.present_restore_failure(dialogs, error)
                     else:
-                        if update_error:
-                            dialogs.show_warning_dialog(
-                                "OpenHCS reopened after the update failed and "
-                                f"restored the saved session.\n\n{update_error}",
-                                "OpenHCS Update Failed",
-                            )
-                        else:
-                            dialogs.show_info_dialog(
-                                restart_purpose.success_message,
-                                "OpenHCS Restart Complete",
-                            )
+                        restore_outcome.present(dialogs)
             if startup_progress is not None:
                 startup_progress.ready()
 

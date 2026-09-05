@@ -15,7 +15,7 @@
       },
       {
         "path": "external/pyqt-reactive/tests/test_widgets.py",
-        "sha256": "5237fd9ad2a2f3a6b09184bfd54002c50f7fe95315dcae7aadd497a6b265bb94",
+        "sha256": "161ff2e4770e9862603337987f66e3795369ddcc63d8c3607b49159c00b5b33e",
         "role": "Exercises the reusable pyqt-reactive widget behaviours referenced by the transition page."
       }
     ],
@@ -44,7 +44,7 @@
       },
       {
         "path": "external/pyqt-reactive/tests/test_widgets.py",
-        "sha256": "5237fd9ad2a2f3a6b09184bfd54002c50f7fe95315dcae7aadd497a6b265bb94",
+        "sha256": "161ff2e4770e9862603337987f66e3795369ddcc63d8c3607b49159c00b5b33e",
         "role": "Covers the generic widget behaviour supplied by pyqt-reactive."
       }
     ],
@@ -90,7 +90,7 @@
       },
       {
         "path": "openhcs/microscopes/microscope_base.py",
-        "sha256": "13ca338530c97319855f1f0358c16ce1e7deb1fdb28b2a0e554083934d788082",
+        "sha256": "a0db6650491f3aa139fc7f70c40ac1a0d371710c32a4d71a14ab950adbdd9319",
         "role": "Defines the microscope-handler registry and generic factory selection boundary."
       },
       {
@@ -265,7 +265,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "e777e6e76e10637c5dd371825135fa2084e0bf6c35fafd30c9b27c90ab340afa",
+        "sha256": "00040f2ad496ccb4dcf118801a0fe487a3528517536c82b8066e9227d98faf1a",
         "role": "Coordinates post-paint endpoint preparation, projects the browser-owned endpoint snapshot into both status-bar surfaces, and routes endpoint termination to the client lifecycle owner."
       },
       {
@@ -853,7 +853,7 @@
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/field_change_dispatcher.py",
-        "sha256": "fd0281de7ca170b435646b1c9c64a8179661a8a2d131293dbaec83534eed8351",
+        "sha256": "c2691e447c4cd5dc77d2a2ffb178c1e350a9c91ec43502f23120f2b373b9ba47",
         "role": "Implements generic change dispatch and subscription mechanics."
       }
     ],
@@ -1033,7 +1033,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "e777e6e76e10637c5dd371825135fa2084e0bf6c35fafd30c9b27c90ab340afa",
+        "sha256": "00040f2ad496ccb4dcf118801a0fe487a3528517536c82b8066e9227d98faf1a",
         "role": "Routes the desktop analysis action through ExperimentalAnalysisEngine rather than the deprecated wrapper."
       },
       {
@@ -1070,7 +1070,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "872e4350c47c21427b5cfc12edc200f7bc49171f178478e955cf4e7c244093e8",
+        "sha256": "2e3262f142e32fa4d1a4373dfb208685b7b411d8f228bcb80f44ab7d618ee2a6",
         "role": "Pins the eight first-party package constraints and documents their installed integration surface."
       },
       {
@@ -1214,7 +1214,7 @@
       },
       {
         "path": "openhcs/microscopes/microscope_base.py",
-        "sha256": "13ca338530c97319855f1f0358c16ce1e7deb1fdb28b2a0e554083934d788082",
+        "sha256": "a0db6650491f3aa139fc7f70c40ac1a0d371710c32a4d71a14ab950adbdd9319",
         "role": "Defines registered microscope discovery and source-specific declaration ownership."
       },
       {
@@ -1274,7 +1274,7 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/field_change_dispatcher.py",
-        "sha256": "fd0281de7ca170b435646b1c9c64a8179661a8a2d131293dbaec83534eed8351",
+        "sha256": "c2691e447c4cd5dc77d2a2ffb178c1e350a9c91ec43502f23120f2b373b9ba47",
         "role": "Implements generic field-change subscription, dispatch, and cleanup."
       },
       {
@@ -1337,12 +1337,12 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/animation/flash_mixin.py",
-        "sha256": "e571c5a808a27fb3ce36a84f6ceb93fcf185f218af47c3bf6d468ce8f80a41f2",
+        "sha256": "5b19c05e384dc3e2338a9d003c16a3003f909fe8acda59b7d88dbaebbe57bae6",
         "role": "Implements reusable flash propagation and animation coordination."
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/animation/flash_config.py",
-        "sha256": "d0ea00191db61e5934410fcc9d53aebdebf1cc2e93706fb1c8640809af4541fd",
+        "sha256": "a86ac73fe6dc5a2ce3873aa4e7b5b1af06ea6e2bfd4121a30d085cc2f177ad3f",
         "role": "Declares generic flash timing, colour, and animation configuration."
       }
     ],
@@ -1571,7 +1571,7 @@
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/services/field_change_dispatcher.py",
-        "sha256": "fd0281de7ca170b435646b1c9c64a8179661a8a2d131293dbaec83534eed8351",
+        "sha256": "c2691e447c4cd5dc77d2a2ffb178c1e350a9c91ec43502f23120f2b373b9ba47",
         "role": "Implements coalesced generic update dispatch used by reactive forms."
       }
     ],
@@ -1986,7 +1986,7 @@
     "authority": [
       {
         "path": "openhcs/microscopes/microscope_base.py",
-        "sha256": "13ca338530c97319855f1f0358c16ce1e7deb1fdb28b2a0e554083934d788082",
+        "sha256": "a0db6650491f3aa139fc7f70c40ac1a0d371710c32a4d71a14ab950adbdd9319",
         "role": "Defines the handler root, registry-backed factory, uniform plate context, detection, and declaration-owned workspace-backend replay boundary."
       },
       {
@@ -2006,7 +2006,7 @@
       },
       {
         "path": "tests/unit/test_microscope_handler_identity.py",
-        "sha256": "29bc29a4e363b9ec8e27ed562de2f3636475354e69137bfe6a15c4637066ce86",
+        "sha256": "3ed9e436b4d9ce2770f5eeed5c884c7621f22eab665cd3cc9280df95d3e10ba8",
         "role": "Verifies registered identity, explicit construction, auto-detection, and invalid handler failure."
       },
       {

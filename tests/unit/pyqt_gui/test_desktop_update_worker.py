@@ -15,9 +15,13 @@ from pathlib import Path
 
 import pytest
 
+from openhcs.core.config import GlobalPipelineConfig
 from openhcs.desktop_installation import DESKTOP_INSTALL_PROFILE
 from openhcs.pyqt_gui.services import desktop_update_worker
 from openhcs.resources.brand import BrandAsset, brand_asset_path
+from openhcs.ui.shared.plate_manager_code_document import (
+    PlateManagerCodeDocumentAuthority,
+)
 
 BACKGROUND_LAUNCH_SPEC = desktop_update_worker.ResolvedProcessLaunchSpec(
     creationflags=73,
@@ -864,8 +868,14 @@ def test_worker_process_waits_updates_restarts_and_restores_session(
 ) -> None:
     session_directory = tmp_path / "pending"
     session_directory.mkdir()
+    session_payload = PlateManagerCodeDocumentAuthority.from_values(
+        plate_paths=(),
+        global_pipeline_config=GlobalPipelineConfig(),
+        per_plate_configs={},
+        pipeline_data={},
+    )
     (session_directory / "session.py").write_text(
-        "canonical session source",
+        PlateManagerCodeDocumentAuthority.render(session_payload),
         encoding="utf-8",
     )
     (session_directory / "objectstate-history.objectstate").write_text(
@@ -899,7 +909,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from objectstate.object_state import ObjectStateRegistry
-from openhcs.pyqt_gui.services.desktop_update import DesktopRestartSession
+from openhcs.pyqt_gui.services.desktop_update import (
+    DesktopRestartSession,
+    DesktopRestartSucceeded,
+)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("marker", type=Path)
@@ -910,7 +923,9 @@ ObjectStateRegistry.load_history_from_file = classmethod(
     lambda cls, path: calls.append(["history", Path(path).read_text(encoding="utf-8")])
 )
 plate_manager = SimpleNamespace(
-    apply_code_document_source=lambda source: calls.append(["source", source]),
+    code_execution_workflow=SimpleNamespace(
+        apply_payload=lambda payload: calls.append(["payload", list(payload.plate_paths)])
+    ),
     update_item_list=lambda: calls.append(["refresh", None]),
 )
 main_window = SimpleNamespace(
@@ -921,9 +936,10 @@ main_window = SimpleNamespace(
         refresh=lambda: calls.append(["history-ui", None]),
     ),
 )
-error = DesktopRestartSession(args.restore_update_session).restore(main_window)
+outcome = DesktopRestartSession(args.restore_update_session).consume().restore(main_window)
+assert isinstance(outcome, DesktopRestartSucceeded)
 args.marker.write_text(
-    json.dumps({"calls": calls, "error": error}),
+    json.dumps({"calls": calls, "purpose": outcome.purpose.value}),
     encoding="utf-8",
 )
 """.strip(),
@@ -1035,11 +1051,11 @@ args.marker.write_text(
     restored = json.loads(restore_marker.read_text(encoding="utf-8"))
     assert restored == {
         "calls": [
-            ["source", "canonical session source"],
+            ["payload", []],
             ["history", "canonical history"],
             ["history-ui", None],
             ["refresh", None],
         ],
-        "error": None,
+        "purpose": "update",
     }
     assert not session_directory.exists()

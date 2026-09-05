@@ -52,6 +52,13 @@ client and OpenHCS from the same installed OpenHCS environment; descriptors from
 another checkout or version are intentionally rejected before they can change
 the running UI.
 
+If a restored session refers to a local plate directory that is unavailable,
+OpenHCS restores the plate and edit history but leaves that plate uninitialized.
+Use Plate Manager code mode to correct the retained path, then initialize the
+plate explicitly. A restart request is consumed before restoration begins, so a
+failed recovery is preserved for diagnosis without blocking every later update
+with the same stale pending request.
+
 For a headless MCP submission timeout, read the reported outcome before
 retrying. Submission preparation has its own longer deadline because a cold
 start can include connection, progress registration, and pipeline

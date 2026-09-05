@@ -65,11 +65,27 @@ def register_metadata_handler(handler_class, metadata_handler_class):
 class MicroscopeSourceSelectionRole(str, Enum):
     """How a registered handler should participate in source selection."""
 
-    FORMAT_SPECIFIC = "format_specific"
-    BROAD_STRUCTURED_STORE = "broad_structured_store"
-    DECLARED_FILE_FALLBACK = "declared_file_fallback"
-    REMOTE_SERVICE = "remote_service"
-    PREPARED_WORKSPACE = "prepared_workspace"
+    FORMAT_SPECIFIC = ("format_specific", True)
+    BROAD_STRUCTURED_STORE = ("broad_structured_store", True)
+    DECLARED_FILE_FALLBACK = ("declared_file_fallback", True)
+    REMOTE_SERVICE = ("remote_service", False)
+    PREPARED_WORKSPACE = ("prepared_workspace", True)
+
+    def __new__(cls, value: str, requires_local_directory: bool):
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member.requires_local_directory = requires_local_directory
+        return member
+
+    def require_available_source(self, source_path: Path) -> None:
+        """Enforce the path availability owned by this source role."""
+
+        if not self.requires_local_directory:
+            return
+        if not source_path.exists():
+            raise FileNotFoundError(f"Plate path does not exist: {source_path}")
+        if not source_path.is_dir():
+            raise NotADirectoryError(f"Plate path is not a directory: {source_path}")
 
 
 class BroadMicroscopeDetector:

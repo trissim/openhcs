@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 import json
 import os
 import platform
@@ -15,12 +16,14 @@ from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from packaging.version import InvalidVersion, Version
 from PyQt6.QtCore import QByteArray, QObject, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import QMessageBox
+from objectstate.object_state import ObjectStateRegistry
 from pyqt_reactive.process_launch import BackgroundProcessLaunchPolicy
 
 from openhcs import __version__ as OPENHCS_VERSION
@@ -33,6 +36,9 @@ from openhcs.desktop_deployment import (
 from openhcs.desktop_installation import DESKTOP_INSTALL_PROFILE
 from openhcs.mcp.bootstrap import MCP_INSTALLATION_POINTER_ENVIRONMENT_VARIABLE
 from openhcs.pyqt_gui.services.desktop_update_worker import DesktopUpdatePlan
+from openhcs.ui.shared.plate_manager_code_document import (
+    PlateManagerCodeDocumentAuthority,
+)
 
 if TYPE_CHECKING:
     from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
@@ -430,27 +436,109 @@ class DesktopRestartSession:
             raise
         return session
 
-    def restore(self, main_window) -> str | None:
-        """Restore through the existing code-document and ObjectState owners."""
+    def consume(self) -> ConsumedDesktopRestartSession:
+        """Durably remove this session from automatic restore eligibility."""
 
-        from objectstate.object_state import ObjectStateRegistry
+        consumed = ConsumedDesktopRestartSession(
+            self.directory.with_name(f"consumed-{uuid4().hex}")
+        )
+        self.directory.rename(consumed.directory)
+        return consumed
 
-        source = self.session_document.read_text(encoding="utf-8")
-        plate_manager = main_window.embedded_widgets.require_plate_manager()
-        plate_manager.apply_code_document_source(source)
-        ObjectStateRegistry.load_history_from_file(str(self.history_document))
-        main_window.time_travel_widget.refresh()
-        plate_manager.update_item_list()
-        error_message = (
+    def discard(self) -> None:
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def present_restore_failure(
+        self,
+        dialog_service: PyQtServiceAdapter,
+        error: BaseException,
+    ) -> None:
+        """Present recovery data owned by this failed restart session."""
+
+        dialog_service.show_warning_dialog(
+            "OpenHCS reopened, but could not restore the saved session. The "
+            "recovery files were preserved at:\n\n"
+            f"{self.directory}\n\n{type(error).__name__}: {error}",
+            "OpenHCS Update Recovery",
+        )
+
+
+class DesktopRestartRestoreOutcomeABC(ABC):
+    """Terminal restored-session outcome that owns its Qt presentation."""
+
+    @classmethod
+    def from_restoration(
+        cls,
+        purpose: DesktopRestartPurpose,
+        update_error: str | None,
+    ) -> DesktopRestartRestoreOutcomeABC:
+        if update_error is None:
+            return DesktopRestartSucceeded(purpose)
+        return DesktopUpdateFailedAndRestored(update_error)
+
+    @abstractmethod
+    def present(self, dialog_service: PyQtServiceAdapter) -> None:
+        """Present this terminal outcome through the window's dialog owner."""
+
+
+@dataclass(frozen=True, slots=True)
+class DesktopRestartSucceeded(DesktopRestartRestoreOutcomeABC):
+    """A requested restart that completed and restored its session."""
+
+    purpose: DesktopRestartPurpose
+
+    def present(self, dialog_service: PyQtServiceAdapter) -> None:
+        dialog_service.show_info_dialog(
+            self.purpose.success_message,
+            "OpenHCS Restart Complete",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DesktopUpdateFailedAndRestored(DesktopRestartRestoreOutcomeABC):
+    """A failed desktop update whose pre-update session was restored."""
+
+    error: str
+
+    def present(self, dialog_service: PyQtServiceAdapter) -> None:
+        dialog_service.show_warning_dialog(
+            "OpenHCS reopened after the update failed and restored the saved "
+            f"session.\n\n{self.error}",
+            "OpenHCS Update Failed",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ConsumedDesktopRestartSession(DesktopRestartSession):
+    """Restart data that is no longer eligible for automatic restore."""
+
+    def restore(self, main_window) -> DesktopRestartRestoreOutcomeABC:
+        """Decode and restore declarations and history from the recovery copy."""
+
+        if not self.is_complete:
+            raise DesktopUpdateError(
+                f"The saved restart session is incomplete: {self.directory}"
+            )
+        payload = PlateManagerCodeDocumentAuthority.from_source(
+            self.session_document.read_text(encoding="utf-8")
+        )
+        purpose = self.purpose
+        update_error = (
             self.update_error_document.read_text(encoding="utf-8").strip()
             if self.update_error_document.is_file()
             else None
         )
+        plate_manager = main_window.embedded_widgets.require_plate_manager()
+        plate_manager.code_execution_workflow.apply_payload(payload)
+        ObjectStateRegistry.load_history_from_file(str(self.history_document))
+        main_window.time_travel_widget.refresh()
+        plate_manager.update_item_list()
+        outcome = DesktopRestartRestoreOutcomeABC.from_restoration(
+            purpose,
+            update_error,
+        )
         self.discard()
-        return error_message
-
-    def discard(self) -> None:
-        shutil.rmtree(self.directory, ignore_errors=True)
+        return outcome
 
 
 @dataclass(frozen=True, slots=True)

@@ -36,7 +36,6 @@ from openhcs.ui.shared.plate_manager_code_document import (
     PlateManagerOrchestratorCodePayload,
 )
 
-
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -135,6 +134,14 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
 
     def apply_namespace(self, namespace) -> bool:
         payload = PlateManagerCodeDocumentAuthority.from_namespace(namespace)
+        return self.apply_payload(payload)
+
+    def apply_payload(
+        self,
+        payload: PlateManagerOrchestratorCodePayload,
+    ) -> bool:
+        """Apply one already validated canonical plate-manager payload."""
+
         self.manager.require_pipeline_definition_mutation_allowed()
 
         self.mutation_scope.synchronize(self, payload)

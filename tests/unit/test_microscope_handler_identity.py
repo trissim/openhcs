@@ -19,7 +19,10 @@ from openhcs.core.config_document import ConfigDocumentAuthority
 from openhcs.core.pipeline_document import PipelineDocumentAuthority
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.microscopes import create_microscope_handler, get_all_handler_types
-from openhcs.microscopes.microscope_base import MicroscopeHandler
+from openhcs.microscopes.microscope_base import (
+    MicroscopeHandler,
+    MicroscopeSourceSelectionRole,
+)
 from openhcs.microscopes.opera_phenix import OperaPhenixHandler
 from openhcs.processing.backends.processors.numpy_processor import percentile_normalize
 from openhcs.demo.synthetic_data import (
@@ -116,6 +119,25 @@ def test_handler_factory_uses_exact_declared_identity(tmp_path: Path) -> None:
             plate_folder=tmp_path,
             filemanager=bioformats_filemanager(),
         )
+
+
+def test_source_selection_role_owns_local_availability_contract(
+    tmp_path: Path,
+) -> None:
+    missing_path = tmp_path / "missing"
+    file_path = tmp_path / "image.tif"
+    file_path.touch()
+
+    with pytest.raises(FileNotFoundError, match=str(missing_path)):
+        MicroscopeSourceSelectionRole.FORMAT_SPECIFIC.require_available_source(
+            missing_path
+        )
+    with pytest.raises(NotADirectoryError, match=str(file_path)):
+        MicroscopeSourceSelectionRole.FORMAT_SPECIFIC.require_available_source(
+            file_path
+        )
+
+    MicroscopeSourceSelectionRole.REMOTE_SERVICE.require_available_source(missing_path)
 
 
 def test_explicit_inspection_and_artifact_plan_reach_opera_axes(

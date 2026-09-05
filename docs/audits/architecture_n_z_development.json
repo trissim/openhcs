@@ -217,7 +217,7 @@
       },
       {
         "path": "openhcs/core/orchestrator/orchestrator.py",
-        "sha256": "1f072cbeeed1b31f154e6965b248328e3c14c50fe408b5b3d8a870eacb027d3f",
+        "sha256": "fa6a6d3fe29ddd5c4e0d8210323d84648062c9d0df998616bc1ecc11c9ac80d9",
         "role": "PipelineOrchestrator configuration ownership, resolution, compiler setup, and executor lifecycle."
       },
       {
@@ -266,7 +266,7 @@
   },
   {
     "path": "docs/source/architecture/orchestrator_configuration_management.rst",
-    "source_sha256": "ee98a7521906367b57c4e0cc938bb1bd8880674b04d702b414daa49b91530524",
+    "source_sha256": "1cf4d86ac3a102396af9ad8515466dc6cb55dd81c7c53190503210349b7f6b5b",
     "audience": [
       "OpenHCS compiler and configuration maintainers"
     ],
@@ -275,7 +275,7 @@
     "authority": [
       {
         "path": "openhcs/core/orchestrator/orchestrator.py",
-        "sha256": "1f072cbeeed1b31f154e6965b248328e3c14c50fe408b5b3d8a870eacb027d3f",
+        "sha256": "fa6a6d3fe29ddd5c4e0d8210323d84648062c9d0df998616bc1ecc11c9ac80d9",
         "role": "PipelineOrchestrator configuration ownership, resolution, compiler setup, and executor lifecycle."
       },
       {
@@ -626,12 +626,12 @@
       },
       {
         "path": "tests/unit/pyqt_gui/test_plate_manager_widget.py",
-        "sha256": "cd7fc4d6eb314fa0901d617d26ca705d0c4f5116ee3c4525156910a1283e42ae",
+        "sha256": "b2a5306e87547da3fdb7e1c14aa69dca0b5079da41aa2e30fc7fc64c2b213263",
         "role": "Regression evidence for Plate Manager service composition and UI delegation."
       },
       {
         "path": "openhcs/pyqt_gui/widgets/shared/services/plate_manager_workflows.py",
-        "sha256": "6e43f9fb4e7a60a0b35a299c0893e919632c60dd619fd4e88a7530a74c9fd02f",
+        "sha256": "7e9e785992fb5d7f77ddcd0efc1ea75982acf6c994c12fcfc7fb53deca8e675d",
         "role": "Owns all-plates and selected-plates code-document mutation semantics."
       },
       {
@@ -656,7 +656,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "e777e6e76e10637c5dd371825135fa2084e0bf6c35fafd30c9b27c90ab340afa",
+        "sha256": "00040f2ad496ccb4dcf118801a0fe487a3528517536c82b8066e9227d98faf1a",
         "role": "Coordinates post-paint endpoint preparation and callable-catalogue prewarming."
       },
       {
@@ -1326,7 +1326,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "872e4350c47c21427b5cfc12edc200f7bc49171f178478e955cf4e7c244093e8",
+        "sha256": "2e3262f142e32fa4d1a4373dfb208685b7b411d8f228bcb80f44ab7d618ee2a6",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],
@@ -1536,7 +1536,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "872e4350c47c21427b5cfc12edc200f7bc49171f178478e955cf4e7c244093e8",
+        "sha256": "2e3262f142e32fa4d1a4373dfb208685b7b411d8f228bcb80f44ab7d618ee2a6",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -1599,12 +1599,12 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "872e4350c47c21427b5cfc12edc200f7bc49171f178478e955cf4e7c244093e8",
+        "sha256": "2e3262f142e32fa4d1a4373dfb208685b7b411d8f228bcb80f44ab7d618ee2a6",
         "role": "Current Python support, dependency, package-discovery, and installed entry-point authority."
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "e777e6e76e10637c5dd371825135fa2084e0bf6c35fafd30c9b27c90ab340afa",
+        "sha256": "00040f2ad496ccb4dcf118801a0fe487a3528517536c82b8066e9227d98faf1a",
         "role": "Desktop composition and live UIConfig application boundary."
       },
       {
@@ -2003,7 +2003,7 @@
       },
       {
         "path": "openhcs/pyqt_gui/main.py",
-        "sha256": "e777e6e76e10637c5dd371825135fa2084e0bf6c35fafd30c9b27c90ab340afa",
+        "sha256": "00040f2ad496ccb4dcf118801a0fe487a3528517536c82b8066e9227d98faf1a",
         "role": "Projects the configured endpoint snapshot into central status text and the right-hand indicator, and routes endpoint termination to the client lifecycle owner."
       },
       {
@@ -2410,7 +2410,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "872e4350c47c21427b5cfc12edc200f7bc49171f178478e955cf4e7c244093e8",
+        "sha256": "2e3262f142e32fa4d1a4373dfb208685b7b411d8f228bcb80f44ab7d618ee2a6",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2487,7 +2487,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "872e4350c47c21427b5cfc12edc200f7bc49171f178478e955cf4e7c244093e8",
+        "sha256": "2e3262f142e32fa4d1a4373dfb208685b7b411d8f228bcb80f44ab7d618ee2a6",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -2525,7 +2525,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "872e4350c47c21427b5cfc12edc200f7bc49171f178478e955cf4e7c244093e8",
+        "sha256": "2e3262f142e32fa4d1a4373dfb208685b7b411d8f228bcb80f44ab7d618ee2a6",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -3184,7 +3184,7 @@
     "authority": [
       {
         "path": "pyproject.toml",
-        "sha256": "872e4350c47c21427b5cfc12edc200f7bc49171f178478e955cf4e7c244093e8",
+        "sha256": "2e3262f142e32fa4d1a4373dfb208685b7b411d8f228bcb80f44ab7d618ee2a6",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       },
       {
@@ -3360,7 +3360,7 @@
       },
       {
         "path": "pyproject.toml",
-        "sha256": "872e4350c47c21427b5cfc12edc200f7bc49171f178478e955cf4e7c244093e8",
+        "sha256": "2e3262f142e32fa4d1a4373dfb208685b7b411d8f228bcb80f44ab7d618ee2a6",
         "role": "Current Python support, dependency, package discovery, and entry-point authority."
       }
     ],

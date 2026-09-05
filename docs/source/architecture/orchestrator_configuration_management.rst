@@ -18,6 +18,13 @@ through its declared ObjectState boundary. The desktop forms and code projection
 edit the same state. Assignment or restoration changes the declaration; it does
 not mutate already compiled contexts.
 
+A local plate path is declaration identity before it is a runtime input. Session
+restoration can therefore reconstruct and expose a plate whose directory is
+temporarily unavailable. The selected microscope handler's source role owns its
+availability contract, which ``PipelineOrchestrator.initialize`` enforces. A
+failed check leaves that orchestrator uninitialized, so the declaration remains
+editable without pretending that source discovery succeeded.
+
 Ownership
 ---------
 
