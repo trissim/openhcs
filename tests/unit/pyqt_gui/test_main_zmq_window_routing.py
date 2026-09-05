@@ -195,7 +195,7 @@ def test_zmq_startup_status_only_commits_to_endpoint_authority() -> None:
     assert refreshes == [True]
 
 
-def test_zmq_endpoint_snapshot_is_status_bar_presentation_authority() -> None:
+def test_zmq_endpoint_snapshot_only_updates_dedicated_indicator() -> None:
     indicator = _StatusIndicatorHarness()
     messages = []
     main_window = SimpleNamespace(
@@ -224,7 +224,7 @@ def test_zmq_endpoint_snapshot_is_status_bar_presentation_authority() -> None:
     assert indicator.state is StatusState.CONNECTED
     assert indicator.text == "ZMQ: Connected"
     assert indicator.tooltip == "Execution endpoint 7777: Connected"
-    assert messages == ["Execution endpoint 7777: Connected"]
+    assert messages == []
 
     OpenHCSMainWindow._apply_zmq_endpoint_snapshot(
         main_window,
@@ -234,10 +234,7 @@ def test_zmq_endpoint_snapshot_is_status_bar_presentation_authority() -> None:
     assert indicator.state is StatusState.DISCONNECTED
     assert indicator.text == "ZMQ: Not connected"
     assert indicator.tooltip == "Execution endpoint 7777: Not connected"
-    assert messages == [
-        "Execution endpoint 7777: Connected",
-        "Execution endpoint 7777: Not connected",
-    ]
+    assert messages == []
 
 
 def test_zmq_endpoint_termination_descends_to_client_lifecycle_owner() -> None:

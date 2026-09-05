@@ -7,7 +7,11 @@ from weakref import ref
 from objectstate.object_state import ObjectStateRegistry
 from PyQt6.QtCore import QCoreApplication, QEvent, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMainWindow
+from pyqt_reactive.services.zmq_server_scan_service import (
+    EndpointObservationSnapshot,
+)
 from pyqt_reactive.theming import ColorScheme
+from zmqruntime.messages import PongResponse, ServerRole
 
 from openhcs.pyqt_gui.main import OpenHCSMainWindow
 from openhcs.pyqt_gui.services.main_window_workflows import MainWindowEmbeddedWidgets
@@ -71,6 +75,57 @@ def test_status_messages_remain_in_permanent_right_lane(monkeypatch, tmp_path) -
         assert (
             window.bottom_control_panel.geometry().right()
             < window._status_message_label.geometry().left()
+        )
+    finally:
+        window.time_travel_widget.close()
+        window.close()
+        app.processEvents()
+
+
+def test_endpoint_and_application_status_have_one_visual_owner(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("MPLCONFIGDIR", str(tmp_path / "mpl"))
+
+    app = QApplication.instance() or QApplication([])
+    window = _MainWindowStatusBarHarness()
+    _configure_status_bar_harness(window)
+    window.runtime_context = SimpleNamespace(
+        ui_config=SimpleNamespace(zmq=SimpleNamespace(default_port=7777))
+    )
+    window.resize(1024, 600)
+    window.show()
+    app.processEvents()
+
+    try:
+        application_message = "Imported pipeline successfully"
+        window.status_message.emit(application_message)
+        OpenHCSMainWindow._apply_zmq_endpoint_snapshot(
+            window,
+            EndpointObservationSnapshot.from_responses(
+                (
+                    PongResponse(
+                        port=7777,
+                        control_port=8777,
+                        ready=True,
+                        server="ExecutionServer",
+                        server_role=ServerRole.EXECUTION,
+                    ),
+                )
+            ),
+        )
+        app.processEvents()
+
+        assert window._status_message_label.text() == application_message
+        assert window._zmq_status_indicator._label.text() == "ZMQ: Connected"
+        assert (
+            window._zmq_status_indicator.toolTip()
+            == "Execution endpoint 7777: Connected"
         )
     finally:
         window.time_travel_widget.close()

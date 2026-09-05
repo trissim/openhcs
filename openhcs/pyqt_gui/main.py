@@ -983,14 +983,14 @@ class OpenHCSMainWindow(QMainWindow):
         self,
         snapshot: EndpointObservationSnapshot,
     ) -> None:
-        """Project the browser's authoritative endpoint snapshot into the status bar."""
+        """Project the browser's endpoint authority into its dedicated indicator."""
 
         port = self.runtime_context.ui_config.zmq.default_port
         status = snapshot.status_for_port(port)
         status.present(self._zmq_status_indicator, "ZMQ")
-        endpoint_message = f"Execution endpoint {port}: {status.message}"
-        self.status_message.emit(endpoint_message)
-        self._zmq_status_indicator.setToolTip(endpoint_message)
+        self._zmq_status_indicator.setToolTip(
+            f"Execution endpoint {port}: {status.message}"
+        )
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
