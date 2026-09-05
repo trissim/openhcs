@@ -68,6 +68,10 @@ from openhcs.processing.backends.processors.numpy_processor import (
     percentile_normalize,
 )
 from openhcs.pyqt_gui.config import get_default_ui_config
+from openhcs.pyqt_gui.services.desktop_update import (
+    DesktopRestartSession,
+    DesktopRestartSucceeded,
+)
 from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
     PipelineObjectStateBinding,
 )
@@ -225,6 +229,66 @@ class InlineUiThreadDispatcher:
 
 
 class TestPlateManagerWidget:
+    def test_restart_restores_missing_plate_without_initializing_or_retrying(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        session = DesktopRestartSession(tmp_path / "pending")
+        session.directory.mkdir()
+        missing_plate = tmp_path / "unavailable-plate"
+        scope_id = str(missing_plate)
+        payload = PlateManagerCodeDocumentAuthority.from_values(
+            plate_paths=(scope_id,),
+            global_pipeline_config=GlobalPipelineConfig(),
+            per_plate_configs={scope_id: PipelineConfig(microscope=Microscope.OPENHCS)},
+            pipeline_data={scope_id: []},
+        )
+        session.session_document.write_text(
+            PlateManagerCodeDocumentAuthority.render(payload),
+            encoding="utf-8",
+        )
+        ObjectStateRegistry.save_history_to_file(str(session.history_document))
+
+        monkeypatch.setattr(PlateManagerWidget, "update_item_list", lambda self: None)
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        widget.item_list = QListWidget()
+        ensure_global_config_context(GlobalPipelineConfig, widget.global_config)
+        history_refreshes: list[None] = []
+        main_window = SimpleNamespace(
+            embedded_widgets=SimpleNamespace(
+                require_plate_manager=lambda: widget,
+            ),
+            time_travel_widget=SimpleNamespace(
+                refresh=lambda: history_refreshes.append(None),
+            ),
+        )
+
+        try:
+            consumed = session.consume()
+            outcome = consumed.restore(main_window)
+
+            orchestrator = ObjectStateRegistry.get_object(scope_id)
+            assert isinstance(outcome, DesktopRestartSucceeded)
+            assert isinstance(orchestrator, PipelineOrchestrator)
+            assert orchestrator.state is OrchestratorState.CREATED
+            assert not orchestrator.is_initialized()
+            restored_payload = PlateManagerCodeDocumentAuthority.from_source(
+                widget.orchestrator_code_document_context(
+                    selection_mode=SelectedAllSelectionMode.ALL,
+                ).source
+            )
+            assert restored_payload.plate_paths == (scope_id,)
+            assert restored_payload.per_plate_configs == payload.per_plate_configs
+            assert restored_payload.pipeline_data == payload.pipeline_data
+            assert history_refreshes == [None]
+            assert not session.directory.exists()
+            assert not consumed.directory.exists()
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
+
     def test_missing_plate_declaration_stays_editable_until_initialization(
         self,
         monkeypatch,
