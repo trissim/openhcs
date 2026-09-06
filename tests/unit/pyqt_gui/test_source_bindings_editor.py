@@ -102,6 +102,19 @@ from pyqt_reactive.widgets.shared.scoped_table_widget import ScopedTableWidget
 from pyqt_reactive.widgets.shared.scope_color_utils import get_scope_color_scheme
 
 
+def assert_label_masked(label_widget, window, masks):
+    from pyqt_reactive.animation.flash_mixin import (
+        LEAF_WIDGET_TYPES,
+        get_child_mask_path,
+        resolve_mask_widgets,
+    )
+
+    assert all(
+        get_child_mask_path(child, window) in masks
+        for child in resolve_mask_widgets(label_widget, LEAF_WIDGET_TYPES)
+    )
+
+
 class QtApplicationHarness:
     """Nominal owner for the QApplication singleton used by GUI smoke tests."""
 
@@ -960,10 +973,9 @@ def test_source_bindings_enableable_chrome_uses_nominal_step_config() -> None:
         assert label_widget is None
         assert full_groupbox_registrations == []
         masks = tuple(mask_rects(manager))
-        assert any(
-            needs_square and rect.width() == rect.height()
-            for rect, needs_square in masks
-        )
+        from pyqt_reactive.animation.flash_mixin import get_child_mask_path
+
+        assert get_child_mask_path(step_checkboxes[0], manager) in masks
 
         step_container._title_label.mousePressEvent(None)
         for _ in range(10):
@@ -3356,13 +3368,11 @@ def test_inline_source_bindings_provenance_navigation_masks_child_section() -> N
         )
         section_rect = QRect(section_window_pos, section.size())
         label_rect = QRect(label_window_pos, label_widget.size())
+        bounds = [path.boundingRect().toAlignedRect() for path in masks]
         if section_rect != label_rect:
-            assert (section_rect, False) not in masks
-        assert (
-            QRect(table_window_pos, widget.source_filters_table.size()),
-            False,
-        ) in masks
-        assert (label_rect, False) in masks
+            assert section_rect not in bounds
+        assert QRect(table_window_pos, widget.source_filters_table.size()) in bounds
+        assert_label_masked(label_widget, manager, masks)
         assert "source_bindings_config.source_filters" in queued
         assert "source_bindings_config" not in queued
     finally:
@@ -3501,12 +3511,11 @@ def test_inline_source_bindings_structural_path_flash_targets_table_cell() -> No
             widget.source_filters_table.viewport().mapToGlobal(cell_rect.topLeft())
         )
         label_widget = widget.child_field_label("source_filters")
-        label_window_pos = manager.mapFromGlobal(
-            label_widget.mapToGlobal(label_widget.rect().topLeft())
-        )
         masks = tuple(mask_rects(manager))
-        assert (QRect(cell_window_pos, cell_rect.size()), False) in masks
-        assert (QRect(label_window_pos, label_widget.size()), False) in masks
+        assert QRect(cell_window_pos, cell_rect.size()) in [
+            path.boundingRect().toAlignedRect() for path in masks
+        ]
+        assert_label_masked(label_widget, manager, masks)
         assert queued == ["source_bindings_config.source_filters[0].match_type"]
     finally:
         manager.deleteLater()
@@ -3673,9 +3682,9 @@ def test_source_bindings_cell_flash_element_masks_cell_and_child_label() -> None
         assert len(registrations) == 1
         element_factory = registrations[0][1]
         element = element_factory(flash_key)
-        assert element.get_child_rects is not None
+        assert element.get_child_paths is not None
 
-        mask_rects = tuple(element.get_child_rects(manager))
+        mask_paths = tuple(element.get_child_paths(manager))
         assert widget.source_filters_table is not None
         cell_rect = widget.source_filters_table.visualRect(
             widget.source_filters_table.model().index(
@@ -3688,13 +3697,8 @@ def test_source_bindings_cell_flash_element_masks_cell_and_child_label() -> None
         )
         expected_cell_rect = cell_rect.translated(cell_window_pos - cell_rect.topLeft())
         label_widget = widget.child_field_label("source_filters")
-        label_window_pos = manager.mapFromGlobal(
-            label_widget.mapToGlobal(label_widget.rect().topLeft())
-        )
-        expected_label_rect = QRect(label_window_pos, label_widget.size())
-
-        assert (expected_cell_rect, False) in mask_rects
-        assert (expected_label_rect, False) in mask_rects
+        assert expected_cell_rect in [path.boundingRect().toAlignedRect() for path in mask_paths]
+        assert_label_masked(label_widget, manager, mask_paths)
     finally:
         manager.deleteLater()
 
@@ -3761,13 +3765,11 @@ def test_source_bindings_child_section_flash_masks_changed_child_section() -> No
         )
         section_rect = QRect(section_window_pos, section.size())
         label_rect = QRect(label_window_pos, label_widget.size())
+        bounds = [path.boundingRect().toAlignedRect() for path in masks]
         if section_rect != label_rect:
-            assert (section_rect, False) not in masks
-        assert (
-            QRect(table_window_pos, widget.source_filters_table.size()),
-            False,
-        ) in masks
-        assert (label_rect, False) in masks
+            assert section_rect not in bounds
+        assert QRect(table_window_pos, widget.source_filters_table.size()) in bounds
+        assert_label_masked(label_widget, manager, masks)
         assert queued == ["source_bindings_config.source_filters"]
 
     finally:
@@ -3836,10 +3838,9 @@ def test_source_bindings_owner_flash_masks_descendant_fields() -> None:
                 widget.source_filters_table.rect().topLeft()
             )
         )
-        assert (
-            QRect(table_window_pos, widget.source_filters_table.size()),
-            False,
-        ) in masks
+        assert QRect(table_window_pos, widget.source_filters_table.size()) in [
+            path.boundingRect().toAlignedRect() for path in masks
+        ]
         assert queued == ["source_bindings_config"]
     finally:
         manager.deleteLater()
@@ -4319,8 +4320,8 @@ def test_source_bindings_flash_masks_nested_section_titles() -> None:
         app.processEvents()
 
     element = create_groupbox_element("source_bindings", container)
-    assert element.get_child_rects is not None
-    child_rects = element.get_child_rects(container)
+    assert element.get_child_paths is not None
+    child_rects = element.get_child_paths(container)
     section_title_labels = [
         label
         for label in widget.findChildren(QLabel)
@@ -4335,7 +4336,8 @@ def test_source_bindings_flash_masks_nested_section_titles() -> None:
 
     title_rects = [
         rect
-        for rect, _ in child_rects
+        for path in child_rects
+        for rect in (path.boundingRect(),)
         if any(
             label.mapTo(container, label.rect().topLeft()).y()
             <= rect.y()
