@@ -121,11 +121,10 @@ def test_dispatcher_notifies_source_root_without_self_flash() -> None:
         def sync_after_model_field_change(
             self,
             field_name,
-            full_path,
             *,
             changed_paths=None,
         ):
-            self.synced.append((field_name, full_path))
+            self.synced.append(field_name)
 
         def sync_enabled_field_visuals(self, value):
             del value
@@ -149,9 +148,7 @@ def test_dispatcher_notifies_source_root_without_self_flash() -> None:
         loop.exec()
 
         assert manager.state.updated == [("step_well_filter_config.well_filter", "B02")]
-        assert manager.synced == [
-            ("well_filter", "step_well_filter_config.well_filter")
-        ]
+        assert manager.synced == ["well_filter"]
         assert manager.flash_requests == []
         assert manager.live_refreshes == 1
         assert manager.parameter_changed.emissions == [
