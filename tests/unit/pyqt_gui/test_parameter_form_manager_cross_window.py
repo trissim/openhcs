@@ -123,12 +123,9 @@ def test_dispatcher_notifies_source_root_without_self_flash() -> None:
             field_name,
             full_path,
             *,
-            queue_flash=True,
             changed_paths=None,
         ):
             self.synced.append((field_name, full_path))
-            if queue_flash:
-                self.flash_requests.append(full_path)
 
         def sync_enabled_field_visuals(self, value):
             del value
@@ -155,7 +152,7 @@ def test_dispatcher_notifies_source_root_without_self_flash() -> None:
         assert manager.synced == [
             ("well_filter", "step_well_filter_config.well_filter")
         ]
-        assert manager.flash_requests == ["step_well_filter_config.well_filter"]
+        assert manager.flash_requests == []
         assert manager.live_refreshes == 1
         assert manager.parameter_changed.emissions == [
             ("step_well_filter_config.well_filter", "B02")
@@ -344,7 +341,6 @@ def test_resolved_change_refreshes_widget_values_outside_time_travel(qapp) -> No
             self.flash_batches = []
             self._pending_resolved_changed_paths = set()
             self._resolved_changed_flush_scheduled = False
-            self._locally_applied_model_paths = set()
             self._pending_path_scoped_state_refresh = None
 
         def schedule_lifecycle_callback(self, delay_ms, callback):
@@ -366,19 +362,6 @@ def test_resolved_change_refreshes_widget_values_outside_time_travel(qapp) -> No
 
         def _flush_resolved_values_changed(self):
             return ParameterFormManager._flush_resolved_values_changed(self)
-
-        def _exclude_local_edit_paths(self, changed_paths, local_paths):
-            return ParameterFormManager._exclude_local_edit_paths(
-                changed_paths,
-                local_paths,
-            )
-
-        def _widget_refresh_paths_for_changed_paths(self, changed_paths, local_paths):
-            return ParameterFormManager._widget_refresh_paths_for_changed_paths(
-                self,
-                changed_paths,
-                local_paths,
-            )
 
     previous = ObjectStateRegistry._in_time_travel
     ObjectStateRegistry._in_time_travel = False
@@ -422,8 +405,8 @@ def test_flash_paths_keep_single_structural_leaf_but_coalesce_rows() -> None:
     ) == ("source_bindings.bindings",)
 
 
-def test_local_structural_child_edit_does_not_self_flash() -> None:
-    """An inline dataclass edit remains visible instead of flashing its source."""
+def test_local_structural_child_edit_uses_resolved_change_flash() -> None:
+    """Inline edits use the same resolved-value callback as other local edits."""
     from openhcs.core.source_bindings import NamedSourceBinding
     from openhcs.core.steps.function_step import FunctionStep
     from openhcs.pyqt_gui.widgets.source_bindings_editor import (
@@ -455,7 +438,7 @@ def test_local_structural_child_edit_does_not_self_flash() -> None:
         widget.add_binding_row(NamedSourceBinding(alias="DNA"))
         QApplication.processEvents()
 
-        assert flashes == []
+        assert flashes == ["source_bindings.bindings"]
     finally:
         manager.deleteLater()
 

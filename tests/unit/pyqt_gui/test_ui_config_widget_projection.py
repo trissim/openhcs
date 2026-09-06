@@ -88,13 +88,13 @@ def test_nested_ui_config_projects_color_enums_and_shortcut_capture(qapp) -> Non
         assert isinstance(help_widget, KeySequenceEditAdapter)
 
         flashes: list[str] = []
-        shortcuts.queue_field_flash = flashes.append
+        manager.queue_flash_local_batch = flashes.extend
         help_widget.setKeySequence(QKeySequence("Ctrl+Shift+H"))
         qapp.processEvents()
         assert state.parameters["shortcuts.show_help"] == "F1"
 
         help_widget.editingFinished.emit()
-        qapp.processEvents()
+        _wait_until(qapp, lambda: bool(flashes))
         assert state.parameters["shortcuts.show_help"] == "Ctrl+Shift+H"
         assert flashes == ["shortcuts.show_help"]
     finally:
