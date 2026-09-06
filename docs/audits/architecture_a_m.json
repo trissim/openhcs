@@ -1337,12 +1337,12 @@
     "authority": [
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/animation/flash_mixin.py",
-        "sha256": "5b19c05e384dc3e2338a9d003c16a3003f909fe8acda59b7d88dbaebbe57bae6",
+        "sha256": "275a017d2c05b8b2127a50c173e7c9c82383153288828b1727ccf12df0bdc129",
         "role": "Implements reusable flash propagation and animation coordination."
       },
       {
         "path": "external/pyqt-reactive/src/pyqt_reactive/animation/flash_config.py",
-        "sha256": "a86ac73fe6dc5a2ce3873aa4e7b5b1af06ea6e2bfd4121a30d085cc2f177ad3f",
+        "sha256": "d0ea00191db61e5934410fcc9d53aebdebf1cc2e93706fb1c8640809af4541fd",
         "role": "Declares generic flash timing, colour, and animation configuration."
       }
     ],
@@ -1352,7 +1352,8 @@
     "disposition": "redirect",
     "validation": [
       "Read the complete page and challenged accuracy, freshness, duplication, boundary, flow, and navigation against the listed current authorities.",
-      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings."
+      "python scripts/validate_docs.py docs/source/architecture passed, and .venv Sphinx -E -W --keep-going rendered all 152 active pages without warnings.",
+      "On 2026-09-06, re-read the complete redirect and canonical pyqt-reactive flash page against the native widget raster surface, shared mask projection, resolved-change notification ownership and unchanged FlashConfig timing. The redirect still points to the package that owns these generic mechanisms. Native RGB/BGR coverage passed 240 checks across 100%, 125% and 150% scaling; 460 reactive tests, nine OpenHCS form integration tests and five real MCP reset/edit checks passed. Reactive main CI 34044272928 passed every platform job."
     ]
   },
   {
