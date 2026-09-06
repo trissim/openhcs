@@ -75,7 +75,7 @@ def test_cross_window_change_debounces_placeholder_refresh() -> None:
     manager._cross_window_refresh_timer.stop()
 
 
-def test_dispatcher_notifies_source_root_without_self_flash() -> None:
+def test_dispatcher_notifies_source_root_without_self_flash(qapp) -> None:
     """Unsaved edits refresh live consumers without obscuring their source input."""
     from PyQt6.QtCore import QEventLoop, QTimer
 
